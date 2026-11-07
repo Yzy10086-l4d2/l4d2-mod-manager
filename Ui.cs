@@ -13,6 +13,8 @@ namespace Installer
         private ComboBox cboMode;          // 工作模式：U 盘模式 / 本地模式
         private bool modeSync;             // 回填下拉时别触发重扫
         private FlatButton btnBrowse, btnFind, btnSettings, btnInstall, btnRestore, btnOpen, btnSwitch, btnCancel, btnClearSearch;
+        private FlatButton btnView, btnPanel;     // 顶部：台面/方案树 切换、左栏抽屉
+        private bool drawerOpen;                  // 左栏（装什么 / 安装选项 / 日志）是否展开
         private CheckBox chkL4N, chkSkeeto, chkAsset, chkMqcam, chkDxvk, chkLaunch, chkCfg, chkSwap, chkStrict;
         private RadioButton rdSkip, rdOver;
         private ComboBox cboTweak;
@@ -161,7 +163,7 @@ namespace Installer
                         Core.Log("INFO", "启动计时: 冲突检查 " + __sw2.ElapsedMilliseconds + " ms");
                         initializing = false;
                         ShowPackStatus(packs, packOk);
-                        ShowTree();                        // 启动第一屏就是方案树
+                        ShowDesk();                        // 启动第一屏就是台面（整窗一张桌子）
                     });
                 }
                 catch (Exception ex) { Core.Log("FAIL", "初始化失败: " + ex.Message); }
@@ -203,9 +205,13 @@ namespace Installer
             const int findW = 76;
             const int browseW = 76;
             const int settingsW = 60;
+            const int viewW = 56;       // 台面 ⇄ 方案树
+            const int panelW = 56;      // 左栏抽屉
             const int topGap = 8;
             int settingsX = W - Theme.M - settingsW;
-            int findX = settingsX - topGap - findW;
+            int panelX = settingsX - topGap - panelW;
+            int viewX = panelX - topGap - viewW;
+            int findX = viewX - topGap - findW;
             int browseX = findX - topGap - browseW;
             int modeX = browseX - topGap - modeW;
             txtGame = new ComboBox(); txtGame.SetBounds(76, 18, modeX - 8 - 76, 24);
@@ -224,6 +230,19 @@ namespace Installer
             btnSettings.Click += delegate { ShowSettings(); };
             tips.SetToolTip(btnSettings, "工作模式、动效、MOD 库目录，以及配置和日志位置。");
             Controls.Add(btnSettings);
+
+            // 台面 / 方案树：同一份数据的两种看法，按钮上写的是「点了会去哪种」
+            btnView = new FlatButton(); btnView.Text = "方案树";
+            btnView.SetBounds(viewX, 16, viewW, Theme.H);
+            btnView.Click += delegate { ToggleView(); };
+            tips.SetToolTip(btnView, "台面：每个大类/分支一张卡，随手拖到哪儿就停在哪儿，位置记在 U 盘。\r\n方案树：细到每个位置（AK-47 这种），挑候选 MOD、展开套装在那边。");
+            Controls.Add(btnView);
+
+            btnPanel = new FlatButton(); btnPanel.Text = "面板";
+            btnPanel.SetBounds(panelX, 16, panelW, Theme.H);
+            btnPanel.Click += delegate { SetDrawer(!drawerOpen); };
+            tips.SetToolTip(btnPanel, "展开 / 收起左边那栏（装什么、安装选项、日志）。\r\n收起来以后整个窗口就是一张台面。");
+            Controls.Add(btnPanel);
 
             // ---- 左栏上：装什么 ----
             Section gp = new Section();
@@ -368,6 +387,8 @@ namespace Installer
             {
                 if (treeView != null)
                     treeView.SetBounds(0, 0, viewHost.ClientSize.Width, viewHost.ClientSize.Height);
+                if (deskView != null)
+                    deskView.SetBounds(0, 0, viewHost.ClientSize.Width, viewHost.ClientSize.Height);
             };
             gm.Controls.Add(viewHost);
 
@@ -448,6 +469,7 @@ namespace Installer
 
             searchTimer.Interval = 250;
             searchTimer.Tick += delegate(object s2, EventArgs e2) { searchTimer.Stop(); RefreshMods(); };
+            SetDrawer(false);                  // 默认收起：整个窗口就是一张台面
             Resize += delegate { ApplyResponsive(); };
             ApplyResponsive();
         }
@@ -535,7 +557,7 @@ namespace Installer
                     btnInstall.Enabled = true;
                     RefreshMods();
                     RefreshConflicts();
-                    if (treeView != null) treeView.Rebuild();
+                    if (treeView != null) RebuildViews();
                     lblStatus.Text = "就绪";
                 });
             });
@@ -1312,7 +1334,7 @@ namespace Installer
             Core.ScanMods();
             RefreshMods();
             RefreshConflicts();
-            if (treeView != null) { treeView.Rebuild(); treeView.Sync(); }
+            if (treeView != null) { RebuildViews(); treeView.Sync(); }
         }
 
         /// <summary>方案树里的「用这个替换」：交给树自己去换，位置和勾选都按树的规则走。</summary>
@@ -1336,7 +1358,7 @@ namespace Installer
             }
             // 窗口里还可能新建/改名/排序过分类，取消也要同步一次
             Catalog.ApplyCats();          // 人工分类落到 ModGroup.Cat 上：树、搜索全跟着走
-            if (treeView != null) { treeView.Rebuild(); treeView.Sync(); }
+            if (treeView != null) { RebuildViews(); treeView.Sync(); }
             RefreshMods();
         }
 
@@ -1392,7 +1414,7 @@ namespace Installer
             // 树有内容时只刷新状态点，不重建（搜索打字不至于反复重排）
             if (treeView != null)
             {
-                if (treeView.SlotCount == 0) treeView.Rebuild();
+                if (treeView.SlotCount == 0) RebuildViews();
                 else if (treeView.Visible) treeView.SyncIfSame();   // 正在看树：重扫后状态列、圆点要立刻对上（换了新对象就整棵重建）
                 treeView.RefreshPane();                             // 搜索词变了，右边（结果 / 候选）跟着换
             }
@@ -1877,7 +1899,7 @@ namespace Installer
                     bar.Style = ProgressBarStyle.Blocks;
                     RefreshMods();
                     RefreshConflicts(true);
-                    if (treeView != null) treeView.Rebuild();
+                    if (treeView != null) RebuildViews();
                     SetStatus(err == null ? "就绪" : "目录已切换，但重扫失败；请看日志");
                     if (err == null) lblStatus.ForeColor = Theme.Ink2;
                 });
@@ -2164,7 +2186,7 @@ namespace Installer
                 Core.ScanMods();
                 RefreshMods();
                 RefreshConflicts();
-                if (treeView != null) { treeView.Rebuild(); treeView.Sync(); }
+                if (treeView != null) { RebuildViews(); treeView.Sync(); }
             }
         }
 
@@ -2465,7 +2487,8 @@ namespace Installer
             lastRespH = H;
             SuspendLayout();
             int leftW = 396;                                   // 左栏定宽：够放最长的复选框文案
-            int rightX = Theme.M + leftW + Theme.G;
+            // 抽屉收起时右栏直接顶到左边距：整个窗口就剩一条顶栏 + 一张台面
+            int rightX = drawerOpen ? Theme.M + leftW + Theme.G : Theme.M;
             int rightW = W - Theme.M - rightX;
 
             gPlat.Width = leftW;
@@ -2493,9 +2516,13 @@ namespace Installer
             const int findW = 76;
             const int browseW = 76;
             const int settingsW = 60;
+            const int viewW = 56;       // 台面 ⇄ 方案树
+            const int panelW = 56;      // 左栏抽屉
             const int topGap = 8;
             int settingsX = W - Theme.M - settingsW;
-            int findX = settingsX - topGap - findW;
+            int panelX = settingsX - topGap - panelW;
+            int viewX = panelX - topGap - viewW;
+            int findX = viewX - topGap - findW;
             int browseX = findX - topGap - browseW;
             int modeX = browseX - topGap - modeW;
             txtGame.Width = modeX - 8 - 76;
@@ -2504,6 +2531,8 @@ namespace Installer
             btnBrowse.Left = browseX;
             btnFind.Left = findX;
             btnSettings.Left = settingsX;
+            btnView.Left = viewX;
+            btnPanel.Left = panelX;
 
             // 底部（按钮整组贴右下）
             btnOpen.Left = W - Theme.M - 104;
@@ -2514,6 +2543,78 @@ namespace Installer
             bar.Width = Math.Max(200, btnInstall.Left - 8 - Theme.M);
 
             ResumeLayout(true);
+        }
+
+        /// <summary>台面 ⇄ 方案树。按钮上写的是「点了会去哪一种」。</summary>
+        internal void ToggleView()
+        {
+            bool deskOn = deskView != null && deskView.Visible;
+            if (deskOn) ShowTreeView(); else ShowDesk();
+            if (btnView != null) btnView.Text = deskOn ? "台面" : "方案树";
+        }
+
+        /// <summary>左栏抽屉：收起后右栏顶到左边距，整窗只剩台面。</summary>
+        internal void SetDrawer(bool open)
+        {
+            drawerOpen = open;
+            if (gPlat != null) gPlat.Visible = open;
+            if (gOpt != null) gOpt.Visible = open;
+            if (gLog != null) gLog.Visible = open;
+            if (btnPanel != null) btnPanel.Text = open ? "收起" : "面板";
+            lastRespW = -1;                    // 强制重排一次（尺寸没变也要排）
+            ApplyResponsive();
+        }
+
+        /// <summary>台面自检：--deskself 走这里。</summary>
+        internal int DeskSelfTest()
+        {
+            int bad = 0;
+            ShowDesk();
+            if (deskView == null) return 1;
+
+            bad += deskView.SelfTest();
+
+            // 抽屉：收起时右栏顶到左边距，展开时让出 396 给左栏
+            SetDrawer(true);
+            if (gPlat == null || !gPlat.Visible) { bad++; Core.Log("FAIL", "DESK 抽屉展开后左栏没出来"); }
+            if (gMod.Left != Theme.M + 396 + Theme.G) { bad++; Core.Log("FAIL", "DESK 抽屉展开后右栏位置不对: " + gMod.Left); }
+            SetDrawer(false);
+            if (gPlat != null && gPlat.Visible) { bad++; Core.Log("FAIL", "DESK 抽屉收起后左栏还在"); }
+            if (gMod.Left != Theme.M) { bad++; Core.Log("FAIL", "DESK 抽屉收起后右栏没顶到左边: " + gMod.Left); }
+
+            // 视图切换：树和台面必须互斥
+            ShowTreeView();
+            if (treeView == null || !treeView.Visible) { bad++; Core.Log("FAIL", "DESK 切不回方案树"); }
+            if (deskView.Visible) { bad++; Core.Log("FAIL", "DESK 切回树后台面还盖在上面"); }
+            ShowDesk();
+            if (!deskView.Visible) { bad++; Core.Log("FAIL", "DESK 切不回台面"); }
+            if (treeView.Visible) { bad++; Core.Log("FAIL", "DESK 切到台面后树还在"); }
+
+            // 留三张图给人工核对：整窗台面 / 抽屉展开 / 方案树
+            Snap("desk-closed");
+            SetDrawer(true);
+            Snap("desk-open");
+            ShowTreeView();
+            Snap("desk-tree");
+
+            SetDrawer(false);
+            ShowDesk();
+            return bad;
+        }
+
+        private void Snap(string tag)
+        {
+            try
+            {
+                PerformLayout();
+                Application.DoEvents();
+                using (Bitmap b = new Bitmap(Size.Width, Size.Height))
+                {
+                    DrawToBitmap(b, new Rectangle(0, 0, Size.Width, Size.Height));
+                    b.Save(Path.Combine(Core.LogDir, tag + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+                }
+            }
+            catch (Exception ex) { Core.Log("WARN", "截图失败: " + ex.Message); }
         }
 
         private bool TestWritable(string dir)
@@ -2705,7 +2806,7 @@ namespace Installer
                 Core.ScanMods();
                 RefreshMods();
                 RefreshConflicts();
-                if (treeView != null) treeView.Rebuild();
+                if (treeView != null) RebuildViews();
             }
         }
 

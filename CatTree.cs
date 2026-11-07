@@ -831,6 +831,16 @@ namespace Installer
         public bool IsFolded(string cat) { return folded.Contains(cat); }
         /// <summary>自检 / 截图用：树本体（行号、拖动预览这些都在它身上）。</summary>
         internal SlotTree Body { get { return body; } }
+        /// <summary>台面用：树排好的位置表（顺序也在这上面，台面照它的顺序建卡）。</summary>
+        internal List<Slot> Slots { get { return slots; } }
+        /// <summary>按分支名找分支槽（台面右键重命名用）。</summary>
+        internal Slot BranchByName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            foreach (Slot s in slots)
+                if (IsBranchSlot(s) && string.Equals(s.Name, name, StringComparison.Ordinal)) return s;
+            return null;
+        }
 
         /// <summary>换主题后重建状态点：位图里存的是旧颜色，不重建会留在深底上看不清。</summary>
         internal void OnThemeChanged()

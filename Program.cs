@@ -73,6 +73,7 @@ namespace Installer
             bool uiCatForm = false;
             bool uiAddons = false;
             bool uiKeys = false;
+            bool deskSelf = false;
             string uiFix = null;
             string uiParts = null;
             string uiTweaks = null;
@@ -116,6 +117,7 @@ namespace Installer
                 else if (string.Equals(a, "--uicatform", StringComparison.OrdinalIgnoreCase)) uiCatForm = true;
                 else if (string.Equals(a, "--uiaddons", StringComparison.OrdinalIgnoreCase)) uiAddons = true;
                 else if (string.Equals(a, "--uikeys", StringComparison.OrdinalIgnoreCase)) { uiKeys = true; uiTest = true; }
+                else if (string.Equals(a, "--deskself", StringComparison.OrdinalIgnoreCase)) { deskSelf = true; uiTest = true; }
                 else if (a.StartsWith("--uifix=", StringComparison.OrdinalIgnoreCase)) uiFix = a.Substring(8).Trim('"');
                 else if (a.StartsWith("--parts=", StringComparison.OrdinalIgnoreCase)) uiParts = a.Substring(8);
                 else if (string.Equals(a, "--tweaks", StringComparison.OrdinalIgnoreCase)) uiTweaks = "1";
@@ -328,6 +330,14 @@ namespace Installer
                         System.Windows.Forms.Application.DoEvents();
                         Console.WriteLine("paintself failures = " + badp);
                         return badp == 0 ? 0 : 1;
+                    }
+                    if (deskSelf)
+                    {
+                        // 台面回归：建卡 / 拖动落位 / 折叠 / 重启后还记得位置。结束时还原 台面布局.ini。
+                        int badd = f.DeskSelfTest();
+                        System.Windows.Forms.Application.DoEvents();
+                        Console.WriteLine("deskself failures = " + badd);
+                        return badd == 0 ? 0 : 1;
                     }
                     if (uiKeys)
                     {
