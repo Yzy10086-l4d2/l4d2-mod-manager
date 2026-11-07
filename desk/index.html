@@ -125,6 +125,8 @@
   var CARD_W = 0.196, CARD_D = 0.272;
   var TEX_W = 500, TEX_H = 694;
   var COLS = 5;
+  // 「拿到眼前」的姿势：放大倍数、掀起的角度、飘到的位置（x 居中，z 靠前，y 抬起来离开桌面）
+  var READ_SCALE = 2.5, READ_TILT = 0.297, READ_X = 0, READ_Y = 0.33, READ_Z = 0.06;
   var GAPX = 0.222, GAPZ = 0.298;
 
   var PALETTE = {
@@ -359,14 +361,25 @@
 
     // 卡面用不受光的基础材质：纸本来就该是纸的颜色。
     // 用 Standard/Lambert 会被台灯乘一遍，浅色文字直接被冲成灰白（试过，读不清）
+    // 卡面按「纸」处理：不参与色调映射。ACES 会把深色提亮、去饱和，
+    // 小字直接糊成灰的（放大了也读不清）；关掉以后画布上是什么颜色就是什么颜色。
     var faceMat = new THREE.MeshBasicMaterial({
-      map: tex, color: 0xE9E2D2, transparent: true
+      map: tex, color: 0xffffff, transparent: true, toneMapped: false
     });
     var face = new THREE.Mesh(new THREE.PlaneGeometry(CARD_W, CARD_D), faceMat);
     face.rotation.x = -Math.PI / 2;
     face.position.y = 0.0018;
     face.receiveShadow = false;   // 卡片自身的厚度会在自己脸上投一道灰带
     group.add(face);
+
+    // 悬停判定用的隐形占地板：留在桌上不动。卡被拿到眼前以后就不再待在鼠标底下了，
+    // 如果拿放大后的卡面去判悬停，鼠标一动就会「丢掉 → 命中 → 丢掉」，卡来回抽搐
+    var hit = new THREE.Mesh(
+      new THREE.PlaneGeometry(CARD_W, CARD_D),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
+    hit.rotation.x = -Math.PI / 2;
+    hit.position.y = 0.0012;
+    scene.add(hit);
 
     var sh = new THREE.Mesh(
       new THREE.PlaneGeometry(CARD_W * 1.34, CARD_D * 1.30),
@@ -379,7 +392,7 @@
     scene.add(sh);
 
     var card = {
-      data: data, group: group, face: face, canvas: cv, tex: tex, shadow: sh,
+      data: data, group: group, face: face, hit: hit, canvas: cv, tex: tex, shadow: sh,
       rowTop: 0, rowH: 0, hoverRow: -1,
       home: new THREE.Vector3(0, 0, 0),
       pos: new THREE.Vector3(0, 0, 0),
@@ -393,6 +406,7 @@
     // 表现就是「鼠标能动、点什么都没反应」
     group.userData.card = card;
     face.userData.card = card;
+    hit.userData.card = card;
 
     drawCard(card);
     return card;
@@ -570,7 +584,11 @@
   }
 
   function buildCards() {
-    cards.forEach(function (c) { scene.remove(c.group); if (c.shadow) scene.remove(c.shadow); });
+    cards.forEach(function (c) {
+      scene.remove(c.group);
+      if (c.shadow) scene.remove(c.shadow);
+      if (c.hit) scene.remove(c.hit);
+    });
     cards = [];
 
     (state.cards || []).forEach(function (d, i) {
@@ -648,10 +666,21 @@
 
   function updateHover() {
     raycaster.setFromCamera(pointerNDC, camera);
-    var meshes = cards.map(function (c) { return c.face; });
-    var hits = raycaster.intersectObjects(meshes, false);
     var found = null, uv = null;
-    if (hits.length) { found = cardOf(hits[0].object); uv = hits[0].uv; }
+
+    // 已经抬起来的那张：鼠标还在它放大后的卡面上，就保持不动
+    // （这时候桌上它自己的占地板被它自己挡着，按占地板判会判丢）
+    if (hoverCard && hoverCard.lift > 0.35) {
+      var onIt = raycaster.intersectObject(hoverCard.face, false);
+      if (onIt.length) found = hoverCard, uv = onIt[0].uv;
+    }
+
+    if (!found) {
+      // 其余情况一律按桌上的固定占地板判：卡飞走了也不会自己躲开鼠标
+      var proxies = cards.map(function (c) { return c.hit; });
+      var hits = raycaster.intersectObjects(proxies, false);
+      if (hits.length) { found = cardOf(hits[0].object); uv = hits[0].uv; }
+    }
 
     if (found !== hoverCard) {
       if (hoverCard) { hoverCard.hoverRow = -1; drawCard(hoverCard); }
@@ -817,7 +846,7 @@
     // 有卡被举起时，别的卡压暗一点，视线自然落到手里那张
     var anyLift = 0;
     for (var k = 0; k < cards.length; k++) anyLift = Math.max(anyLift, cards[k].lift);
-    var shadeOther = 1 - 0.20 * anyLift;
+    var shadeOther = 1 - 0.42 * anyLift;
 
     for (var i = 0; i < cards.length; i++) {
       var c = cards[i];
@@ -827,18 +856,19 @@
       c.lift += (targetLift - c.lift) * Math.min(1, dt * (isHover ? 7.5 : 5.5));
 
       // 拖着走的那张也当抬起处理，不然它会从别的卡底下钻过去
+      // 拖动中的卡只要「拿起来一点」就够了（L≈0.15），别套用整个阅读姿态 ——
+      // 那会边拖边放大到 2.5 倍，看不见自己往哪放
       var dragged = (dragState != null && dragState.card === c);
-      var L = Math.max(c.lift, dragged ? 0.5 : 0);
+      var L = Math.max(c.lift, dragged ? 0.15 : 0);
 
-      // 俯视下镜头本来就快正对桌面了（离竖直线约 17°），卡只要掀起到这个角度就正对眼睛；
-      // 以前是 45° 的平视，得掀 66° 才够，现在照搬会把卡掀过头、反面朝人。
-      // 剩下的靠放大：这个距离上 1.26 倍足够看清 19 行。
-      var sc = 1 + L * 0.26;
-      var rx = L * 0.30;
-      var px = c.pos.x;
-      var pz = c.pos.z + L * 0.02;
-      // 掀起来以后纸的近边会插进桌面，按掀起角把卡整体抬到「远边贴桌」的高度
-      var dy = 0.5 * CARD_D * sc * Math.sin(rx) + 0.0024 + L * 0.008;
+      // 「凑近读」= 把这张卡真的拿到眼前：放大到 2.4 倍，同时飘到镜头前一个固定的阅读位。
+      // 只在原地放大没用 —— 桌面视角下 1.X 倍还是看不清 19 行，而且原地放大只会压住邻卡。
+      // 俯视下镜头离竖直线只差 17°，卡掀到 0.30 弧度就正对眼睛了（平视时代要掀 66°，照搬会掀过头）。
+      var sc = 1 + L * (READ_SCALE - 1);
+      var rx = L * READ_TILT;
+      var px = c.pos.x + (READ_X - c.pos.x) * L;
+      var pz = c.pos.z + (READ_Z - c.pos.z) * L;
+      var dy = 0.0024 + L * READ_Y;
 
       c.group.scale.setScalar(sc);
       c.group.rotation.x = rx;
@@ -847,15 +877,17 @@
 
       // 注意是乘不是覆盖：卡面材质本身带一层暖白底色（0xE9E2D2），
       // 直接 setRGB(v,...) 会把这层底色抹掉，纸就变成纯白
+      if (c.hit) c.hit.position.set(c.pos.x, 0.0012, c.pos.z);
+
       if (c.shadow) {
         c.shadow.position.set(c.pos.x, 0.0006, c.pos.z);
-        var ss = 1 + L * 0.45;
+        var ss = 1 + L * 1.1;
         c.shadow.scale.set(ss, ss, 1);
-        c.shadow.material.opacity = 0.42 - L * 0.14;
+        c.shadow.material.opacity = 0.42 * (1 - L * 0.75);
       }
 
       var v = shadeOther + (1 - shadeOther) * L;
-      c.face.material.color.setRGB(0.914 * v, 0.886 * v, 0.824 * v);
+      c.face.material.color.setRGB(v, v * 0.995, v * 0.975);   // 只压暗，不再乘一层暖白
     }
 
     renderer.render(scene, camera);
@@ -922,6 +954,11 @@
         dom.dispatchEvent(mk(pt.x, pt.y, 'pointerdown', 1));
         dom.dispatchEvent(mk(pt.x, pt.y, 'pointerup', 0));
       } catch (e) { err = ' EX=' + e.message; }
+      // 抬起之后把鼠标挪 1 像素：悬停要是挂在「放大后的卡面」上，这一步会把它判丢
+      // （表现就是卡在原地抽搐），所以这里必须仍然指着同一张
+      setTimeout(function () {
+        dom.dispatchEvent(mk(pt.x + 1, pt.y + 1, 'pointermove', 0));
+      }, 400);
       setTimeout(function () {
         var hit = null, ri = -1;
         (state.cards || []).forEach(function (c, cidx) {
@@ -931,8 +968,9 @@
         });
         document.title = 'TAP ' + (err ? 'ERR' : (hit ? 'ok' : 'none'))
           + ' card=' + (hit || '-') + ' row=' + ri
-          + ' hover=' + (hoverCard ? (hoverCard.data.title || '?') : '-') + err;
-      }, 150);
+          + ' hover=' + (hoverCard ? (hoverCard.data.title || '?') : '-')
+          + ' lift=' + (hoverCard ? hoverCard.lift.toFixed(2) : '0') + err;
+      }, 750);
     }, 500);
   }
 
