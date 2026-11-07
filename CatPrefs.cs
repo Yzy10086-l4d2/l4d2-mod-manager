@@ -34,6 +34,17 @@ namespace Installer
         private static readonly Dictionary<string, string> modSlot =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+        // 拖动排出来的顺序。三张表都只在「用户真的拖过」之后才写：
+        // 没拖过的大类完全照原来的自动顺序（PosOrder / 识别结果），老用户打开还是熟悉的样子。
+        private static readonly Dictionary<string, List<string>> subOrder =
+            new Dictionary<string, List<string>>(StringComparer.Ordinal);            // 大类 → 小分类顺序
+        private static readonly Dictionary<string, List<string>> posOrder =
+            new Dictionary<string, List<string>>(StringComparer.Ordinal);            // 大类␁小分类 → 位置顺序
+        private static readonly Dictionary<string, string> slotSub =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);        // 大类␁位置 → 小分类
+
+        static string PosKey(string cat, string sub) { return (cat ?? "") + "\u0001" + (sub ?? ""); }
+
         public static string FileOf()
         {
             return string.IsNullOrEmpty(Core.PkgDir) ? "" : Path.Combine(Core.PkgDir, "方案树分类.ini");
@@ -50,6 +61,7 @@ namespace Installer
         {
             loaded = true;
             cats.Clear(); slotsOfCat.Clear(); modCat.Clear(); modSlot.Clear();
+            subOrder.Clear(); posOrder.Clear(); slotSub.Clear();
             try
             {
                 string f = FileOf();
@@ -87,6 +99,32 @@ namespace Installer
                             }
                             if (sl.Length > 0 && sl != "-") modSlot[k] = sl;
                         }
+                        else if (s.StartsWith("suborder=", StringComparison.Ordinal))
+                        {
+                            string[] p = s.Substring(9).Split('\t');
+                            if (p.Length < 2) continue;
+                            string c = p[0].Trim(), sb = p[1].Trim();
+                            if (c.Length == 0 || sb.Length == 0) continue;
+                            List<string> l = OrderList(subOrder, c);
+                            if (!l.Contains(sb)) l.Add(sb);
+                        }
+                        else if (s.StartsWith("posorder=", StringComparison.Ordinal))
+                        {
+                            string[] p = s.Substring(9).Split('\t');
+                            if (p.Length < 3) continue;
+                            string c = p[0].Trim(), sb = p[1].Trim(), nm = p[2].Trim();
+                            if (c.Length == 0 || nm.Length == 0) continue;
+                            List<string> l = OrderList(posOrder, PosKey(c, sb));
+                            if (!l.Contains(nm)) l.Add(nm);
+                        }
+                        else if (s.StartsWith("slotsub=", StringComparison.Ordinal))
+                        {
+                            string[] p = s.Substring(8).Split('\t');
+                            if (p.Length < 3) continue;
+                            string c = p[0].Trim(), nm = p[1].Trim(), sb = p[2].Trim();
+                            if (c.Length == 0 || nm.Length == 0) continue;
+                            slotSub[c + "\u0001" + nm] = sb;
+                        }
                     }
             }
             catch { }
@@ -115,6 +153,21 @@ namespace Installer
                 modSlot.TryGetValue(kv.Key, out sl);
                 sb.AppendLine("mod=" + kv.Key + "\t" + kv.Value + "\t" + (string.IsNullOrEmpty(sl) ? "-" : sl));
             }
+            foreach (KeyValuePair<string, List<string>> kv in subOrder)
+                foreach (string s in kv.Value) sb.AppendLine("suborder=" + kv.Key + "\t" + s);
+            foreach (KeyValuePair<string, List<string>> kv in posOrder)
+            {
+                string c = kv.Key, sub = "";
+                int u = kv.Key.IndexOf('\u0001');
+                if (u >= 0) { c = kv.Key.Substring(0, u); sub = kv.Key.Substring(u + 1); }
+                foreach (string s in kv.Value) sb.AppendLine("posorder=" + c + "\t" + sub + "\t" + s);
+            }
+            foreach (KeyValuePair<string, string> kv in slotSub)
+            {
+                int u = kv.Key.IndexOf('\u0001');
+                if (u < 0) continue;
+                sb.AppendLine("slotsub=" + kv.Key.Substring(0, u) + "\t" + kv.Key.Substring(u + 1) + "\t" + kv.Value);
+            }
             try { File.WriteAllText(FileOf(), sb.ToString(), new UTF8Encoding(true)); }
             catch (Exception ex) { Core.Log("WARN", "方案树分类保存失败: " + ex.Message); }
         }
@@ -123,6 +176,13 @@ namespace Installer
         {
             List<string> l;
             if (!slotsOfCat.TryGetValue(cat, out l)) { l = new List<string>(); slotsOfCat[cat] = l; }
+            return l;
+        }
+
+        private static List<string> OrderList(Dictionary<string, List<string>> map, string key)
+        {
+            List<string> l;
+            if (!map.TryGetValue(key, out l)) { l = new List<string>(); map[key] = l; }
             return l;
         }
 
@@ -242,12 +302,21 @@ namespace Installer
             Save();
         }
 
-        /// <summary>回到全自动（自动大类 + 自动位置）。</summary>
+        /// <summary>回到全自动（自动大类 + 自动位置 + 自动小分类）。</summary>
         public static void Reset(ModGroup g)
         {
             Ensure();
             if (g == null) return;
-            foreach (ModItem p in g.Parts) { modCat.Remove(p.Key); modSlot.Remove(p.Key); }
+            foreach (ModItem p in g.Parts)
+            {
+                string sl;
+                modSlot.TryGetValue(p.Key, out sl);
+                modCat.Remove(p.Key);
+                modSlot.Remove(p.Key);
+                // 拖进别的小分类留下的归属也一并清掉，不然「恢复自动」之后它还赖在那一类里
+                if (!string.IsNullOrEmpty(sl))
+                    foreach (string cat in cats) slotSub.Remove(cat + "\u0001" + sl);
+            }
             Save();
         }
 
@@ -326,6 +395,136 @@ namespace Installer
             int i = l.IndexOf(name), j = i + delta;
             if (i < 0 || j < 0 || j >= l.Count) return;
             string t = l[i]; l[i] = l[j]; l[j] = t;
+            Save();
+        }
+
+        // ---------------------------------------------------------- 拖动排序（小分类 / 位置）
+
+        /// <summary>这个大类的小分类顺序被手工排过吗。没排过 = 走自动顺序。</summary>
+        public static bool HasSubOrder(string cat) { Ensure(); return subOrder.ContainsKey(cat ?? ""); }
+
+        /// <summary>手工小分类顺序；没排过返回 null。</summary>
+        public static List<string> SubOrderOf(string cat)
+        {
+            Ensure();
+            List<string> l;
+            return subOrder.TryGetValue(cat ?? "", out l) ? new List<string>(l) : null;
+        }
+
+        /// <summary>小分类排序键：没手工排过返回 -1（交给自动顺序）；排过但不在表里 = 排到最后。</summary>
+        public static int SubRankOf(string cat, string sub)
+        {
+            Ensure();
+            List<string> l;
+            if (!subOrder.TryGetValue(cat ?? "", out l)) return -1;
+            int i = l.IndexOf(sub ?? "");
+            return i < 0 ? 9000 : i;
+        }
+
+        /// <summary>这个小分类里的位置顺序被手工排过吗。</summary>
+        public static bool HasPosOrder(string cat, string sub) { Ensure(); return posOrder.ContainsKey(PosKey(cat, sub)); }
+
+        /// <summary>手工位置顺序；没排过返回 null。</summary>
+        public static List<string> PosOrderOf(string cat, string sub)
+        {
+            Ensure();
+            List<string> l;
+            return posOrder.TryGetValue(PosKey(cat, sub), out l) ? new List<string>(l) : null;
+        }
+
+        /// <summary>位置排序键：没手工排过返回 -1；排过但不在表里 = 排到最后。</summary>
+        public static int PosRankOf(string cat, string sub, string name)
+        {
+            Ensure();
+            List<string> l;
+            if (!posOrder.TryGetValue(PosKey(cat, sub), out l)) return -1;
+            int i = l.IndexOf(name ?? "");
+            return i < 0 ? 9000 : i;
+        }
+
+        /// <summary>位置被拖到别的小分类后记在这里；空 = 按自动识别归小分类。</summary>
+        public static string SubOverride(string cat, string name)
+        {
+            Ensure();
+            string v;
+            return slotSub.TryGetValue((cat ?? "") + "\u0001" + (name ?? ""), out v) ? v : "";
+        }
+
+        /// <summary>把当前的小分类顺序落成底稿 —— 第一次在这个大类里拖小分类时调用。</summary>
+        public static void SetSubOrder(string cat, List<string> subs)
+        {
+            Ensure();
+            cat = (cat ?? "").Trim();
+            if (cat.Length == 0) return;
+            subOrder[cat] = new List<string>(subs ?? new List<string>());
+            Touch();
+            Save();
+        }
+
+        /// <summary>小分类换顺序：移到 target 前面；after=true 移到它后面。</summary>
+        public static bool MoveSubTo(string cat, string sub, string target, bool after)
+        {
+            Ensure();
+            if (string.IsNullOrEmpty(sub) || string.IsNullOrEmpty(target) || sub == target) return false;
+            List<string> l;
+            if (!subOrder.TryGetValue(cat ?? "", out l)) return false;
+            int from = l.IndexOf(sub);
+            if (from < 0 || l.IndexOf(target) < 0) return false;
+            l.RemoveAt(from);
+            int at = l.IndexOf(target);
+            if (at < 0) { l.Insert(Math.Min(from, l.Count), sub); return false; }
+            l.Insert(at + (after ? 1 : 0), sub);
+            Touch();
+            Save();
+            return true;
+        }
+
+        /// <summary>把某个小分类里的位置顺序落成底稿。</summary>
+        public static void SetPosOrder(string cat, string sub, List<string> names)
+        {
+            Ensure();
+            if (string.IsNullOrEmpty(cat)) return;
+            posOrder[PosKey(cat, sub)] = new List<string>(names ?? new List<string>());
+            Save();
+        }
+
+        /// <summary>
+        /// 位置换顺序 / 换小分类。target 为空 = 落到目标小分类的开头（after=false）或末尾（after=true）。
+        /// 两个小分类的顺序表都必须已经存在（调用方先用 SetPosOrder 落底稿）。
+        /// </summary>
+        public static bool MovePosTo(string cat, string fromSub, string name, string toSub, string target, bool after)
+        {
+            Ensure();
+            if (string.IsNullOrEmpty(cat) || string.IsNullOrEmpty(name)) return false;
+            string fk = PosKey(cat, fromSub), tk = PosKey(cat, toSub);
+            List<string> fl, tl;
+            if (!posOrder.TryGetValue(tk, out tl)) return false;
+            if (fk == tk) fl = tl;
+            else if (!posOrder.TryGetValue(fk, out fl)) return false;
+            int from = fl.IndexOf(name);
+            if (from < 0) return false;
+            if (fk == tk && string.Equals(name, target, StringComparison.OrdinalIgnoreCase)) return false;
+            fl.RemoveAt(from);
+            int at;
+            if (string.IsNullOrEmpty(target)) at = after ? tl.Count : 0;
+            else
+            {
+                at = tl.IndexOf(target);
+                if (at < 0) { fl.Insert(Math.Min(from, fl.Count), name); return false; }
+                if (after) at++;
+            }
+            tl.Insert(Math.Min(at, tl.Count), name);
+            Save();
+            return true;
+        }
+
+        /// <summary>把某个位置改挂到别的小分类；sub 传空 = 恢复自动识别。</summary>
+        public static void SetSlotSub(string cat, string name, string sub)
+        {
+            Ensure();
+            if (string.IsNullOrEmpty(cat) || string.IsNullOrEmpty(name)) return;
+            string k = cat + "\u0001" + name;
+            if (string.IsNullOrEmpty(sub)) slotSub.Remove(k); else slotSub[k] = sub;
             Save();
         }
     }

@@ -138,6 +138,12 @@ namespace Installer
             MergeSame(list);
             Disambiguate(list);
             EnsureStandard(list);               // 库里没有的枪 / 人物 / 药品也占一行
+            // 被拖到别的小分类的位置，以手工归属为准。放在最后做：名字已经被 Disambiguate 定下来了
+            foreach (Slot s in list)
+            {
+                string ov = CatPrefs.SubOverride(s.Cat, s.Name);
+                if (ov.Length > 0) s.Sub = ov;
+            }
             return list;
         }
 
@@ -1213,6 +1219,39 @@ namespace Installer
             FillDetail();
         }
 
+        /// <summary>小分类排序键：手工拖过就用手工序号，没拖过用识别层的固有顺序（步枪 → 霰弹枪 …）。</summary>
+        private static int SubSortKey(Slot s)
+        {
+            int m = CatPrefs.SubRankOf(s.Cat, s.Sub);
+            return m >= 0 ? m : SlotIndex.SubRank(s.Sub);
+        }
+
+        /// <summary>位置排序键：-1 = 这个小分类没被手工排过，交给后面的自动规则。</summary>
+        private static int PosSortKey(Slot s)
+        {
+            if (!CatPrefs.HasPosOrder(s.Cat, s.Sub)) return -1;
+            int m = CatPrefs.PosRankOf(s.Cat, s.Sub, s.Name);
+            return m >= 0 ? m : 9000 + SlotIndex.NameRank(s.Sub, s.Name);
+        }
+
+        /// <summary>某个大类当前的小分类顺序（就是树里看到的顺序，落底稿时用）。</summary>
+        internal List<string> CurrentSubs(string cat)
+        {
+            List<string> r = new List<string>();
+            foreach (Slot s in slots)
+                if (s.Cat == cat && !r.Contains(s.Sub)) r.Add(s.Sub);
+            return r;
+        }
+
+        /// <summary>某个小分类当前的位置顺序（树里看到的顺序）。</summary>
+        internal List<string> CurrentPositions(string cat, string sub)
+        {
+            List<string> r = new List<string>();
+            foreach (Slot s in slots)
+                if (s.Cat == cat && s.Sub == sub) r.Add(s.Name);
+            return r;
+        }
+
         private void SortSlots()
         {
             List<string> order = SlotIndex.CatOrder(slots);
@@ -1220,8 +1259,13 @@ namespace Installer
             {
                 int ia = order.IndexOf(a.Cat), ib = order.IndexOf(b.Cat);
                 if (ia != ib) return ia.CompareTo(ib);
-                int sa = SlotIndex.SubRank(a.Sub), sb = SlotIndex.SubRank(b.Sub);
+                int sa = SubSortKey(a), sb = SubSortKey(b);
                 if (sa != sb) return sa.CompareTo(sb);
+                // 手工拖过的位置顺序优先；两边都没拖过就交回原来的自动规则
+                int pa = PosSortKey(a), pbb = PosSortKey(b);
+                bool ha = pa >= 0, hb = pbb >= 0;
+                if (ha != hb) return ha ? -1 : 1;
+                if (ha && pa != pbb) return pa.CompareTo(pbb);
                 if (a.Rank != b.Rank) return a.Rank.CompareTo(b.Rank);
                 int na = SlotIndex.NameRank(a.Sub, a.Name), nb = SlotIndex.NameRank(b.Sub, b.Name);
                 if (na != nb) return na.CompareTo(nb);
@@ -1526,6 +1570,9 @@ namespace Installer
                 Core.Log("INFO", "DRAGAPPLY 「" + name + "」本来就在「" + target + "」" + (after ? "后面" : "前面") + "，位置没变");
                 return true;
             }
+            // 「我的分支」这类不在默认大类表里的，先登记再挪 —— 否则 CatPrefs 里查不到它，移动直接失败
+            CatPrefs.EnsureCat(name);
+            CatPrefs.EnsureCat(target);
             if (!CatPrefs.MoveCatTo(name, target, after)) return false;
             Rebuild();
             // 把刚拖的那个大类滚回视野内
@@ -1535,9 +1582,65 @@ namespace Installer
             return true;
         }
 
-        /// <summary>大类标题行在树里是第几行（没有返回 -1）。</summary>
-        private int FindCatRow(string cat)
+        /// <summary>拖动小分类排序：第一次拖时把当前顺序落成底稿，再挪 —— 重启后还在。</summary>
+        internal bool MoveSubTo(string cat, string sub, string target, bool after)
         {
+            if (string.IsNullOrEmpty(cat) || string.IsNullOrEmpty(sub) || string.IsNullOrEmpty(target)) return false;
+            List<string> cur = CurrentSubs(cat);
+            if (!CatPrefs.HasSubOrder(cat)) CatPrefs.SetSubOrder(cat, cur);
+            List<string> now = CatPrefs.SubOrderOf(cat) ?? cur;
+            int ci = now.IndexOf(sub), ti = now.IndexOf(target);
+            if (ci >= 0 && ti >= 0 && ((after && ci == ti + 1) || (!after && ci == ti - 1)))
+            {
+                lblFoot.Text = "「" + sub + "」本来就在「" + target + "」" + (after ? "后面" : "前面")
+                    + " —— 位置没变。拖到隔一个的小分类上才看得出挪动";
+                Core.Log("INFO", "DRAGAPPLY 小分类「" + sub + "」本来就在「" + target + "」" + (after ? "后面" : "前面") + "，位置没变");
+                return true;
+            }
+            if (!CatPrefs.MoveSubTo(cat, sub, target, after)) return false;
+            Rebuild();
+            body.ScrollToRow(body.RowIndexOfSubOrFirst(cat, sub));
+            lblFoot.Text = "「" + sub + "」已挪到「" + target + "」" + (after ? "后面" : "前面")
+                + " · 拖住小分类行还能再换";
+            return true;
+        }
+
+        /// <summary>
+        /// 拖动位置：换顺序，或拖进另一个小分类（那一步会把归属一起记下来）。
+        /// 两个小分类的顺序都先落成底稿 —— 否则只有被拖的那个有手工顺序，其余还会按自动顺序插进来。
+        /// </summary>
+        internal bool MovePosTo(string cat, string fromSub, string name, string toSub, string target, bool after)
+        {
+            if (string.IsNullOrEmpty(cat) || string.IsNullOrEmpty(name) || string.IsNullOrEmpty(toSub)) return false;
+            bool cross = !string.Equals(fromSub, toSub, StringComparison.Ordinal);
+            if (!CatPrefs.HasPosOrder(cat, fromSub)) CatPrefs.SetPosOrder(cat, fromSub, CurrentPositions(cat, fromSub));
+            if (cross && !CatPrefs.HasPosOrder(cat, toSub)) CatPrefs.SetPosOrder(cat, toSub, CurrentPositions(cat, toSub));
+
+            if (!cross)
+            {
+                List<string> now = CatPrefs.PosOrderOf(cat, toSub) ?? new List<string>();
+                int ci = now.IndexOf(name), ti = string.IsNullOrEmpty(target) ? -1 : now.IndexOf(target);
+                if (ci >= 0 && ti >= 0 && ((after && ci == ti + 1) || (!after && ci == ti - 1)))
+                {
+                    lblFoot.Text = "「" + name + "」本来就在「" + target + "」" + (after ? "后面" : "前面")
+                        + " —— 位置没变。拖到隔一个的位置上才看得出挪动";
+                    Core.Log("INFO", "DRAGAPPLY 位置「" + name + "」本来就在「" + target + "」" + (after ? "后面" : "前面") + "，位置没变");
+                    return true;
+                }
+            }
+            if (!CatPrefs.MovePosTo(cat, fromSub, name, toSub, target, after)) return false;
+            if (cross) CatPrefs.SetSlotSub(cat, name, toSub);      // 归属跟着走，重扫之后也还在这一段里
+            Rebuild();
+            int at = body.RowIndexOfPos(cat, toSub, name);
+            if (at >= 0) body.ScrollToRow(at);
+            lblFoot.Text = cross
+                ? "「" + name + "」已放进「" + toSub + "」" + (string.IsNullOrEmpty(target) ? (after ? "末尾" : "开头") : "「" + target + "」" + (after ? "后面" : "前面"))
+                : "「" + name + "」已挪到「" + target + "」" + (after ? "后面" : "前面") + " · 拖住位置行还能再换";
+            return true;
+        }
+
+        /// <summary>大类标题行在树里是第几行（没有返回 -1）。</summary>
+        private int FindCatRow(string cat)        {
             for (int i = 0; i < body.RowCount; i++)
                 if (body.RowIsCat(i) && string.Equals(body.RowCat(i), cat, StringComparison.Ordinal)) return i;
             return -1;
@@ -2188,6 +2291,170 @@ namespace Installer
                                 Core.Log("FAIL", "CATDRAG 大类拖到自己身上居然成功了");
                             }
                         }
+                    }
+
+                    // ---- 位置 / 小分类也能拖（kind 3 / 4）：用户要「全树任意行都能拖」------------
+                    // 这几条会动 方案树分类.ini，所以先把原文整个拷走，测完一字不差写回去
+                    string prefFile = CatPrefs.FileOf(), prefRaw = null;
+                    try { if (File.Exists(prefFile)) prefRaw = Convert.ToBase64String(File.ReadAllBytes(prefFile)); } catch { }
+                    try
+                    {
+                        Rebuild();
+                        int p1 = -1, p2 = -1;
+                        for (int i = 0; i + 1 < body.RowCount; i++)
+                        {
+                            Slot x1 = body.RowSlot(i), x2 = body.RowSlot(i + 1);
+                            if (x1 == null || x2 == null) continue;
+                            if (CatTree.IsBranchSlot(x1) || x1.Pile) continue;
+                            if (x1.Cat != x2.Cat || x1.Sub != x2.Sub) continue;
+                            p1 = i; p2 = i + 1; break;
+                        }
+                        if (p1 < 0) Core.Log("WARN", "ORDER 没有同一小分类下相邻的两个位置，跳过位置换序用例");
+                        else
+                        {
+                            string c = body.RowSlot(p1).Cat, sb = body.RowSlot(p1).Sub;
+                            string nmA = body.RowSlot(p1).Name, nmB = body.RowSlot(p2).Name;
+                            if (!body.ApplyDrop(nmA, 4, p2, 2, c, sb)) { bad++; Core.Log("FAIL", "ORDER 位置「" + nmA + "」拖到「" + nmB + "」后面没执行"); }
+                            else
+                            {
+                                int q1 = body.RowIndexOfPos(c, sb, nmA), q2 = body.RowIndexOfPos(c, sb, nmB);
+                                if (q1 < 0 || q2 < 0 || q1 <= q2) { bad++; Core.Log("FAIL", "ORDER 位置换序没生效：" + nmA + "@" + q1 + "、" + nmB + "@" + q2); }
+                                else Core.Log("INFO", "ORDER 位置「" + nmA + "」拖到「" + nmB + "」后面生效（" + q2 + " → " + q1 + "）");
+                            }
+
+                            // 同一件事再走一遍真实鼠标路径：按下必须有拖资格、起拖必须是 kind=4、落点必须有模式
+                            Rebuild();
+                            int ra1 = -1, ra2 = -1;
+                            for (int i = 0; i + 1 < body.RowCount; i++)
+                            {
+                                Slot x1 = body.RowSlot(i), x2 = body.RowSlot(i + 1);
+                                if (x1 == null || x2 == null) continue;
+                                if (CatTree.IsBranchSlot(x1) || x1.Pile) continue;
+                                if (x1.Cat != x2.Cat || x1.Sub != x2.Sub) continue;
+                                ra1 = i; ra2 = i + 1; break;
+                            }
+                            if (ra1 < 0) Core.Log("WARN", "ORDER 没有相邻位置行，跳过鼠标路径用例");
+                            else
+                            {
+                                string stP;
+                                body.SimulateRealDrag(ra1, ra2, 2, out stP);
+                                Core.Log("INFO", "ORDER 位置鼠标路径 " + stP);
+                                if (!stP.Contains("pressArm=True")) { bad++; Core.Log("FAIL", "ORDER 位置行按下去没有拖动资格：" + stP); }
+                                else if (!stP.Contains("kind=4")) { bad++; Core.Log("FAIL", "ORDER 位置行起拖的 kind 不是 4：" + stP); }
+                                else if (!stP.Contains("dropMode=2")) { bad++; Core.Log("FAIL", "ORDER 位置行落点没解析出来：" + stP); }
+                                else if (!stP.Contains("pv=" + body.RowCount + "/" + body.RowCount))
+                                { bad++; Core.Log("FAIL", "ORDER 位置行拖动预览没画出来（行数应与原树一致）：" + stP); }
+                                else Core.Log("INFO", "ORDER 位置行真实鼠标路径全程走通（含拖动预览）");
+                            }
+                        }
+
+                        // 跨小分类：把一个位置拖进另一个小分类，归属必须跟着改
+                        Rebuild();
+                        string catX = null, subFrom = null, subTo = null;
+                        int rowFrom = -1, rowTo = -1;
+                        for (int i = 0; i < body.RowCount; i++)
+                        {
+                            Slot s = body.RowSlot(i);
+                            if (s == null || CatTree.IsBranchSlot(s) || s.Pile) continue;
+                            if (catX == null) { catX = s.Cat; subFrom = s.Sub; rowFrom = i; continue; }
+                            if (s.Cat == catX && s.Sub != subFrom) { subTo = s.Sub; rowTo = i; break; }
+                        }
+                        if (catX == null || subTo == null) Core.Log("WARN", "ORDER 没有跨小分类的样本，跳过 kind=4 跨类用例");
+                        else
+                        {
+                            string nmM = body.RowSlot(rowFrom).Name;
+                            if (!body.ApplyDrop(nmM, 4, rowTo, 2, catX, subFrom)) { bad++; Core.Log("FAIL", "ORDER 位置「" + nmM + "」拖进「" + subTo + "」没执行"); }
+                            else if (body.RowIndexOfPos(catX, subTo, nmM) < 0) { bad++; Core.Log("FAIL", "ORDER 位置「" + nmM + "」没进「" + subTo + "」这一段"); }
+                            else Core.Log("INFO", "ORDER 位置「" + nmM + "」跨小分类拖进「" + subTo + "」生效");
+                        }
+
+                        // 小分类换顺序：把最后一个拖到第一个前面
+                        Rebuild();
+                        if (catX == null) Core.Log("WARN", "ORDER 没有大类样本，跳过 kind=3 用例");
+                        else
+                        {
+                            List<string> subsNow = CurrentSubs(catX);
+                            if (subsNow.Count < 2) Core.Log("WARN", "ORDER 「" + catX + "」只有一个小分类，跳过 kind=3 用例");
+                            else
+                            {
+                                string sA = subsNow[subsNow.Count - 1], sB = subsNow[0];
+                                int rA = body.RowIndexOfSub(catX, sA), rB = body.RowIndexOfSub(catX, sB);
+                                if (rA < 0 || rB < 0) Core.Log("WARN", "ORDER 单分组大类不画小标题行，跳过 kind=3 用例");
+                                else
+                                {
+                                    if (!body.ApplyDrop(sA, 3, rB, 1, catX, "")) { bad++; Core.Log("FAIL", "ORDER 小分类「" + sA + "」拖到「" + sB + "」前面没执行"); }
+                                    else
+                                    {
+                                        List<string> after2 = CatPrefs.SubOrderOf(catX);
+                                        int xa = after2 == null ? -1 : after2.IndexOf(sA);
+                                        int xb = after2 == null ? -1 : after2.IndexOf(sB);
+                                        if (xa < 0 || xb < 0 || xa > xb) { bad++; Core.Log("FAIL", "ORDER 小分类顺序没生效：" + sA + "@" + xa + "、" + sB + "@" + xb); }
+                                        else Core.Log("INFO", "ORDER 小分类「" + sA + "」拖到「" + sB + "」前面生效");
+                                    }
+                                    // 跨大类必须被拒绝：小分类不属于别的大类
+                                    int rOther = -1;
+                                    for (int i = 0; i < body.RowCount; i++)
+                                    {
+                                        Slot s = body.RowSlot(i);
+                                        if (s != null && s.Cat != catX && !CatTree.IsBranchSlot(s)) { rOther = i; break; }
+                                    }
+                                    if (rOther >= 0 && body.ApplyDrop(sA, 3, rOther, 1, catX, ""))
+                                    {
+                                        bad++;
+                                        Core.Log("FAIL", "ORDER 小分类居然被拖进了别的大类");
+                                    }
+
+                                    // 小分类行也走一遍真实鼠标路径
+                                    Rebuild();
+                                    List<string> subsM = CurrentSubs(catX);
+                                    int m1 = subsM.Count >= 2 ? body.RowIndexOfSub(catX, subsM[0]) : -1;
+                                    int m2 = subsM.Count >= 2 ? body.RowIndexOfSub(catX, subsM[subsM.Count - 1]) : -1;
+                                    if (m1 < 0 || m2 < 0) Core.Log("WARN", "ORDER 找不到两个小分类标题行，跳过小分类鼠标路径用例");
+                                    else
+                                    {
+                                        string stQ;
+                                        body.SimulateRealDrag(m2, m1, 1, out stQ);
+                                        Core.Log("INFO", "ORDER 小分类鼠标路径 " + stQ);
+                                        if (!stQ.Contains("pressArm=True")) { bad++; Core.Log("FAIL", "ORDER 小分类行按下去没有拖动资格：" + stQ); }
+                                        else if (!stQ.Contains("kind=3")) { bad++; Core.Log("FAIL", "ORDER 小分类行起拖的 kind 不是 3：" + stQ); }
+                                        else if (!stQ.Contains("dropMode=1")) { bad++; Core.Log("FAIL", "ORDER 小分类行落点没解析出来：" + stQ); }
+                                        else if (!stQ.Contains("pv=" + body.RowCount + "/" + body.RowCount))
+                                        { bad++; Core.Log("FAIL", "ORDER 小分类拖动预览没画出来：" + stQ); }
+                                        else Core.Log("INFO", "ORDER 小分类行真实鼠标路径全程走通（含拖动预览）");
+                                    }
+
+                                    // 「我的分支」不在默认大类表里，拖它要先登记 —— 这条保证它也能拖到别的大类前面
+                                    Rebuild();
+                                    int rMine = FindCatRow("我的分支");
+                                    List<string> catsNow = CatPrefs.Cats();
+                                    int rFirst = catsNow.Count > 0 ? FindCatRow(catsNow[0]) : -1;
+                                    if (rMine < 0 || rFirst < 0) Core.Log("WARN", "ORDER 树里没有「我的分支」，跳过特殊大类用例");
+                                    else
+                                    {
+                                        string firstCat = catsNow[0];
+                                        if (!body.ApplyDrop("我的分支", 2, rFirst, 1)) { bad++; Core.Log("FAIL", "ORDER 「我的分支」拖到「" + firstCat + "」前面没执行"); }
+                                        else
+                                        {
+                                            List<string> after3 = CatPrefs.Cats();
+                                            int im = after3.IndexOf("我的分支"), i0 = after3.IndexOf(firstCat);
+                                            if (im < 0 || i0 < 0 || im > i0) { bad++; Core.Log("FAIL", "ORDER 「我的分支」没挪到最前：mine=" + im + "、" + firstCat + "=" + i0); }
+                                            else Core.Log("INFO", "ORDER 「我的分支」拖到「" + firstCat + "」前面生效");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        try
+                        {
+                            if (prefRaw != null) File.WriteAllBytes(prefFile, Convert.FromBase64String(prefRaw));
+                            else if (File.Exists(prefFile)) File.Delete(prefFile);
+                            CatPrefs.Reload();
+                            Rebuild();
+                        }
+                        catch (Exception ex) { Core.Log("WARN", "ORDER 还原 方案树分类.ini 失败: " + ex.Message); }
                     }
 
                     // 展开状态下把大类拖到别的分类的内容行上：必须自动归到所属大类再落位
@@ -3281,12 +3548,14 @@ namespace Installer
 
         // 拖动分支：按住分支行上下拖，松手就换顺序 / 换层级。
         // 行高只有 28px，所以每一行分三段命中：上 30% = 插到它前面，下 30% = 插到它后面，中间 = 变成它的子分支。
-        private bool pressArm;        // 这次按下的是分支行，具备拖动资格
+        private bool pressArm;        // 这次按下的是「能拖」的行（大类 / 小分类 / 分支 / 位置）
         private int pressRow = -1;
         private Point pressPt;
         private bool dragging;
         private string dragName = "";
-        private int dragKind;         // 1=分支行 2=大类标题行
+        private string dragCat = "";  // 拖的东西在哪个大类（小分类行 / 位置行要用）
+        private string dragSub = "";  // 位置行原来在哪个小分类
+        private int dragKind;         // 1=分支行 2=大类标题行 3=小分类行 4=位置行
         private int dropRow = -1;     // 落点行（-1 = 没有落点，松手就当放弃）
         private int dropMode;         // 1=插前面 2=插后面 3=放进它下面
         // 拖动预览：树直接画成「松手后」的样子 —— 搬的块从原地消失、出现在新位置
@@ -3700,6 +3969,66 @@ namespace Installer
             return (i >= 0 && i < rows.Count) ? i : -1;
         }
 
+        /// <summary>这一行能不能按住拖：大类 / 小分类 / 分支 / 位置都能，只有说明行和「一堆」不行。</summary>
+        private static bool CanDragRow(TreeRow r)
+        {
+            if (r == null) return false;
+            // 「未归类」是兜底桶，位置由 BuildRows 钉在最后，拖它没有落点 —— 干脆别给拖动的光标
+            if (r.IsCat) return r.Cat != "未归类";
+            if (r.IsSub) return true;
+            if (r.Slot == null) return false;
+            if (CatTree.IsBranchSlot(r.Slot)) return true;
+            return !r.Slot.Pile;          // 「一堆」「＋ 新建分支…」这类不参与排序
+        }
+
+        /// <summary>日志里怎么称呼这一行。</summary>
+        private static string RowDesc(TreeRow r)
+        {
+            if (r == null) return "（空）";
+            if (r.IsCat) return "大类「" + r.Cat + "」";
+            if (r.IsSub) return "小分类「" + r.Cat + " / " + r.Sub + "」";
+            if (r.Slot != null) return "位置「" + r.Slot.Name + "」";
+            return "说明行";
+        }
+
+        /// <summary>某一行属于哪个大类 / 小分类。大类标题行只给得出大类。</summary>
+        private static void SubOfRow(TreeRow r, out string cat, out string sub)
+        {
+            cat = null; sub = null;
+            if (r == null) return;
+            if (r.Slot != null) { cat = r.Slot.Cat; sub = r.Slot.Sub; return; }
+            if (r.IsSub) { cat = r.Cat; sub = r.Sub; return; }
+            if (r.IsCat) cat = r.Cat;
+        }
+
+        /// <summary>小分类标题行的下标；只有一个分组时树里不画那行标题，返回 -1 由调用方兜底。</summary>
+        internal int RowIndexOfSub(string cat, string sub)
+        {
+            for (int i = 0; i < rows.Count; i++)
+                if (rows[i].IsSub && rows[i].Cat == cat && rows[i].Sub == sub) return i;
+            return -1;
+        }
+
+        /// <summary>小分类标题行；没有标题行（单分组大类）就退回这一段的第一行位置。</summary>
+        internal int RowIndexOfSubOrFirst(string cat, string sub)
+        {
+            int i = RowIndexOfSub(cat, sub);
+            if (i >= 0) return i;
+            for (int k = 0; k < rows.Count; k++)
+                if (rows[k].Slot != null && rows[k].Slot.Cat == cat && rows[k].Slot.Sub == sub) return k;
+            return -1;
+        }
+
+        internal int RowIndexOfPos(string cat, string sub, string name)
+        {
+            for (int i = 0; i < rows.Count; i++)
+            {
+                Slot s = rows[i].Slot;
+                if (s != null && s.Cat == cat && s.Sub == sub && s.Name == name) return i;
+            }
+            return -1;
+        }
+
         protected override void OnMouseMove(MouseEventArgs e)
         {
             if (dragging)
@@ -3713,7 +4042,8 @@ namespace Installer
                 bool onSelf = (previewRows == null && p == pressRow)
                     || (previewRows != null && p >= pvIns && p <= pvB1);
                 int t = -1, mode = 0;
-                string tCat = null, tBr = null;      // 目标用名字记，最后再翻译回 rows 下标
+                // 目标用名字记，最后再翻译回 rows 下标（拖完 Rebuild 会换掉整个 rows）
+                string tCat = null, tBr = null, tSub = null, tPos = null;
                 if (p >= 0 && !onSelf)
                 {
                     TreeRow vr = view[p];
@@ -3723,7 +4053,7 @@ namespace Installer
                         // （按整块高度对半分，展开的大类不再只会判「后面」）
                         int ct = p;
                         while (ct >= 0 && !view[ct].IsCat) ct--;
-                        if (ct >= 0 && view[ct].Cat != "未归类" && view[ct].Cat != "我的分支"
+                        if (ct >= 0 && view[ct].Cat != "未归类"
                             && !string.Equals(view[ct].Cat, dragName, StringComparison.OrdinalIgnoreCase))
                         {
                             tCat = view[ct].Cat;
@@ -3733,7 +4063,41 @@ namespace Installer
                             mode = e.Y < midY ? 1 : 2;
                         }
                     }
-                    else if (vr.Slot != null && CatTree.IsBranchSlot(vr.Slot)
+                    else if (dragKind == 3)
+                    {
+                        // 小分类：只能在同一个大类里换顺序。落点是小分类标题行、或它底下的位置行都算
+                        string c, sb;
+                        SubOfRow(vr, out c, out sb);
+                        if (sb != null && string.Equals(c, dragCat, StringComparison.Ordinal)
+                            && !string.Equals(sb, dragName, StringComparison.Ordinal))
+                        {
+                            tSub = sb;
+                            mode = e.Y - 4 - p * RowH < RowH * 30 / 100 ? 1 : 2;
+                        }
+                    }
+                    else if (dragKind == 4)
+                    {
+                        // 位置：落在位置行上 = 插到它前 / 后（跨小分类时顺便换过去）；
+                        // 落在小分类标题上 = 放到那一段的开头 / 末尾。
+                        string c, sb;
+                        SubOfRow(vr, out c, out sb);
+                        if (sb != null && string.Equals(c, dragCat, StringComparison.Ordinal))
+                        {
+                            int ry = e.Y - 4 - p * RowH;
+                            bool onSlot = vr.Slot != null && !CatTree.IsBranchSlot(vr.Slot);
+                            if (onSlot && string.Equals(vr.Slot.Name, dragName, StringComparison.Ordinal))
+                            {
+                                tSub = null;                       // 落回自己身上：不解析
+                            }
+                            else
+                            {
+                                tSub = sb;
+                                if (onSlot) tPos = vr.Slot.Name;
+                                mode = ry < RowH * (onSlot ? 30 : 50) / 100 ? 1 : 2;
+                            }
+                        }
+                    }
+                    else if (dragKind == 1 && vr.Slot != null && CatTree.IsBranchSlot(vr.Slot)
                         && !string.Equals(vr.Slot.Name, dragName, StringComparison.OrdinalIgnoreCase)
                         && !IsDescendantBranch(vr.Slot.Name, dragName))          // 自己的子分支接不住（成环）
                     {
@@ -3741,7 +4105,7 @@ namespace Installer
                         int ry = e.Y - 4 - p * RowH;
                         mode = ry < RowH * 30 / 100 ? 1 : ry > RowH * 70 / 100 ? 2 : 3;
                     }
-                    else if (vr.Slot != null && string.Equals(vr.Slot.Cat, "我的分支", StringComparison.Ordinal)
+                    else if (dragKind == 1 && vr.Slot != null && string.Equals(vr.Slot.Cat, "我的分支", StringComparison.Ordinal)
                         && !string.Equals(vr.Slot.Name, dragName, StringComparison.OrdinalIgnoreCase)
                         && !IsDescendantBranch(vr.Slot.Name, dragName))
                     {
@@ -3761,15 +4125,15 @@ namespace Installer
                         {
                             int up = -1, down = -1;
                             for (int k = p - 1; k >= 0; k--)
-                                if (view[k].IsCat && view[k].Cat != "未归类" && view[k].Cat != "我的分支"
+                                if (view[k].IsCat && view[k].Cat != "未归类"
                                     && !string.Equals(view[k].Cat, dragName, StringComparison.OrdinalIgnoreCase)) { up = k; break; }
                             for (int k = p + 1; k < view.Count; k++)
-                                if (view[k].IsCat && view[k].Cat != "未归类" && view[k].Cat != "我的分支"
+                                if (view[k].IsCat && view[k].Cat != "未归类"
                                     && !string.Equals(view[k].Cat, dragName, StringComparison.OrdinalIgnoreCase)) { down = k; break; }
                             if (up >= 0 && (down < 0 || p - up <= down - p)) { tCat = view[up].Cat; mode = 2; }
                             else if (down >= 0) { tCat = view[down].Cat; mode = 1; }
                         }
-                        else
+                        else if (dragKind == 1)
                         {
                             int up = -1, down = -1;
                             for (int k = p - 1; k >= 0; k--)
@@ -3780,6 +4144,34 @@ namespace Installer
                                     && !string.Equals(view[k].Slot.Name, dragName, StringComparison.OrdinalIgnoreCase)) { down = k; break; }
                             if (up >= 0 && (down < 0 || p - up <= down - p)) { tBr = view[up].Slot.Name; mode = 2; }
                             else if (down >= 0) { tBr = view[down].Slot.Name; mode = 1; }
+                        }
+                        else
+                        {
+                            // 小分类 / 位置：吸附到同一个大类里最近的一段，别让「松在空白处」变成没反应
+                            for (int k = p; k >= 0 && mode == 0; k--)
+                            {
+                                string c, sb;
+                                SubOfRow(view[k], out c, out sb);
+                                if (sb == null || !string.Equals(c, dragCat, StringComparison.Ordinal)) continue;
+                                if (dragKind == 4 && view[k].Slot != null && !CatTree.IsBranchSlot(view[k].Slot))
+                                {
+                                    if (string.Equals(view[k].Slot.Name, dragName, StringComparison.Ordinal)) continue;
+                                    tPos = view[k].Slot.Name;
+                                }
+                                tSub = sb; mode = 2;
+                            }
+                            for (int k = p + 1; k < view.Count && mode == 0; k++)
+                            {
+                                string c, sb;
+                                SubOfRow(view[k], out c, out sb);
+                                if (sb == null || !string.Equals(c, dragCat, StringComparison.Ordinal)) continue;
+                                if (dragKind == 4 && view[k].Slot != null && !CatTree.IsBranchSlot(view[k].Slot))
+                                {
+                                    if (string.Equals(view[k].Slot.Name, dragName, StringComparison.Ordinal)) continue;
+                                    tPos = view[k].Slot.Name;
+                                }
+                                tSub = sb; mode = 1;
+                            }
                         }
                     }
                 }
@@ -3794,18 +4186,41 @@ namespace Installer
                         if (ci >= 0 && ti >= 0 && ((mode == 2 && ci == ti + 1) || (mode == 1 && ci == ti - 1)))
                             mode = mode == 2 ? 1 : 2;
                     }
-                    else
+                    else if (dragKind == 1)
                     {
                         List<string> cur = MyBranch.Names();
                         int ci = cur.IndexOf(dragName), ti = cur.IndexOf(tBr);
                         if (ci >= 0 && ti >= 0 && ((mode == 2 && ci == ti + 1) || (mode == 1 && ci == ti - 1)))
                             mode = mode == 2 ? 1 : 2;
                     }
+                    else if (dragKind == 3)
+                    {
+                        List<string> cur = owner.CurrentSubs(dragCat);
+                        int ci = cur.IndexOf(dragName), ti = cur.IndexOf(tSub);
+                        if (ci >= 0 && ti >= 0 && ((mode == 2 && ci == ti + 1) || (mode == 1 && ci == ti - 1)))
+                            mode = mode == 2 ? 1 : 2;
+                    }
+                    else if (dragKind == 4)
+                    {
+                        // 同一个小分类里拖紧邻的邻居，本来就在那个位置 → 翻到另一侧才对调得动
+                        if (!string.IsNullOrEmpty(tPos))
+                        {
+                            List<string> cur = owner.CurrentPositions(dragCat, tSub);
+                            int ci = cur.IndexOf(dragName), ti = cur.IndexOf(tPos);
+                            if (ci >= 0 && ti >= 0 && ((mode == 2 && ci == ti + 1) || (mode == 1 && ci == ti - 1)))
+                                mode = mode == 2 ? 1 : 2;
+                        }
+                    }
                 }
                 // 名字 → rows 下标（松手落位、小标签都吃 rows 空间）
                 if (mode != 0)
                 {
-                    t = dragKind == 2 ? RowIndexOfCat(tCat) : RowIndexOfBranch(tBr);
+                    if (dragKind == 2) t = RowIndexOfCat(tCat);
+                    else if (dragKind == 1) t = RowIndexOfBranch(tBr);
+                    else if (dragKind == 3) t = RowIndexOfSubOrFirst(dragCat, tSub);
+                    else t = string.IsNullOrEmpty(tPos)
+                        ? RowIndexOfSubOrFirst(dragCat, tSub)
+                        : RowIndexOfPos(dragCat, tSub, tPos);
                     if (t < 0) mode = 0;
                 }
                 if (t != dropRow || mode != dropMode)
@@ -3813,7 +4228,7 @@ namespace Installer
                     dropRow = t; dropMode = mode;
                     previewRows = null; pvIns = -1; pvB1 = -1;
                     if (mode > 0)
-                        BuildPreview(dragName, dragKind, dragKind == 2 ? tCat : tBr, mode);
+                        BuildPreview(dragKind, tCat, tSub, tPos, tBr, mode);
                 }
                 Invalidate();                 // 小标签跟着手走，整块重绘最省事
                 return;
@@ -3824,15 +4239,18 @@ namespace Installer
                 && Math.Abs(e.X - pressPt.X) + Math.Abs(e.Y - pressPt.Y) >= 4)
             {
                 dragging = true;
-                dragKind = rows[pressRow].IsCat ? 2 : 1;
-                dragName = rows[pressRow].IsCat ? rows[pressRow].Cat : rows[pressRow].Slot.Name;
+                TreeRow src = rows[pressRow];
+                dragKind = src.IsCat ? 2 : src.IsSub ? 3 : CatTree.IsBranchSlot(src.Slot) ? 1 : 4;
+                dragCat = src.IsCat || src.IsSub ? src.Cat : src.Slot.Cat;
+                dragSub = src.IsSub ? src.Sub : (src.Slot != null ? src.Slot.Sub : "");
+                dragName = src.IsCat ? src.Cat : src.IsSub ? src.Sub : src.Slot.Name;
                 dragPt = e.Location;
                 dropRow = pressRow;
                 dropMode = 0;
                 Cursor = Cursors.SizeAll;
                 tip.RemoveAll();
                 tipRow = -2;
-                Core.Log("INFO", "DRAGIN 开始拖动 「" + dragName + "」");
+                Core.Log("INFO", "DRAGIN 开始拖动 " + RowDesc(src) + "（kind=" + dragKind + "）");
                 if (dragKind == 1 && MyBranch.Names().Count < 2)
                     owner.KeepFoot("「我的分支」里只有这一个分支，拖它没有可去的位置 —— 想试拖动，先右键空白处新建一个分支，或者拖上面的大类试试");
                 Invalidate();
@@ -3854,8 +4272,7 @@ namespace Installer
             {
                 hover = i;
                 // 悬停在可拖行上时给个十字光标：不用按下去就知道这儿能拖
-                bool canDrag = i >= 0 && i < rows.Count
-                    && (rows[i].IsCat || (rows[i].Slot != null && CatTree.IsBranchSlot(rows[i].Slot)));
+                bool canDrag = i >= 0 && i < rows.Count && CanDragRow(rows[i]);
                 Cursor = canDrag ? Cursors.SizeAll : Cursors.Hand;
                 Invalidate(); UpdateTip(i);
             }
@@ -3933,18 +4350,17 @@ namespace Installer
             }
             if (e.Button == MouseButtons.Left)
             {
-                // 记下起点：分支行和大类标题行允许接着拖，别的行照旧只当点击
-                pressArm = r.IsCat || (r.Slot != null && CatTree.IsBranchSlot(r.Slot));
+                // 记下起点：大类 / 小分类 / 分支 / 位置行都能接着拖，别的行（「未归类」说明行）照旧只当点击
+                pressArm = CanDragRow(r);
                 pressRow = pressArm ? i : -1;
                 pressPt = e.Location;
-                // 大类行单击 = 折叠 / 展开，但这个动作推迟到 MouseUp：
-                // 不然按下的瞬间行就重建了，拖动根本起不来
-                if (!r.IsCat) ActivateRow(i);
+                // 激活（折叠 / 选中）推迟到 MouseUp：按下就做的话行会立刻重建，拖动根本起不来
+                if (!pressArm) ActivateRow(i);
                 // 可拖行按下立刻高亮（OnPaint 里画），并把真实输入记进日志：
                 // 有用户反馈「拖不动又看不出抓没抓住」，这两样是远程定位的唯一手段
                 if (pressArm)
                 {
-                    Core.Log("INFO", "DRAGIN 按下 行=" + i + " " + (r.IsCat ? "大类「" + r.Cat + "」" : "分支「" + r.Slot.Name + "」") + " 键=" + e.Button);
+                    Core.Log("INFO", "DRAGIN 按下 行=" + i + " " + RowDesc(r) + " 键=" + e.Button);
                     Cursor = Cursors.SizeAll;
                     InvalidateRow(i);
                 }
@@ -3957,18 +4373,23 @@ namespace Installer
             if (dragging)
             {
                 // 先把落点抄下来：ApplyDrop 里会 Rebuild，rows 整个换掉
-                string nm = dragName;
+                string nm = dragName, fcat = dragCat, fsub = dragSub;
                 int kind = dragKind, row = dropRow, mode = dropMode;
                 ResetDrag();
-                Core.Log("INFO", "DRAGIN 松手 「" + nm + "」 落点行=" + row + " 模式=" + mode);
-                if (!ApplyDrop(nm, kind, row, mode))
+                Core.Log("INFO", "DRAGIN 松手 「" + nm + "」 落点行=" + row + " 模式=" + mode + " kind=" + kind);
+                if (!ApplyDrop(nm, kind, row, mode, fcat, fsub))
                     owner.KeepFoot(kind == 2
                         ? "没挪动：拖到别的大类的地盘上（上半 = 移到它前面，下半 = 移到它后面）"
+                        : kind == 3
+                        ? "没挪动：小分类只能在同一大类里换顺序（拖到另一个小分类的上 / 下半）"
+                        : kind == 4
+                        ? "没挪动：位置拖到另一个位置的上 / 下半换顺序；拖到别的小分类标题上 = 放进那一段"
                         : "没挪动：拖到另一个分支行附近（上半 / 下半 = 换顺序，中间 = 变成子分支）");
                 return;
             }
-            if (pressArm && pressRow >= 0 && pressRow < rows.Count && rows[pressRow].IsCat)
-                ActivateRow(pressRow);          // 没拖成的大类单击：补做折叠 / 展开
+            // 没拖成 = 普通的一下点击：折叠 / 展开 / 选中，走的还是同一套激活逻辑
+            if (pressArm && pressRow >= 0 && pressRow < rows.Count)
+                ActivateRow(pressRow);
             if (pressArm) { Cursor = Cursors.Hand; InvalidateRow(pressRow); }   // 撤掉按下高亮
             pressArm = false;
             pressRow = -1;
@@ -4013,68 +4434,95 @@ namespace Installer
             return false;
         }
 
+        private static int PreviewRowOfCat(List<TreeRow> pv, string cat)
+        {
+            for (int i = 0; i < pv.Count; i++) if (pv[i].IsCat && pv[i].Cat == cat) return i;
+            return -1;
+        }
+
+        private static int PreviewRowOfBranch(List<TreeRow> pv, string name)
+        {
+            for (int i = 0; i < pv.Count; i++)
+                if (pv[i].Slot != null && CatTree.IsBranchSlot(pv[i].Slot) && pv[i].Slot.Name == name) return i;
+            return -1;
+        }
+
+        private static int PreviewRowOfSub(List<TreeRow> pv, string cat, string sub)
+        {
+            for (int i = 0; i < pv.Count; i++)
+                if (pv[i].IsSub && pv[i].Cat == cat && pv[i].Sub == sub) return i;
+            for (int i = 0; i < pv.Count; i++)
+                if (pv[i].Slot != null && pv[i].Slot.Cat == cat && pv[i].Slot.Sub == sub) return i;
+            return -1;
+        }
+
+        private static int PreviewRowOfPos(List<TreeRow> pv, string cat, string sub, string name)
+        {
+            for (int i = 0; i < pv.Count; i++)
+            {
+                Slot s = pv[i].Slot;
+                if (s != null && s.Cat == cat && s.Sub == sub && s.Name == name) return i;
+            }
+            return -1;
+        }
+
         /// <summary>
-        /// 拖动预览：把 rows 复制一份，把搬的块（大类整块地盘 / 分支连同子分支）从原地取出、
-        /// 插到目标位置 —— 树画出来就是松手后的样子。失败（目标不在了）就退回普通画法。
+        /// 拖动预览：把 rows 复制一份，把搬的块（大类整块地盘 / 小分类整段 / 分支连同子分支 / 单个位置）
+        /// 从原地取出、插到目标位置 —— 树画出来就是松手后的样子。失败（目标不在了）就退回普通画法。
         /// </summary>
-        private void BuildPreview(string name, int kind, string targetName, int mode)
+        private void BuildPreview(int kind, string tCat, string tSub, string tPos, string tBr, int mode)
         {
             try
             {
+                previewRows = null; pvIns = -1; pvB1 = -1;
+                int b0;
+                if (kind == 2) b0 = RowIndexOfCat(dragName);
+                else if (kind == 3) b0 = RowIndexOfSub(dragCat, dragName);
+                else if (kind == 1) b0 = RowIndexOfBranch(dragName);
+                else b0 = RowIndexOfPos(dragCat, dragSub, dragName);
+                if (b0 < 0) return;
+
+                int n = 1;
+                while (b0 + n < rows.Count)
+                {
+                    TreeRow x = rows[b0 + n];
+                    if (kind == 4) break;                                   // 位置只搬一行
+                    if (x.IsCat || x.IsNote) break;
+                    if (kind == 3 && x.IsSub) break;
+                    if (kind == 1 && !(x.Slot != null && CatTree.IsBranchSlot(x.Slot)
+                        && IsDescendantBranch(x.Slot.Name, dragName))) break;
+                    n++;
+                }
+
                 List<TreeRow> pv = new List<TreeRow>(rows);
-                int b0 = -1;
-                if (kind == 2)
-                {
-                    b0 = RowIndexOfCat(name);
-                    if (b0 < 0) return;
-                }
-                else
-                {
-                    b0 = RowIndexOfBranch(name);
-                    if (b0 < 0) return;
-                }
-                int b1 = b0;
-                while (b1 + 1 < pv.Count)
-                {
-                    TreeRow x = pv[b1 + 1];
-                    if (x.IsCat || x.IsSub || x.IsNote || x.Slot == null) break;
-                    if (!(CatTree.IsBranchSlot(x.Slot) && IsDescendantBranch(x.Slot.Name, name))) break;
-                    b1++;
-                }
-                int n = b1 - b0 + 1;
                 List<TreeRow> block = pv.GetRange(b0, n);
                 pv.RemoveRange(b0, n);
-                int ti = -1;
-                if (kind == 2)
-                {
-                    for (int i = 0; i < pv.Count; i++) if (pv[i].IsCat && pv[i].Cat == targetName) { ti = i; break; }
-                }
-                else
-                {
-                    for (int i = 0; i < pv.Count; i++)
-                        if (pv[i].Slot != null && CatTree.IsBranchSlot(pv[i].Slot) && pv[i].Slot.Name == targetName) { ti = i; break; }
-                }
+
+                int ti;
+                if (kind == 2) ti = PreviewRowOfCat(pv, tCat);
+                // 小分类 / 位置：落点一定和源在同一个大类里，用 dragCat 找（tCat 只在拖大类时有值）
+                else if (kind == 3) ti = PreviewRowOfSub(pv, dragCat, tSub);
+                else if (kind == 4) ti = string.IsNullOrEmpty(tPos)
+                    ? PreviewRowOfSub(pv, dragCat, tSub)
+                    : PreviewRowOfPos(pv, dragCat, tSub, tPos);
+                else ti = PreviewRowOfBranch(pv, tBr);
                 if (ti < 0) return;
+
                 int ins;
-                if (kind == 2)
-                {
-                    if (mode == 1) ins = ti;
-                    else { ins = ti + 1; while (ins < pv.Count && !pv[ins].IsCat) ins++; }   // 目标地盘之后
-                }
+                if (mode == 1) ins = ti;
+                else if (mode == 3) ins = ti + 1;                            // 变成第一个子分支
+                else if (kind == 4 && !string.IsNullOrEmpty(tPos)) ins = ti + 1;
                 else
                 {
-                    if (mode == 1) ins = ti;
-                    else if (mode == 3) ins = ti + 1;                                       // 变成第一个子分支
-                    else
-                    {                                                                       // 目标连同它的子分支之后
-                        ins = ti + 1;
-                        while (ins < pv.Count)
-                        {
-                            TreeRow x = pv[ins];
-                            if (x.IsCat || x.IsSub || x.IsNote || x.Slot == null) break;
-                            if (!(CatTree.IsBranchSlot(x.Slot) && IsDescendantBranch(x.Slot.Name, targetName))) break;
-                            ins++;
-                        }
+                    ins = ti + 1;                                            // 目标那一整块之后
+                    while (ins < pv.Count)
+                    {
+                        TreeRow x = pv[ins];
+                        if (x.IsCat || x.IsNote) break;
+                        if (kind != 2 && x.IsSub) break;
+                        if (kind == 1 && !(x.Slot != null && CatTree.IsBranchSlot(x.Slot)
+                            && IsDescendantBranch(x.Slot.Name, tBr))) break;
+                        ins++;
                     }
                 }
                 pv.InsertRange(ins, block);
@@ -4085,7 +4533,7 @@ namespace Installer
             catch { previewRows = null; pvIns = -1; pvB1 = -1; }
         }
 
-        internal bool ApplyDrop(string name, int kind, int row, int mode)
+        internal bool ApplyDrop(string name, int kind, int row, int mode, string fromCat = null, string fromSub = null)
         {
             try
             {
@@ -4111,6 +4559,33 @@ namespace Installer
                     return ok;
                 }
                 Slot t = tr.Slot;
+                if (kind == 3)
+                {
+                    // 小分类换顺序：落点必须是同一个大类里的行
+                    string c, sb;
+                    SubOfRow(tr, out c, out sb);
+                    if (sb == null || !string.Equals(c, fromCat, StringComparison.Ordinal))
+                    {
+                        Core.Log("FAIL", "DRAGAPPLY 小分类落点无效：行 " + row + " 不在「" + fromCat + "」里");
+                        return false;
+                    }
+                    if (string.Equals(sb, name, StringComparison.Ordinal)) { Core.Log("INFO", "DRAGAPPLY 小分类落点是自己 → 取消"); return false; }
+                    return owner.MoveSubTo(fromCat, name, sb, mode == 2);
+                }
+                if (kind == 4)
+                {
+                    // 位置换顺序 / 换小分类：落点是小分类标题行（放到那一段头/尾）或某个位置行
+                    string c, sb;
+                    SubOfRow(tr, out c, out sb);
+                    if (sb == null || !string.Equals(c, fromCat, StringComparison.Ordinal))
+                    {
+                        Core.Log("FAIL", "DRAGAPPLY 位置落点无效：行 " + row + " 不在「" + fromCat + "」里");
+                        return false;
+                    }
+                    bool onSlot = tr.Slot != null && !CatTree.IsBranchSlot(tr.Slot);
+                    string tPos = onSlot ? tr.Slot.Name : null;
+                    return owner.MovePosTo(fromCat, fromSub, name, sb, tPos, mode == 2);
+                }
                 if (t == null || !CatTree.IsBranchSlot(t))
                 {
                     Core.Log("FAIL", "DRAGAPPLY 分支落点无效：行 " + row + " 不是分支行");
@@ -4161,7 +4636,7 @@ namespace Installer
             pressArm = false;
             previewRows = null; pvIns = -1; pvB1 = -1;
             if (row >= 0 && row < rows.Count && rows[row].Slot != null && CatTree.IsBranchSlot(rows[row].Slot))
-                BuildPreview(dragName, 1, rows[row].Slot.Name, mode);   // 截图也走新预览画法
+                BuildPreview(1, null, null, null, rows[row].Slot.Name, mode);   // 截图也走新预览画法
             Cursor = Cursors.SizeAll;
             Invalidate();
         }
@@ -4179,7 +4654,7 @@ namespace Installer
             pressArm = false;
             previewRows = null; pvIns = -1; pvB1 = -1;
             if (row >= 0 && row < rows.Count && rows[row].IsCat)
-                BuildPreview(dragName, 2, rows[row].Cat, mode);         // 截图也走新预览画法
+                BuildPreview(2, rows[row].Cat, null, null, null, mode);      // 截图也走新预览画法
             Cursor = Cursors.SizeAll;
             Invalidate();
         }
