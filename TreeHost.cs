@@ -85,6 +85,48 @@ namespace Installer
             desk = null;
         }
 
+        /// <summary>
+        /// 自检：真开一次桌面窗口，确认浏览器起来了、重复点「桌面」不会再开一个、
+        /// 关掉之后进程真的退了。返回失败条数。
+        /// </summary>
+        internal int DeskLaunchTest()
+        {
+            int bad = 0;
+            CloseDesk();
+            ShowDesk();
+            DeskServer d = desk;
+            DateTime until = DateTime.Now.AddSeconds(25);
+            while (d != null && !d.BrowserAlive && DateTime.Now < until)
+            {
+                Application.DoEvents();
+                Thread.Sleep(100);
+            }
+            if (d == null || !d.BrowserAlive) { Core.Log("FAIL", "desklaunch 浏览器没起来"); bad++; }
+            else Core.Log("INFO", "desklaunch 桌面窗口已开：" + d.Url);
+
+            // 再点一次「桌面」：应该把原来的窗口拎到前面，而不是换一个新的
+            string u1 = d == null ? "" : d.Url;
+            ToggleView();
+            if (d == null || !d.Running || d.Url != u1)
+            {
+                Core.Log("FAIL", "desklaunch 重复点「桌面」把窗口换掉了（" + u1 + " → " + (desk == null ? "无" : desk.Url) + "）");
+                bad++;
+            }
+            Application.DoEvents();
+
+            CloseDesk();
+            for (int i = 0; i < 80 && d != null && d.BrowserAlive; i++)
+            {
+                Application.DoEvents();
+                Thread.Sleep(100);
+            }
+            if (d != null && d.BrowserAlive) { Core.Log("FAIL", "desklaunch 关掉之后浏览器还活着"); bad++; }
+            else Core.Log("INFO", "desklaunch 关掉桌面后窗口已退出");
+
+            Console.WriteLine("desklaunch failures = " + bad);
+            return bad;
+        }
+
         /// <summary>台面里双击一行：回树里定位到那个位置，候选列表就在右边。</summary>
         internal void ShowSlotInTree(Slot s)
         {

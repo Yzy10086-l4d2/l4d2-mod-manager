@@ -40,6 +40,12 @@ namespace Installer
         public string Url { get { return "http://127.0.0.1:" + port + "/"; } }
         public bool Running { get { return lis != null && !stop; } }
 
+        /// <summary>桌面窗口那个浏览器进程还活着吗（自检用）。</summary>
+        public bool BrowserAlive
+        {
+            get { try { return bro != null && !bro.HasExited; } catch { return false; } }
+        }
+
         public DeskServer(MainForm owner, CatTree treeView)
         {
             mf = owner;
@@ -186,6 +192,23 @@ namespace Installer
             foreach (string p in tries) { try { if (File.Exists(p)) return p; } catch { } }
             return "";
         }
+
+        /// <summary>桌面窗口已经开着时，把它拎到前面来（而不是关掉再开一个新的）。</summary>
+        public void Focus()
+        {
+            try
+            {
+                if (bro == null || bro.HasExited) return;
+                bro.Refresh();
+                IntPtr h = bro.MainWindowHandle;
+                if (h == IntPtr.Zero) return;
+                SetForegroundWindow(h);
+            }
+            catch { }
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
 
         public void Stop()
         {

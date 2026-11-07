@@ -75,6 +75,7 @@ namespace Installer
             bool uiKeys = false;
             int deskServe = 0;
             bool deskSelf = false;
+            bool deskLaunch = false;
             string uiFix = null;
             string uiParts = null;
             string uiTweaks = null;
@@ -120,6 +121,7 @@ namespace Installer
                 else if (string.Equals(a, "--uikeys", StringComparison.OrdinalIgnoreCase)) { uiKeys = true; uiTest = true; }
                 else if (a.StartsWith("--deskserve=", StringComparison.OrdinalIgnoreCase)) { int.TryParse(a.Substring(12), out deskServe); uiTest = true; }
                 else if (string.Equals(a, "--deskself", StringComparison.OrdinalIgnoreCase)) { deskSelf = true; uiTest = true; }
+                else if (string.Equals(a, "--desklaunch", StringComparison.OrdinalIgnoreCase)) { deskLaunch = true; uiTest = true; }
                 else if (a.StartsWith("--uifix=", StringComparison.OrdinalIgnoreCase)) uiFix = a.Substring(8).Trim('"');
                 else if (a.StartsWith("--parts=", StringComparison.OrdinalIgnoreCase)) uiParts = a.Substring(8);
                 else if (string.Equals(a, "--tweaks", StringComparison.OrdinalIgnoreCase)) uiTweaks = "1";
@@ -338,6 +340,13 @@ namespace Installer
                         // 只把桌面服务起起来，不弹浏览器：给无头截图用
                         f.DeskServe(deskServe);
                         return 0;
+                    }
+                    if (deskLaunch)
+                    {
+                        // 真开一次桌面窗口：起没起来、重复点、关掉退没退
+                        int badl = f.DeskLaunchTest();
+                        System.Windows.Forms.Application.DoEvents();
+                        return badl == 0 ? 0 : 1;
                     }
                     if (deskSelf)
                     {

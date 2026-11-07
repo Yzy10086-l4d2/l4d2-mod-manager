@@ -2547,10 +2547,10 @@ namespace Installer
             ResumeLayout(true);
         }
 
-        /// <summary>开 / 关桌面窗口。桌面在另一个窗口里，这边不切视图。</summary>
+        /// <summary>开桌面窗口。已经开着就别关掉重开 —— 把那个窗口拎到前面就好。</summary>
         internal void ToggleView()
         {
-            if (Desk != null && Desk.Running) CloseDesk();
+            if (Desk != null && Desk.Running) { Desk.Focus(); return; }
             ShowDesk();
         }
 
