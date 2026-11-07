@@ -90,6 +90,7 @@ namespace Installer
             bool addonSelf = false;
             bool dumpId = false;
             bool dumpTree = false;
+            bool treeShot = false;
             bool recogSelf = false;
             string vpkFile = null;
 
@@ -136,6 +137,7 @@ namespace Installer
                 else if (string.Equals(a, "--addonself", StringComparison.OrdinalIgnoreCase)) addonSelf = true;
                 else if (string.Equals(a, "--dumpid", StringComparison.OrdinalIgnoreCase)) dumpId = true;
                 else if (string.Equals(a, "--dumptree", StringComparison.OrdinalIgnoreCase)) dumpTree = true;
+                else if (string.Equals(a, "--tree", StringComparison.OrdinalIgnoreCase)) treeShot = true;
                 else if (string.Equals(a, "--recogself", StringComparison.OrdinalIgnoreCase)) recogSelf = true;
                 else if (a.StartsWith("--vpk=", StringComparison.OrdinalIgnoreCase)) vpkFile = a.Substring(6).Trim('"');
 
@@ -146,7 +148,7 @@ namespace Installer
             bool created;
             Mutex only = new Mutex(true, "L4D2Setup_SingleInstance", out created);
             if (!created && !selfTest && !uiTest && !copyTest && !tweakSelf && !launchSelf && !dupSelf
-                && !addonSelf && !dumpId && !dumpTree && !recogSelf && vpkFile == null)
+                && !addonSelf && !dumpId && !dumpTree && !treeShot && !recogSelf && vpkFile == null)
             {
                 ActivateExisting();
                 try { only.Dispose(); } catch { }
@@ -189,6 +191,39 @@ namespace Installer
                 Core.ScanMods();
                 string f = SlotIndex.DumpTree();
                 Console.WriteLine("dumptree: " + f);
+                return 0;
+            }
+            if (treeShot)
+            {
+                // 科技树白模：只验结构和数字，不弹窗口、不写配置
+                Core.ScanMods();
+                System.Collections.Generic.List<Slot> tslots = SlotIndex.Build();
+                SlotIndex.SortForTree(tslots, null);      // 跟方案树同一套顺序
+                System.Collections.Generic.HashSet<string> onKeys =
+                    new System.Collections.Generic.HashSet<string>(Core.Cfg.Mods, StringComparer.OrdinalIgnoreCase);
+                TreeNode troot = TreeModel.Build(tslots, delegate(ModGroup g)
+                {
+                    int n = 0;
+                    foreach (ModItem pi in g.Parts) if (onKeys.Contains(pi.Key)) n++;
+                    return n;
+                });
+                string png = TreeWhite.Render(troot, new System.Drawing.Size(1600, 1000));
+                string txt = System.IO.Path.Combine(Core.LogDir, "tree.txt");
+                System.IO.File.WriteAllText(txt, TreeModel.Dump(troot), new System.Text.UTF8Encoding(false));
+                int nSlot = 0, nCand = 0;
+                foreach (TreeNode tc in troot.Kids)
+                {
+                    nSlot += tc.Kids.Count;
+                    foreach (TreeNode ts in tc.Kids) nCand += ts.Kids.Count;
+                }
+                Console.WriteLine("tree: " + png);
+                float lo = 9999f, hi = 0f;
+                foreach (TreeNode tc in troot.Kids) { if (tc.Y < lo) lo = tc.Y; if (tc.Y + tc.H > hi) hi = tc.Y + tc.H; }
+                Console.WriteLine("tree: 大类 " + troot.Kids.Count + " / 位置 " + nSlot + " / 候选节点 " + nCand
+                    + " / 大类列 Y " + lo.ToString("0") + ".." + hi.ToString("0"));
+                lo = 9999f; hi = 0f;
+                foreach (TreeNode tc in troot.Kids) foreach (TreeNode ts in tc.Kids) { if (ts.Y < lo) lo = ts.Y; if (ts.Y + ts.H > hi) hi = ts.Y + ts.H; }
+                Console.WriteLine("tree: 位置列 Y " + lo.ToString("0") + ".." + hi.ToString("0"));
                 return 0;
             }
             if (recogSelf)
@@ -299,7 +334,7 @@ namespace Installer
             }
             // 自检全程不许写配置：以前 --addonself 把 Mode 改成本地模式后没写回去，
             // 跑一次自检用户的工作模式就变了（库从 223 个 MOD 变成 49 个）
-            if (uiTest || selfTest || addonSelf || copyTest) Core.SelfTesting = true;
+            if (uiTest || selfTest || addonSelf || copyTest || treeShot) Core.SelfTesting = true;
 
             if (uiTest)
             {

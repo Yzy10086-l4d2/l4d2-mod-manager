@@ -777,6 +777,38 @@ namespace Installer
         }
 
         /// <summary>树里的大类顺序：跟着分类顺序走，地图/喷漆不进树。</summary>
+        /// <summary>
+        /// 方案树 / 科技树共用的排序：大类 → 小分类 → 手工拖过的位置 → 名字。
+        /// isOn 只是平局时让已装的排前面，传 null 表示不看勾选状态。
+        /// </summary>
+        public static void SortForTree(List<Slot> slots, Func<Slot, bool> isOn)
+        {
+            List<string> order = CatOrder(slots);
+            slots.Sort(delegate(Slot a, Slot b)
+            {
+                int ia = order.IndexOf(a.Cat), ib = order.IndexOf(b.Cat);
+                if (ia != ib) return ia.CompareTo(ib);
+                int sa = CatTree.SubSortKey(a), sb = CatTree.SubSortKey(b);
+                if (sa != sb) return sa.CompareTo(sb);
+                int pa = CatTree.PosSortKey(a), pbb = CatTree.PosSortKey(b);
+                bool ha = pa >= 0, hb = pbb >= 0;
+                if (ha != hb) return ha ? -1 : 1;
+                if (ha && pa != pbb) return pa.CompareTo(pbb);
+                if (a.Rank != b.Rank) return a.Rank.CompareTo(b.Rank);
+                int na = NameRank(a.Sub, a.Name), nb = NameRank(b.Sub, b.Name);
+                if (na != nb) return na.CompareTo(nb);
+                int ra = CatPrefs.SlotRank(a.Cat, a.Name), rb = CatPrefs.SlotRank(b.Cat, b.Name);
+                if (ra != rb) return ra.CompareTo(rb);
+                if (isOn != null)
+                {
+                    bool x = isOn(a), y = isOn(b);
+                    if (x != y) return x ? -1 : 1;
+                }
+                int c = string.Compare(a.Name, b.Name, StringComparison.CurrentCulture);
+                return c != 0 ? c : string.Compare(a.Key, b.Key, StringComparison.Ordinal);
+            });
+        }
+
         public static List<string> CatOrder(List<Slot> slots)        {
             List<string> order = new List<string>();
             foreach (string c in CatPrefs.Cats())
@@ -1230,14 +1262,14 @@ namespace Installer
         }
 
         /// <summary>小分类排序键：手工拖过就用手工序号，没拖过用识别层的固有顺序（步枪 → 霰弹枪 …）。</summary>
-        private static int SubSortKey(Slot s)
+        internal static int SubSortKey(Slot s)
         {
             int m = CatPrefs.SubRankOf(s.Cat, s.Sub);
             return m >= 0 ? m : SlotIndex.SubRank(s.Sub);
         }
 
         /// <summary>位置排序键：-1 = 这个小分类没被手工排过，交给后面的自动规则。</summary>
-        private static int PosSortKey(Slot s)
+        internal static int PosSortKey(Slot s)
         {
             if (!CatPrefs.HasPosOrder(s.Cat, s.Sub)) return -1;
             int m = CatPrefs.PosRankOf(s.Cat, s.Sub, s.Name);
@@ -1264,29 +1296,9 @@ namespace Installer
 
         private void SortSlots()
         {
-            List<string> order = SlotIndex.CatOrder(slots);
-            slots.Sort(delegate(Slot a, Slot b)
-            {
-                int ia = order.IndexOf(a.Cat), ib = order.IndexOf(b.Cat);
-                if (ia != ib) return ia.CompareTo(ib);
-                int sa = SubSortKey(a), sb = SubSortKey(b);
-                if (sa != sb) return sa.CompareTo(sb);
-                // 手工拖过的位置顺序优先；两边都没拖过就交回原来的自动规则
-                int pa = PosSortKey(a), pbb = PosSortKey(b);
-                bool ha = pa >= 0, hb = pbb >= 0;
-                if (ha != hb) return ha ? -1 : 1;
-                if (ha && pa != pbb) return pa.CompareTo(pbb);
-                if (a.Rank != b.Rank) return a.Rank.CompareTo(b.Rank);
-                int na = SlotIndex.NameRank(a.Sub, a.Name), nb = SlotIndex.NameRank(b.Sub, b.Name);
-                if (na != nb) return na.CompareTo(nb);
-                // 人工排过的位置按人工顺序；没排过的往后
-                int ra = CatPrefs.SlotRank(a.Cat, a.Name), rb = CatPrefs.SlotRank(b.Cat, b.Name);
-                if (ra != rb) return ra.CompareTo(rb);
-                bool x = HasChecked(a), y = HasChecked(b);
-                if (x != y) return x ? -1 : 1;
-                int c = string.Compare(a.Name, b.Name, StringComparison.CurrentCulture);
-                return c != 0 ? c : string.Compare(a.Key, b.Key, StringComparison.Ordinal);
-            });
+            // 排序规则搬到 SlotIndex 里：科技树也要用同一套顺序，
+            // 两边各写一份迟早会飘（第一次做白模就因为顺序不同，19 个位置每个都触发分组标题）
+            SlotIndex.SortForTree(slots, HasChecked);
         }
 
         /// <summary>
