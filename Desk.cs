@@ -202,7 +202,7 @@ namespace Installer
                     if (ri > 0) rows.Append(',');
                     if (r.IsSub)
                     {
-                        rows.Append("{\"sub\":true,\"name\":\"").Append(Esc(r.Sub)).Append("\"}");
+                        rows.Append("{\"sep\":true,\"name\":\"").Append(Esc(r.Sub)).Append("\"}");
                         continue;
                     }
                     ModGroup g = GroupOf(r, tree);

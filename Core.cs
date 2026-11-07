@@ -69,6 +69,9 @@ namespace Installer
         // 诊断参数 --mode= 只是「这一次这么跑」，不能落进配置。
         // 记下原来的值，保存配置时照原样写回去（否则跑一次自检就把用户的工作模式改了）。
         public static string ModeLock = null;
+        // 自检期间一律不落盘：自检会真的去点界面（切模式、勾选、拖动），
+        // 跑完用户的配置就被改成测试时的样子了。SaveConfig 直接跳过最省事。
+        public static bool SelfTesting = false;
         public static string UsbRoot;
         public static string ModRoot;
         public static string DefaultModRoot;
@@ -281,6 +284,7 @@ namespace Installer
 
         public static void SaveConfig()
         {
+            if (SelfTesting) return;      // 自检不留痕
             try
             {
                 StringBuilder sb = new StringBuilder();

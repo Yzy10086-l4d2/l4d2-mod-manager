@@ -106,7 +106,7 @@
 
 <div class="bottom">
   <div class="hint" id="hint">
-    <kbd>移动鼠标</kbd>靠近卡牌会自动抬起　<kbd>单击</kbd>卡上的条目选中 / 取消　<kbd>拖动</kbd>卡片换位置　<kbd>滚轮</kbd>俯身
+    <kbd>移动鼠标</kbd>靠近卡牌会自动抬起　<kbd>单击</kbd>卡上的条目选中 / 取消　<kbd>拖动</kbd>卡片换位置　<kbd>滚轮</kbd>拉近 / 推远
   </div>
   <div class="tools">
     <button class="tool" id="btnTidy">理顺桌面</button>
@@ -135,7 +135,12 @@
 
   var stage, renderer, scene, camera, raycaster, pointerNDC;
   var clock, cards = [], tableMesh, hoverCard = null, dragState = null;
-  var DBG = null, state = null, mouseNX = 0, mouseNY = 0, leanZ = 0, camBase = { x: 0, y: 0.735, z: 0.700 };
+  // 坐姿俯视：人坐在桌子正前方，视线从桌子中上方往下压。
+  // 之前是 45° 的平视，卡片被压成一条条；现在压到大约 73°，
+  // 卡片接近正对镜头，字才读得清，也更像在一张桌子上摆桌游。
+  var DBG = null, state = null, mouseNX = 0, mouseNY = 0, zoomZ = 0,
+      camBase = { x: 0, y: 1.56, z: 0.455 },
+      lookBase = { x: 0, y: 0, z: -0.03 };
 
   // ---------- 工具 ----------
   function el(id) { return document.getElementById(id); }
@@ -193,9 +198,11 @@
     // 雾只能用来压远处的墙，密度一大就把整张桌子一并吃掉：0.3 在 1 米处约 9% 遮挡
     scene.fog = new THREE.FogExp2(0x0a0806, 0.30);
 
-    camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.02, 30);
+    // 长焦一点（38°）：同样的取景范围下透视畸变更小，卡片接近矩形，
+    // 像摆在一张桌上而不是被广角怼着脸；再远一点是为了让三排都进得来
+    camera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 0.02, 30);
     camera.position.set(camBase.x, camBase.y, camBase.z);
-    camera.lookAt(0, -0.085, -0.02);
+    camera.lookAt(lookBase.x, lookBase.y, lookBase.z);
 
     raycaster = new THREE.Raycaster();
     pointerNDC = new THREE.Vector2();
@@ -381,6 +388,12 @@
       color: catColor(data.cat || data.title)
     };
 
+    // 射线命中的是 face 这层 Mesh，parent 只是 three 的 Group —— 挂上卡对象本身，
+    // 否则 updateHover / onPointerDown 拿到的是 Group，一读 .rowH / .data 就抛异常，
+    // 表现就是「鼠标能动、点什么都没反应」
+    group.userData.card = card;
+    face.userData.card = card;
+
     drawCard(card);
     return card;
   }
@@ -460,8 +473,10 @@
       var r = rows[i];
       var y = top + i * rh;
 
-      // 小分类分隔行（步枪 / 霰弹枪…）：只当路标，不能点，也不参与选中计数
-      if (r.sub) {
+      // 小分类分隔行（步枪 / 霰弹枪…）：只当路标，不能点，也不参与选中计数。
+      // 注意判断的是 sep —— 普通行的 sub 是「这一行属于哪个小分类」，是字符串，
+      // 以前两边共用一个字段，带小分类的行全被当分隔行画了，点了也没反应
+      if (r.sep) {
         g.fillStyle = '#9C9081';
         g.font = '600 15px "Microsoft YaHei","PingFang SC",sans-serif';
         g.fillText(r.name || '', 32, y + rh / 2 + 5);
@@ -574,8 +589,9 @@
     dom.addEventListener('pointerdown', onPointerDown);
     dom.addEventListener('pointerup', onPointerUp);
     dom.addEventListener('pointerleave', function () { mouseNX = 0; mouseNY = 0; });
+    // 滚轮 = 拉近 / 推远整张桌子（俯视视角下就是往桌子凑近或往后靠）
     dom.addEventListener('wheel', function (e) {
-      leanZ = Math.max(-0.06, Math.min(0.16, leanZ + e.deltaY * 0.0004));
+      zoomZ = Math.max(-0.16, Math.min(0.34, zoomZ + e.deltaY * 0.0005));
     }, { passive: true });
     dom.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
@@ -620,12 +636,22 @@
     updateHover();
   }
 
+  // 命中的 Mesh → 它所属的卡对象（隔着 Group 也能找回来）
+  function cardOf(obj) {
+    var o = obj;
+    while (o) {
+      if (o.userData && o.userData.card) return o.userData.card;
+      o = o.parent;
+    }
+    return null;
+  }
+
   function updateHover() {
     raycaster.setFromCamera(pointerNDC, camera);
     var meshes = cards.map(function (c) { return c.face; });
     var hits = raycaster.intersectObjects(meshes, false);
     var found = null, uv = null;
-    if (hits.length) { found = hits[0].object.parent; uv = hits[0].uv; }
+    if (hits.length) { found = cardOf(hits[0].object); uv = hits[0].uv; }
 
     if (found !== hoverCard) {
       if (hoverCard) { hoverCard.hoverRow = -1; drawCard(hoverCard); }
@@ -649,14 +675,14 @@
     var rows = card.data.rows || [];
     if (py < card.rowTop || py > card.rowTop + card.rowH * rows.length) return -1;
     var vi = Math.min(rows.length - 1, Math.floor((py - card.rowTop) / card.rowH));
-    if (!rows[vi] || rows[vi].sub) return -1;
+    if (!rows[vi] || rows[vi].sep) return -1;
     return vi;
   }
 
   // 主程序按「第几个可点的行」来定位，分隔行不算，这里换算成那个下标
   function clickIndex(card, vi) {
     var rows = card.data.rows || [], k = -1;
-    for (var i = 0; i <= vi && i < rows.length; i++) if (!rows[i].sub) k++;
+    for (var i = 0; i <= vi && i < rows.length; i++) if (!rows[i].sep) k++;
     return k;
   }
 
@@ -666,7 +692,8 @@
     var meshes = cards.map(function (c) { return c.face; });
     var hits = raycaster.intersectObjects(meshes, false);
     if (!hits.length) return;
-    var card = hits[0].object.parent;
+    var card = cardOf(hits[0].object);
+    if (!card) return;
     dragState = {
       card: card, sx: e.clientX, sy: e.clientY, moved: false,
       row: rowAt(card, hits[0].uv), uv: hits[0].uv
@@ -686,6 +713,8 @@
 
     if (st.row >= 0) {
       var row = st.card.data.rows[st.row];
+      // 空位置（这一格还没有 MOD）：点了也该有回应，不然像是点坏了
+      if (row.name === '—') { toast('这个位置还没有 MOD —— 回方案树里给它挑一个'); return; }
       row.checked = !row.checked;
       recount(st.card.data);
       drawCard(st.card);
@@ -752,8 +781,11 @@
   }
 
   function tidy() {
+    // 本地那份摆位也得清掉：layoutCards() 会先照 state.layout 排，
+    // 不清理的话点「理顺桌面」等于什么也没做（卡片按老位置又摆回去）
+    if (state) state.layout = {};
     layoutCards();
-    api('/api/tidy', {}).catch(function () {});
+    api('/api/tidy', {}).catch(function () { toast('演示模式：只在这次摆好'); });
     toast('桌面已理顺');
   }
 
@@ -773,13 +805,14 @@
     var dt = Math.min(clock.getDelta(), 0.05);
     var t = clock.elapsedTime;
 
-    // 相机：坐姿微呼吸 + 跟随鼠标轻微视差 + 滚轮俯身
-    var bx = Math.sin(t * 0.31) * 0.006;
+    // 相机：坐姿微呼吸 + 跟随鼠标轻微视差 + 滚轮拉近 / 推远
+    var bx = Math.sin(t * 0.31) * 0.005;
     var by = Math.sin(t * 0.47 + 1.2) * 0.004;
-    camera.position.x += ((camBase.x + bx + mouseNX * 0.05) - camera.position.x) * Math.min(1, dt * 4);
-    camera.position.y += ((camBase.y + by - mouseNY * 0.012) - camera.position.y) * Math.min(1, dt * 4);
-    camera.position.z += ((camBase.z + leanZ) - camera.position.z) * Math.min(1, dt * 5);
-    camera.lookAt(mouseNX * 0.045, -0.105, -0.02 - leanZ * 0.4);
+    camera.position.x += ((camBase.x + bx + mouseNX * 0.030) - camera.position.x) * Math.min(1, dt * 4);
+    camera.position.y += ((camBase.y + by - mouseNY * 0.008 + zoomZ * 0.92) - camera.position.y) * Math.min(1, dt * 4);
+    camera.position.z += ((camBase.z + zoomZ * 0.55) - camera.position.z) * Math.min(1, dt * 5);
+    // 视线始终落在桌子中间：拉远时看整桌，凑近时也还在中间
+    camera.lookAt(mouseNX * 0.022, lookBase.y, lookBase.z - zoomZ * 0.06);
 
     // 有卡被举起时，别的卡压暗一点，视线自然落到手里那张
     var anyLift = 0;
@@ -793,29 +826,35 @@
 
       c.lift += (targetLift - c.lift) * Math.min(1, dt * (isHover ? 7.5 : 5.5));
 
-      // 抬卡 = 立起来 + 往镜头方向滑近。只放大不动位置没用：
-      // 卡只有 19.6×27.2cm，在桌面距离上再放大也读不下 19 行，必须靠近才看得清
-      var sc = 1 + c.lift * 0.36;
-      var rx = c.lift * 1.15;
-      var px = c.pos.x * (1 - c.lift * 0.55);
-      var pz = c.pos.z + (0.05 - c.pos.z) * c.lift * 0.88;
-      var dy = 0.5 * CARD_D * sc * Math.sin(rx) + 0.0024;
+      // 拖着走的那张也当抬起处理，不然它会从别的卡底下钻过去
+      var dragged = (dragState != null && dragState.card === c);
+      var L = Math.max(c.lift, dragged ? 0.5 : 0);
+
+      // 俯视下镜头本来就快正对桌面了（离竖直线约 17°），卡只要掀起到这个角度就正对眼睛；
+      // 以前是 45° 的平视，得掀 66° 才够，现在照搬会把卡掀过头、反面朝人。
+      // 剩下的靠放大：这个距离上 1.26 倍足够看清 19 行。
+      var sc = 1 + L * 0.26;
+      var rx = L * 0.30;
+      var px = c.pos.x;
+      var pz = c.pos.z + L * 0.02;
+      // 掀起来以后纸的近边会插进桌面，按掀起角把卡整体抬到「远边贴桌」的高度
+      var dy = 0.5 * CARD_D * sc * Math.sin(rx) + 0.0024 + L * 0.008;
 
       c.group.scale.setScalar(sc);
       c.group.rotation.x = rx;
-      c.group.rotation.y = c.lift * Math.atan2(camera.position.x - px, camera.position.z - pz) * 0.30;
+      c.group.rotation.y = L * Math.atan2(camera.position.x - px, camera.position.z - pz) * 0.30;
       c.group.position.set(px, dy, pz);
 
       // 注意是乘不是覆盖：卡面材质本身带一层暖白底色（0xE9E2D2），
       // 直接 setRGB(v,...) 会把这层底色抹掉，纸就变成纯白
       if (c.shadow) {
         c.shadow.position.set(c.pos.x, 0.0006, c.pos.z);
-        var ss = 1 + c.lift * 0.5;
+        var ss = 1 + L * 0.45;
         c.shadow.scale.set(ss, ss, 1);
-        c.shadow.material.opacity = 0.42 - c.lift * 0.16;
+        c.shadow.material.opacity = 0.42 - L * 0.14;
       }
 
-      var v = shadeOther + (1 - shadeOther) * c.lift;
+      var v = shadeOther + (1 - shadeOther) * L;
       c.face.material.color.setRGB(0.914 * v, 0.886 * v, 0.824 * v);
     }
 
@@ -832,6 +871,103 @@
         + ' vp=' + window.innerWidth + 'x' + window.innerHeight
         + ' aspect=' + camera.aspect.toFixed(2);
     }
+  }
+
+
+  // ---- 自检：算出一行在屏幕上的位置，然后把整条点击链路真的走一遍 ----
+  function rowScreenPoint(card, k) {
+    var rows = card.data.rows || [], vi = -1, seen = -1;
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].sep) continue;
+      seen++;
+      if (seen === k) { vi = i; break; }
+    }
+    if (vi < 0) return null;
+    var py = card.rowTop + (vi + 0.5) * card.rowH;     // 贴图内的像素行中心
+    var v = 1 - py / TEX_H;                            // → uv.y
+    // 卡面在 group 里是躺平的（rotation.x = -90°），uv.y 越大 = 世界 -z 方向
+    var local = new THREE.Vector3(0, 0, (0.5 - v) * CARD_D);
+    var world = card.group.localToWorld(local);
+    var p = world.project(camera);
+    return {
+      x: (p.x * 0.5 + 0.5) * window.innerWidth,
+      y: (-p.y * 0.5 + 0.5) * window.innerHeight,
+      vi: vi
+    };
+  }
+
+  function tapOnce(ci, k) {
+    var before = (state.cards || []).map(function (c) {
+      return (c.rows || []).map(function (r) { return !!r.checked; });
+    });
+    var card = cards[ci];
+    if (!card) { document.title = 'TAP ERR 没有第 ' + ci + ' 张卡'; return; }
+    var dom = renderer.domElement;
+    var mk = function (x, y, type, btns) {
+      return new PointerEvent(type, {
+        clientX: x, clientY: y, bubbles: true, cancelable: true,
+        pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: btns
+      });
+    };
+    setTimeout(function () {
+      // 坐标必须等画面真的渲染过一帧再算：project() 用的是 matrixWorldInverse，
+      // 那是 renderer.render 里才更新的，开机瞬间算出来的位置会偏到别的卡上
+      camera.updateMatrixWorld();
+      camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+      var pt = rowScreenPoint(card, k);
+      if (!pt) { document.title = 'TAP ERR 第 ' + ci + ' 张卡没有第 ' + k + ' 行'; return; }
+      var err = '';
+      try {
+        dom.dispatchEvent(mk(pt.x, pt.y, 'pointermove', 0));
+        dom.dispatchEvent(mk(pt.x, pt.y, 'pointerdown', 1));
+        dom.dispatchEvent(mk(pt.x, pt.y, 'pointerup', 0));
+      } catch (e) { err = ' EX=' + e.message; }
+      setTimeout(function () {
+        var hit = null, ri = -1;
+        (state.cards || []).forEach(function (c, cidx) {
+          (c.rows || []).forEach(function (r, ridx) {
+            if (!!r.checked !== before[cidx][ridx]) { hit = c.title; ri = ridx; }
+          });
+        });
+        document.title = 'TAP ' + (err ? 'ERR' : (hit ? 'ok' : 'none'))
+          + ' card=' + (hit || '-') + ' row=' + ri
+          + ' hover=' + (hoverCard ? (hoverCard.data.title || '?') : '-') + err;
+      }, 150);
+    }, 500);
+  }
+
+
+  function dragOnce(ci, dx, dy) {
+    var card = cards[ci];
+    if (!card) { document.title = 'DRAG ERR 没有第 ' + ci + ' 张卡'; return; }
+    var dom = renderer.domElement;
+    var mk = function (x, y, type, btns) {
+      return new PointerEvent(type, {
+        clientX: x, clientY: y, bubbles: true, cancelable: true,
+        pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: btns
+      });
+    };
+    setTimeout(function () {
+      camera.updateMatrixWorld();
+      camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+      var pt = rowScreenPoint(card, 0);
+      if (!pt) { document.title = 'DRAG ERR 拿不到坐标'; return; }
+      var x0 = card.pos.x, z0 = card.pos.z;
+      dom.dispatchEvent(mk(pt.x, pt.y, 'pointermove', 0));
+      dom.dispatchEvent(mk(pt.x, pt.y, 'pointerdown', 1));
+      var steps = 8, i = 0;
+      (function step() {
+        i++;
+        dom.dispatchEvent(mk(pt.x + dx * i / steps, pt.y + dy * i / steps, 'pointermove', 1));
+        if (i < steps) { setTimeout(step, 16); return; }
+        dom.dispatchEvent(mk(pt.x + dx, pt.y + dy, 'pointerup', 0));
+        setTimeout(function () {
+          document.title = 'DRAG ' + (Math.abs(card.pos.x - x0) + Math.abs(card.pos.z - z0) > 0.01 ? 'ok' : 'none')
+            + ' from=' + x0.toFixed(3) + ',' + z0.toFixed(3)
+            + ' to=' + card.pos.x.toFixed(3) + ',' + card.pos.z.toFixed(3);
+        }, 300);
+      })();
+    }, 500);
   }
 
   function onResize() {
@@ -880,6 +1016,14 @@
       else { de.parentNode.removeChild(de); }
       if (/[?&]hard=1/.test(location.search)) cards[+lq[1]].lift = 1;
     }
+
+    // 自检用：?tap=卡片序号,可点行序号 —— 算出那一行的屏幕坐标，再模拟一次真实点击，
+    // 走的是和鼠标一模一样的 pointerdown/up 路径。结果写进 <title>，用 --dump-dom 读。
+    var tap = /[?&]tap=(\d+),(\d+)/.exec(location.search);
+    if (tap) tapOnce(+tap[1], +tap[2]);
+    // 拖动同理：?drag=卡片序号,dx,dy（像素），松手后把落位写进 <title>
+    var drg = /[?&]drag=(\d+),(-?\d+),(-?\d+)/.exec(location.search);
+    if (drg) dragOnce(+drg[1], +drg[2], +drg[3]);
 
     startPoll();
 

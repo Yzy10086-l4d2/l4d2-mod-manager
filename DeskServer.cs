@@ -396,18 +396,23 @@ namespace Installer
                 }
                 else if (path == "/api/move")
                 {
-                    string ck, sx, sz;
-                    d.TryGetValue("card", out ck);
+                    // 前端拖完发的是 {key,x,z}，pick 那边发的是 {card,row} —— 两个都认，
+                    // 之前这里只读 "card"，拖完位子永远存不进去（松手看着动了，重开又回到原位）
+                    string ck = null, sx, sz;
+                    if (!d.TryGetValue("card", out ck) || string.IsNullOrEmpty(ck))
+                        d.TryGetValue("key", out ck);
                     d.TryGetValue("x", out sx);
                     d.TryGetValue("z", out sz);
                     float x, z;
                     float.TryParse(sx, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out x);
                     float.TryParse(sz, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out z);
-                    DeskLayout.Put(ck, x, z);
+                    // 走 UI 线程写：摆位表是普通 Dictionary，state 那边正在读，
+                    // 两个线程同时改会出问题
+                    mf.Invoke(new Action(delegate { DeskLayout.Put(ck, x, z); }));
                 }
                 else if (path == "/api/tidy")
                 {
-                    DeskLayout.Clear();
+                    mf.Invoke(new Action(delegate { DeskLayout.Clear(); }));
                 }
                 else if (path == "/api/install")
                 {

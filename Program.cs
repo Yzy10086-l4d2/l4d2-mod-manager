@@ -297,6 +297,10 @@ namespace Installer
                 System.IO.Directory.Delete(tmp, true);
                 return 0;
             }
+            // 自检全程不许写配置：以前 --addonself 把 Mode 改成本地模式后没写回去，
+            // 跑一次自检用户的工作模式就变了（库从 223 个 MOD 变成 49 个）
+            if (uiTest || selfTest || addonSelf || copyTest) Core.SelfTesting = true;
+
             if (uiTest)
             {
                 Application.EnableVisualStyles();
