@@ -73,6 +73,7 @@ namespace Installer
             bool uiCatForm = false;
             bool uiAddons = false;
             bool uiKeys = false;
+            int deskServe = 0;
             bool deskSelf = false;
             string uiFix = null;
             string uiParts = null;
@@ -117,6 +118,7 @@ namespace Installer
                 else if (string.Equals(a, "--uicatform", StringComparison.OrdinalIgnoreCase)) uiCatForm = true;
                 else if (string.Equals(a, "--uiaddons", StringComparison.OrdinalIgnoreCase)) uiAddons = true;
                 else if (string.Equals(a, "--uikeys", StringComparison.OrdinalIgnoreCase)) { uiKeys = true; uiTest = true; }
+                else if (a.StartsWith("--deskserve=", StringComparison.OrdinalIgnoreCase)) { int.TryParse(a.Substring(12), out deskServe); uiTest = true; }
                 else if (string.Equals(a, "--deskself", StringComparison.OrdinalIgnoreCase)) { deskSelf = true; uiTest = true; }
                 else if (a.StartsWith("--uifix=", StringComparison.OrdinalIgnoreCase)) uiFix = a.Substring(8).Trim('"');
                 else if (a.StartsWith("--parts=", StringComparison.OrdinalIgnoreCase)) uiParts = a.Substring(8);
@@ -330,6 +332,12 @@ namespace Installer
                         System.Windows.Forms.Application.DoEvents();
                         Console.WriteLine("paintself failures = " + badp);
                         return badp == 0 ? 0 : 1;
+                    }
+                    if (deskServe > 0)
+                    {
+                        // 只把桌面服务起起来，不弹浏览器：给无头截图用
+                        f.DeskServe(deskServe);
+                        return 0;
                     }
                     if (deskSelf)
                     {

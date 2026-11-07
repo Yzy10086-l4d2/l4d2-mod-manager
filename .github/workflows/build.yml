@@ -33,8 +33,10 @@ jobs:
             /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll ^
             /reference:System.Windows.Forms.dll /reference:System.IO.Compression.dll ^
             /reference:System.IO.Compression.FileSystem.dll ^
+            /resource:desk\index.html,desk.html ^
+            /resource:desk\three.min.js,three.js ^
             AssemblyInfo.cs Theme.cs Glyph.cs Program.cs Core.cs Launch.cs Dup.cs Catalog.cs Parts.cs ^
-            CatPrefs.cs MyBranch.cs Tweaks.cs Work.cs Mods.cs Identify.cs SelfTest.cs CatTree.cs TreeHost.cs Desk.cs Ui.cs SettingsForm.cs
+            CatPrefs.cs MyBranch.cs Tweaks.cs Work.cs Mods.cs Identify.cs SelfTest.cs CatTree.cs TreeHost.cs Desk.cs DeskServer.cs Ui.cs SettingsForm.cs
           if errorlevel 1 exit /b 1
           dir L4D2Setup.exe
 

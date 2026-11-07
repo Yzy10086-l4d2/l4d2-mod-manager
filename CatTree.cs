@@ -3648,6 +3648,8 @@ namespace Installer
                 // 拖动且有预览时，画的就是「松手后」的树 —— 搬的块已出现在新位置
                 List<TreeRow> view = (dragging && previewRows != null) ? previewRows : rows;
                 int hov = dragging ? -1 : hover;
+                // 大类 / 小分类右边那个数字：按完整位置表算，收起子分类也不变
+                List<Slot> all = owner.Slots;
                 for (int i = 0; i < view.Count; i++)
                 {
                     TreeRow r = view[i];
@@ -3662,9 +3664,10 @@ namespace Installer
                         Glyph.Draw(g, Glyph.ForCat(r.Cat), new Rectangle(18, y + (RowH - 18) / 2, 18, 18), Theme.Ink2);
                         TextRenderer.DrawText(g, r.Cat, Theme.UIBold, new Rectangle(42, y, W - 106, RowH), Theme.Ink,
                             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                        // 计数按整个大类算，不受折叠影响 —— 收起来只是看不见行，
+                        // 位置数不该跟着变（桌面上那张卡写的也是这个数）
                         int n = 0;
-                        foreach (TreeRow x in rows)
-                            if (!x.IsCat && !x.IsSub && !x.IsNote && x.Cat == r.Cat) n++;
+                        if (all != null) foreach (Slot sl in all) if (sl.Cat == r.Cat) n++;
                         string num = r.Cat == "未归类" ? owner.Unmatched + " 个" : n + " 个";
                         TextRenderer.DrawText(g, num, Theme.UISmall, new Rectangle(W - 62, y, 50, RowH), Theme.Ink3,
                             TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
@@ -3683,8 +3686,7 @@ namespace Installer
                             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding
                             | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
                         int k = 0;
-                        foreach (TreeRow x in rows)
-                            if (!x.IsCat && !x.IsSub && !x.IsNote && x.Cat == r.Cat && x.Sub == r.Sub) k++;
+                        if (all != null) foreach (Slot sl in all) if (sl.Cat == r.Cat && sl.Sub == r.Sub) k++;
                         string num = k + " 个";
                         TextRenderer.DrawText(g, num, Theme.UISmall, new Rectangle(W - 62, y, 50, RowH), Theme.Ink3,
                             TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);

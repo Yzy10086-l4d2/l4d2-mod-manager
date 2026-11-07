@@ -1,0 +1,907 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>桌面</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0907; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+    color: #EDE6D8; cursor: default; user-select: none;
+    -webkit-font-smoothing: antialiased;
+  }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { display: block; }
+
+  .top {
+    position: fixed; left: 0; right: 0; top: 0; height: 56px;
+    display: flex; align-items: center; gap: 18px; padding: 0 22px;
+    background: linear-gradient(180deg, rgba(10,8,6,.82) 0%, rgba(10,8,6,0) 100%);
+    pointer-events: none; z-index: 10;
+  }
+  .top > * { pointer-events: auto; }
+  .back {
+    display: inline-flex; align-items: center; gap: 7px;
+    height: 30px; padding: 0 13px 0 10px; border-radius: 999px;
+    border: 1px solid rgba(237,230,216,.16); background: rgba(237,230,216,.05);
+    color: #CFC7B6; font-size: 12.5px; cursor: pointer;
+    transition: background .15s, border-color .15s, color .15s;
+  }
+  .back:hover { background: rgba(237,230,216,.11); border-color: rgba(237,230,216,.3); color: #F4EEE1; }
+  .back svg { display: block; }
+  .title { font-size: 13px; color: #7C6F5C; letter-spacing: .12em; }
+  .spacer { flex: 1; }
+  .stats { display: flex; align-items: center; gap: 8px; }
+  .pill {
+    display: inline-flex; align-items: baseline; gap: 5px;
+    height: 30px; padding: 0 13px; border-radius: 999px;
+    background: rgba(237,230,216,.05); border: 1px solid rgba(237,230,216,.12);
+    font-size: 12px; color: #8C8272;
+  }
+  .pill b { font-size: 14px; font-weight: 500; color: #E7DFCE; }
+  .pill.on { border-color: rgba(93,202,165,.35); background: rgba(93,202,165,.1); }
+  .pill.on b { color: #6FDDB6; }
+  .pill.off { border-color: rgba(224,107,107,.3); background: rgba(224,107,107,.08); }
+  .pill.off b { color: #E08A8A; }
+
+  .bottom {
+    position: fixed; left: 0; right: 0; bottom: 0; padding: 0 22px 18px;
+    display: flex; align-items: flex-end; gap: 20px; z-index: 10; pointer-events: none;
+  }
+  .hint {
+    flex: 1; font-size: 12px; line-height: 1.9; color: #6E6455;
+    text-shadow: 0 1px 3px rgba(0,0,0,.8);
+  }
+  .hint kbd {
+    display: inline-block; min-width: 15px; padding: 1px 5px; margin: 0 2px;
+    border-radius: 4px; border: 1px solid rgba(237,230,216,.18);
+    background: rgba(237,230,216,.06); color: #B8AD99;
+    font-family: inherit; font-size: 11px; text-align: center; line-height: 1.5;
+  }
+  .tools { display: flex; gap: 8px; pointer-events: auto; }
+  .tool {
+    height: 30px; padding: 0 14px; border-radius: 8px; cursor: pointer;
+    border: 1px solid rgba(237,230,216,.14); background: rgba(15,12,9,.62);
+    color: #A89D8A; font-size: 12px; backdrop-filter: blur(6px);
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  .tool:hover { background: rgba(237,230,216,.1); color: #F2ECDE; border-color: rgba(237,230,216,.28); }
+  .tool.primary { border-color: rgba(93,202,165,.4); color: #7FE0BC; background: rgba(93,202,165,.12); }
+  .tool.primary:hover { background: rgba(93,202,165,.2); color: #A2EDD2; }
+
+  #toast {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    padding: 12px 20px; border-radius: 10px; background: rgba(12,10,8,.92);
+    border: 1px solid rgba(237,230,216,.14); font-size: 13px; color: #DCD3C1;
+    opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 20;
+  }
+  #toast.show { opacity: 1; }
+  #loading {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: #0b0907; color: #6B6154; font-size: 13px; letter-spacing: .16em; z-index: 30;
+    transition: opacity .5s;
+  }
+  #loading.gone { opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+
+<div class="top">
+  <div class="back" id="back">
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <path d="M8.5 3L4.5 7l4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    方案树
+  </div>
+  <div class="title">桌面</div>
+  <div class="spacer"></div>
+  <div class="stats">
+    <div class="pill" title="方案树里一共多少个位置"><b id="stMods">0</b>个位置</div>
+    <div class="pill on" title="已经有选中 MOD 的位置"><b id="stSel">0</b>已选</div>
+    <div class="pill off" title="认不出改的是什么、收在最底下「未归类」里的 MOD"><b id="stMiss">0</b>未归类</div>
+  </div>
+</div>
+
+<div class="bottom">
+  <div class="hint" id="hint">
+    <kbd>移动鼠标</kbd>靠近卡牌会自动抬起　<kbd>单击</kbd>卡上的条目选中 / 取消　<kbd>拖动</kbd>卡片换位置　<kbd>滚轮</kbd>俯身
+  </div>
+  <div class="tools">
+    <button class="tool" id="btnTidy">理顺桌面</button>
+    <button class="tool primary" id="btnInstall">开始安装</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+<div id="loading">正在摆桌…</div>
+
+<script src="three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var CARD_W = 0.196, CARD_D = 0.272;
+  var TEX_W = 500, TEX_H = 694;
+  var COLS = 5;
+  var GAPX = 0.222, GAPZ = 0.298;
+
+  var PALETTE = {
+    '枪械': '#D08A4A', '投掷物': '#C3663F', '近战': '#B8574A', '武器升级': '#B98A3E',
+    '人物': '#5B8FC7', '药品': '#4F9E86', '杂项': '#8A7BA8', '我的分支': '#7C9E4E',
+    '未归类': '#8A8375'
+  };
+
+  var stage, renderer, scene, camera, raycaster, pointerNDC;
+  var clock, cards = [], tableMesh, hoverCard = null, dragState = null;
+  var DBG = null, state = null, mouseNX = 0, mouseNY = 0, leanZ = 0, camBase = { x: 0, y: 0.735, z: 0.700 };
+
+  // ---------- 工具 ----------
+  function el(id) { return document.getElementById(id); }
+
+  function toast(msg) {
+    var t = el('toast');
+    t.textContent = msg; t.classList.add('show');
+    clearTimeout(t._h);
+    t._h = setTimeout(function () { t.classList.remove('show'); }, 1800);
+  }
+
+  function roundRect(g, x, y, w, h, r) {
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.arcTo(x + w, y, x + w, y + h, r);
+    g.arcTo(x + w, y + h, x, y + h, r);
+    g.arcTo(x, y + h, x, y, r);
+    g.arcTo(x, y, x + w, y, r);
+    g.closePath();
+  }
+
+  function catColor(cat) {
+    if (PALETTE[cat]) return PALETTE[cat];
+    var h = 0;
+    for (var i = 0; i < cat.length; i++) h = (h * 31 + cat.charCodeAt(i)) & 0xffff;
+    var hue = h % 360;
+    return 'hsl(' + hue + ', 38%, 58%)';
+  }
+
+  function stateInk(s) {
+    if (!s) return '#8A8375';
+    if (s.indexOf('仅游戏内') === 0) return '#8C82A0';
+    if (s.indexOf('未装') === 0) return '#9A9285';
+    if (s.indexOf('部分') === 0) return '#B98A3E';
+    if (s.indexOf('关') >= 0 || s.indexOf('关闭') >= 0) return '#C07A5A';
+    if (s.indexOf('开') >= 0 || s.indexOf('开启') >= 0) return '#5DA97F';
+    return '#8A8375';
+  }
+
+  // ---------- 场景 ----------
+  function init() {
+    stage = el('stage');
+    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.02;
+    stage.appendChild(renderer.domElement);
+
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0806);
+    // 雾只能用来压远处的墙，密度一大就把整张桌子一并吃掉：0.3 在 1 米处约 9% 遮挡
+    scene.fog = new THREE.FogExp2(0x0a0806, 0.30);
+
+    camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.02, 30);
+    camera.position.set(camBase.x, camBase.y, camBase.z);
+    camera.lookAt(0, -0.085, -0.02);
+
+    raycaster = new THREE.Raycaster();
+    pointerNDC = new THREE.Vector2();
+    clock = new THREE.Clock();
+
+    buildRoom();
+    buildTable();
+    buildLights();
+    bindEvents();
+
+    window.addEventListener('resize', onResize);
+    animate();
+  }
+
+  function buildRoom() {
+    var floorMat = new THREE.MeshStandardMaterial({ color: 0x14100c, roughness: 1, metalness: 0 });
+    var floor = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.74;
+    scene.add(floor);
+
+    var wallMat = new THREE.MeshStandardMaterial({ color: 0x100d0a, roughness: 1, metalness: 0 });
+    var wall = new THREE.Mesh(new THREE.PlaneGeometry(14, 6), wallMat);
+    wall.position.set(0, 2.2, -2.6);
+    scene.add(wall);
+
+    // 之前这里还套了一圈「台裙」，但它比桌面宽，露出来的一圈顶面被台灯一照
+    // 就是一条刺眼的白边。改成把桌面板本身做厚，靠板厚表现边缘。
+  }
+
+  function woodTexture() {
+    var c = document.createElement('canvas');
+    c.width = 1024; c.height = 1024;
+    var g = c.getContext('2d');
+    g.fillStyle = '#3a2717';
+    g.fillRect(0, 0, 1024, 1024);
+
+    // 底色不匀
+    for (var i = 0; i < 260; i++) {
+      var x = Math.random() * 1024, y = Math.random() * 1024;
+      var r = 30 + Math.random() * 180;
+      var a = 0.015 + Math.random() * 0.03;
+      g.fillStyle = Math.random() > .5 ? 'rgba(90,60,32,' + a + ')' : 'rgba(28,18,10,' + a + ')';
+      g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+    }
+
+    // 木纹
+    for (var L = 0; L < 240; L++) {
+      var y0 = Math.random() * 1024;
+      var amp = 3 + Math.random() * 14;
+      var freq = 0.004 + Math.random() * 0.01;
+      g.beginPath();
+      g.moveTo(0, y0);
+      for (var x2 = 0; x2 <= 1024; x2 += 8) {
+        g.lineTo(x2, y0 + Math.sin(x2 * freq + L) * amp);
+      }
+      g.strokeStyle = Math.random() > .45
+        ? 'rgba(24,14,7,' + (0.05 + Math.random() * 0.12) + ')'
+        : 'rgba(120,84,46,' + (0.03 + Math.random() * 0.07) + ')';
+      g.lineWidth = 0.6 + Math.random() * 2.2;
+      g.stroke();
+    }
+
+    // 拼接缝
+    for (var s = 1; s < 4; s++) {
+      g.fillStyle = 'rgba(18,10,5,.55)';
+      g.fillRect(0, s * 256 - 1.5, 1024, 3);
+      g.fillStyle = 'rgba(120,84,46,.10)';
+      g.fillRect(0, s * 256 + 1.5, 1024, 1.5);
+    }
+
+    // 四角压暗
+    var vg = g.createRadialGradient(512, 512, 240, 512, 512, 760);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, 'rgba(0,0,0,.5)');
+    g.fillStyle = vg; g.fillRect(0, 0, 1024, 1024);
+
+    var tex = new THREE.CanvasTexture(c);
+    tex.encoding = THREE.sRGBEncoding;
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    return tex;
+  }
+
+  function buildTable() {
+    var topMat = new THREE.MeshStandardMaterial({
+      map: woodTexture(), roughness: 0.62, metalness: 0.02, color: 0xffffff
+    });
+    tableMesh = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.055, 1.05), topMat);
+    tableMesh.position.set(0, -0.0275, -0.02);
+    tableMesh.receiveShadow = true;
+    tableMesh.castShadow = false;
+    scene.add(tableMesh);
+  }
+
+  function buildLights() {
+    scene.add(new THREE.AmbientLight(0x6b5a44, 0.40));
+    scene.add(new THREE.HemisphereLight(0x3a4655, 0x120c07, 0.38));
+
+    // 台灯：从右前上方打下来，桌面中央一圈暖光
+    var spot = new THREE.SpotLight(0xffdcae, 2.5, 5.0, 1.06, 0.72, 1.2);
+    spot.position.set(0.30, 1.18, 0.46);
+    spot.target.position.set(-0.05, 0, -0.08);
+    spot.castShadow = true;
+    spot.shadow.mapSize.set(2048, 2048);
+    spot.shadow.camera.near = 0.3;
+    spot.shadow.camera.far = 3.2;
+    spot.shadow.bias = -0.0005;
+    spot.shadow.radius = 3;
+    scene.add(spot); scene.add(spot.target);
+
+    // 冷色补光，压住阴影里的死黑
+    var fill = new THREE.DirectionalLight(0x9fb4cc, 0.42);
+    fill.position.set(-1.1, 1.2, 0.6);
+    scene.add(fill);
+
+    // 桌沿外的暖色反射
+    var rim = new THREE.PointLight(0xff9c52, 0.8, 2.6, 2);
+    rim.position.set(-0.95, 0.16, 0.55);
+    scene.add(rim);
+  }
+
+  // ---------- 卡牌 ----------
+  // 一张软阴影贴图：中间黑、边缘透明，用来把卡「按」在桌面上
+  var shadowTex = null;
+  function getShadowTex() {
+    if (shadowTex) return shadowTex;
+    var c = document.createElement('canvas');
+    c.width = c.height = 128;
+    var g = c.getContext('2d');
+    var rg = g.createRadialGradient(64, 64, 6, 64, 64, 62);
+    rg.addColorStop(0, 'rgba(0,0,0,0.85)');
+    rg.addColorStop(0.55, 'rgba(0,0,0,0.42)');
+    rg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = rg;
+    g.fillRect(0, 0, 128, 128);
+    shadowTex = new THREE.CanvasTexture(c);
+    return shadowTex;
+  }
+
+  function makeCard(data, idx) {
+    var cv = document.createElement('canvas');
+    cv.width = TEX_W; cv.height = TEX_H;
+    var tex = new THREE.CanvasTexture(cv);
+    tex.encoding = THREE.sRGBEncoding;
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+    var group = new THREE.Group();
+
+    var bodyMat = new THREE.MeshStandardMaterial({ color: 0xd9d2c0, roughness: 0.9, metalness: 0 });
+    var body = new THREE.Mesh(new THREE.BoxGeometry(CARD_W, 0.0032, CARD_D), bodyMat);
+    body.castShadow = true;
+    body.receiveShadow = true;
+    group.add(body);
+
+    // 卡面用不受光的基础材质：纸本来就该是纸的颜色。
+    // 用 Standard/Lambert 会被台灯乘一遍，浅色文字直接被冲成灰白（试过，读不清）
+    var faceMat = new THREE.MeshBasicMaterial({
+      map: tex, color: 0xE9E2D2, transparent: true
+    });
+    var face = new THREE.Mesh(new THREE.PlaneGeometry(CARD_W, CARD_D), faceMat);
+    face.rotation.x = -Math.PI / 2;
+    face.position.y = 0.0018;
+    face.receiveShadow = false;   // 卡片自身的厚度会在自己脸上投一道灰带
+    group.add(face);
+
+    var sh = new THREE.Mesh(
+      new THREE.PlaneGeometry(CARD_W * 1.34, CARD_D * 1.30),
+      new THREE.MeshBasicMaterial({
+        map: getShadowTex(), transparent: true, opacity: 0.42,
+        depthWrite: false, color: 0x000000
+      }));
+    sh.rotation.x = -Math.PI / 2;
+    sh.position.y = 0.0006;
+    scene.add(sh);
+
+    var card = {
+      data: data, group: group, face: face, canvas: cv, tex: tex, shadow: sh,
+      rowTop: 0, rowH: 0, hoverRow: -1,
+      home: new THREE.Vector3(0, 0, 0),
+      pos: new THREE.Vector3(0, 0, 0),
+      rx: 0, ry: 0, sc: 1, yy: 0,
+      lift: 0, liftTarget: 0,
+      color: catColor(data.cat || data.title)
+    };
+
+    drawCard(card);
+    return card;
+  }
+
+  function drawCard(card) {
+    var c = card.data, g = card.canvas.getContext('2d');
+    var W = TEX_W, H = TEX_H;
+
+    g.clearRect(0, 0, W, H);
+
+    // 卡面
+    roundRect(g, 0, 0, W, H, 16);
+    var base = g.createLinearGradient(0, 0, 0, H);
+    base.addColorStop(0, '#F7F2E6');
+    base.addColorStop(1, '#EBE3D2');
+    g.fillStyle = base; g.fill();
+
+    g.save();
+    roundRect(g, 0, 0, W, H, 16); g.clip();
+
+    // 顶部色条
+    g.fillStyle = card.color;
+    g.fillRect(0, 0, W, 9);
+    g.globalAlpha = 0.14;
+    g.fillRect(0, 9, W, 74);
+    g.globalAlpha = 1;
+
+    // 标题
+    g.fillStyle = '#1D1A15';
+    g.font = '600 38px "Microsoft YaHei","PingFang SC",sans-serif';
+    g.textBaseline = 'alphabetic';
+    var title = c.title || '';
+    if (title.length > 7) { g.font = '600 32px "Microsoft YaHei","PingFang SC",sans-serif'; }
+    g.fillText(title, 26, 72);
+
+    // 副标题（计数 / 汇总）
+    g.fillStyle = '#8A8375';
+    g.font = '400 19px "Microsoft YaHei","PingFang SC",sans-serif';
+    g.fillText(c.summary || '', 26, 100);
+
+    // 右侧选中标记
+    if (c.picked > 0) {
+      g.fillStyle = 'rgba(93,169,127,.16)';
+      roundRect(g, W - 108, 44, 82, 34, 17); g.fill();
+      g.fillStyle = '#3F7D5C';
+      g.font = '600 19px "Microsoft YaHei","PingFang SC",sans-serif';
+      g.textAlign = 'center';
+      g.fillText('选 ' + c.picked, W - 67, 67);
+      g.textAlign = 'left';
+    }
+
+    g.fillStyle = 'rgba(70,58,42,.16)';
+    g.fillRect(26, 116, W - 52, 1.6);
+
+    // 条目
+    var rows = c.rows || [];
+    var top = 134, footH = 54;
+    var avail = H - top - footH;
+    var n = rows.length;
+    var rh = n > 0 ? Math.min(40, avail / n) : 0;
+    card.rowTop = top; card.rowH = rh;
+
+    if (n === 0) {
+      g.fillStyle = '#A69C8B';
+      g.font = '400 22px "Microsoft YaHei","PingFang SC",sans-serif';
+      g.textAlign = 'center';
+      g.fillText(c.kind === 'new' ? '点这张卡新建一个分支' : '这一格是空的', W / 2, top + avail / 2 - 6);
+      if (c.kind === 'new') {
+        g.font = '400 16px "Microsoft YaHei","PingFang SC",sans-serif';
+        g.fillStyle = '#BEB4A2';
+        g.fillText('把几套 MOD 归成一类，随时整套开关', W / 2, top + avail / 2 + 22);
+      }
+      g.textAlign = 'left';
+    }
+
+    for (var i = 0; i < n; i++) {
+      var r = rows[i];
+      var y = top + i * rh;
+
+      // 小分类分隔行（步枪 / 霰弹枪…）：只当路标，不能点，也不参与选中计数
+      if (r.sub) {
+        g.fillStyle = '#9C9081';
+        g.font = '600 15px "Microsoft YaHei","PingFang SC",sans-serif';
+        g.fillText(r.name || '', 32, y + rh / 2 + 5);
+        var lw = g.measureText(r.name || '').width;
+        g.fillStyle = 'rgba(70,58,42,.16)';
+        g.fillRect(32 + lw + 12, y + rh / 2, W - 64 - lw - 12, 1.2);
+        continue;
+      }
+
+      var on = !!r.checked;
+      var hov = (card.hoverRow === i);
+
+      if (on || hov) {
+        g.fillStyle = on ? 'rgba(93,169,127,.15)' : 'rgba(60,50,36,.07)';
+        roundRect(g, 18, y + 1, W - 36, rh - 3, 7); g.fill();
+        if (on) {
+          g.fillStyle = '#5DA97F';
+          roundRect(g, 18, y + 1, 4.5, rh - 3, 2.2); g.fill();
+        }
+      }
+
+      var fs = Math.max(15, Math.min(22, rh * 0.52));
+      g.font = (on ? '600 ' : '400 ') + fs + 'px "Microsoft YaHei","PingFang SC",sans-serif';
+      g.fillStyle = on ? '#1F1C17' : '#3A3429';
+
+      var stTxt = r.status || '';
+      g.font = '400 ' + Math.max(13, fs - 4) + 'px "Microsoft YaHei","PingFang SC",sans-serif';
+      var stW = stTxt ? g.measureText(stTxt).width : 0;
+      var nameMax = W - 40 - stW - 16;
+
+      g.font = (on ? '600 ' : '400 ') + fs + 'px "Microsoft YaHei","PingFang SC",sans-serif';
+      var nm = r.name || '';
+      while (nm.length > 1 && g.measureText(nm).width > nameMax) nm = nm.slice(0, -1);
+      if (nm !== (r.name || '')) nm = nm.slice(0, -1) + '…';
+      g.fillStyle = on ? '#1F1C17' : '#3A3429';
+      g.fillText(nm, 32, y + rh / 2 + fs * 0.36);
+
+      if (stTxt) {
+        g.font = '400 ' + Math.max(13, fs - 4) + 'px "Microsoft YaHei","PingFang SC",sans-serif';
+        g.fillStyle = stateInk(stTxt);
+        g.textAlign = 'right';
+        g.fillText(stTxt, W - 30, y + rh / 2 + fs * 0.32);
+        g.textAlign = 'left';
+      }
+    }
+
+    // 页脚
+    if (n > 0) {
+      g.fillStyle = 'rgba(70,58,42,.10)';
+      g.fillRect(26, H - footH + 2, W - 52, 1.2);
+      g.fillStyle = '#A69C8B';
+      g.font = '400 17px "Microsoft YaHei","PingFang SC",sans-serif';
+      g.fillText(c.count || ('共 ' + n + ' 项'), 26, H - 22);
+      if (c.hint) {
+        g.textAlign = 'right';
+        g.fillStyle = '#B3A896';
+        g.fillText(c.hint, W - 26, H - 22);
+        g.textAlign = 'left';
+      }
+    }
+
+    g.restore();
+
+    // 边框
+    roundRect(g, 0.8, 0.8, W - 1.6, H - 1.6, 16);
+    g.strokeStyle = 'rgba(90,74,52,.28)';
+    g.lineWidth = 1.6;
+    g.stroke();
+
+    card.tex.needsUpdate = true;
+  }
+
+  function layoutCards() {
+    var lay = (state && state.layout) || {};
+    var n = cards.length;
+    var rows = Math.ceil(n / COLS);
+    for (var i = 0; i < n; i++) {
+      var c = cards[i];
+      var x, z, p = lay[c.data.key];
+      if (p && typeof p.x === 'number') { x = p.x; z = p.z; }
+      else {
+        var col = i % COLS, row = Math.floor(i / COLS);
+        var inRow = Math.min(COLS, n - row * COLS);
+        x = (col - (inRow - 1) / 2) * GAPX;
+        z = (row - (rows - 1) / 2) * GAPZ - 0.02;
+      }
+      c.home.set(x, 0, z);
+      c.pos.set(x, 0, z);
+      c.group.position.copy(c.pos);
+    }
+  }
+
+  function buildCards() {
+    cards.forEach(function (c) { scene.remove(c.group); if (c.shadow) scene.remove(c.shadow); });
+    cards = [];
+
+    (state.cards || []).forEach(function (d, i) {
+      var card = makeCard(d, i);
+      scene.add(card.group);
+      cards.push(card);
+    });
+    layoutCards();
+  }
+
+  // ---------- 交互 ----------
+  function bindEvents() {
+    var dom = renderer.domElement;
+
+    dom.addEventListener('pointermove', onPointerMove);
+    dom.addEventListener('pointerdown', onPointerDown);
+    dom.addEventListener('pointerup', onPointerUp);
+    dom.addEventListener('pointerleave', function () { mouseNX = 0; mouseNY = 0; });
+    dom.addEventListener('wheel', function (e) {
+      leanZ = Math.max(-0.06, Math.min(0.16, leanZ + e.deltaY * 0.0004));
+    }, { passive: true });
+    dom.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+    window.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') goBack();
+      if (e.key === 'e' || e.key === 'E') tidy();
+    });
+
+    el('back').addEventListener('click', goBack);
+    el('btnTidy').addEventListener('click', tidy);
+    el('btnInstall').addEventListener('click', function () {
+      api('/api/install', {}).then(function (r) {
+        toast(r && r.msg ? r.msg : '已经开始安装');
+      }).catch(function () { toast('这里只是演示，接上主程序后才会真的安装'); });
+    });
+  }
+
+  function onPointerMove(e) {
+    var rect = renderer.domElement.getBoundingClientRect();
+    mouseNX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    mouseNY = ((e.clientY - rect.top) / rect.height) * 2 - 1;
+
+    pointerNDC.x = mouseNX;
+    pointerNDC.y = -mouseNY;
+
+    if (dragState) {
+      if (!dragState.moved) {
+        var dx = e.clientX - dragState.sx, dy = e.clientY - dragState.sy;
+        if (dx * dx + dy * dy > 36) dragState.moved = true;
+      }
+      if (dragState.moved) {
+        var hit = intersectTable();
+        if (hit) {
+          var c = dragState.card;
+          c.pos.x = hit.x; c.pos.z = hit.z;
+          c.home.x = hit.x; c.home.z = hit.z;
+        }
+      }
+      return;
+    }
+
+    updateHover();
+  }
+
+  function updateHover() {
+    raycaster.setFromCamera(pointerNDC, camera);
+    var meshes = cards.map(function (c) { return c.face; });
+    var hits = raycaster.intersectObjects(meshes, false);
+    var found = null, uv = null;
+    if (hits.length) { found = hits[0].object.parent; uv = hits[0].uv; }
+
+    if (found !== hoverCard) {
+      if (hoverCard) { hoverCard.hoverRow = -1; drawCard(hoverCard); }
+      hoverCard = found;
+      document.body.style.cursor = hoverCard ? 'pointer' : 'default';
+    }
+
+    if (hoverCard && uv) {
+      var idx = rowAt(hoverCard, uv);
+      if (idx !== hoverCard.hoverRow) {
+        hoverCard.hoverRow = idx;
+        drawCard(hoverCard);
+      }
+    }
+  }
+
+  // 可视行号 → 行对象；分隔行返回 null（它不可点）
+  function rowAt(card, uv) {
+    if (!card.rowH) return -1;
+    var py = (1 - uv.y) * TEX_H;
+    var rows = card.data.rows || [];
+    if (py < card.rowTop || py > card.rowTop + card.rowH * rows.length) return -1;
+    var vi = Math.min(rows.length - 1, Math.floor((py - card.rowTop) / card.rowH));
+    if (!rows[vi] || rows[vi].sub) return -1;
+    return vi;
+  }
+
+  // 主程序按「第几个可点的行」来定位，分隔行不算，这里换算成那个下标
+  function clickIndex(card, vi) {
+    var rows = card.data.rows || [], k = -1;
+    for (var i = 0; i <= vi && i < rows.length; i++) if (!rows[i].sub) k++;
+    return k;
+  }
+
+  function onPointerDown(e) {
+    if (e.button !== 0) return;
+    raycaster.setFromCamera(pointerNDC, camera);
+    var meshes = cards.map(function (c) { return c.face; });
+    var hits = raycaster.intersectObjects(meshes, false);
+    if (!hits.length) return;
+    var card = hits[0].object.parent;
+    dragState = {
+      card: card, sx: e.clientX, sy: e.clientY, moved: false,
+      row: rowAt(card, hits[0].uv), uv: hits[0].uv
+    };
+    card.group.renderOrder = 999;
+  }
+
+  function onPointerUp(e) {
+    if (!dragState) return;
+    var st = dragState; dragState = null;
+    st.card.group.renderOrder = 0;
+
+    if (st.moved) {
+      api('/api/move', { key: st.card.data.key, x: st.card.pos.x, z: st.card.pos.z });
+      return;
+    }
+
+    if (st.row >= 0) {
+      var row = st.card.data.rows[st.row];
+      row.checked = !row.checked;
+      recount(st.card.data);
+      drawCard(st.card);
+      refreshStats();
+      api('/api/pick', { card: st.card.data.key, row: clickIndex(st.card, st.row) })
+        .catch(function () { toast('演示模式：改动没有写回主程序'); });
+    }
+  }
+
+  function intersectTable() {
+    var plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.002);
+    var p = new THREE.Vector3();
+    raycaster.setFromCamera(pointerNDC, camera);
+    if (!raycaster.ray.intersectPlane(plane, p)) return null;
+    // 夹在桌面范围内，别把牌拖到桌外
+    p.x = Math.max(-0.78, Math.min(0.78, p.x));
+    p.z = Math.max(-0.44, Math.min(0.46, p.z));
+    return p;
+  }
+
+  function recount(c) {
+    var picked = 0, miss = 0;
+    (c.rows || []).forEach(function (r) {
+      if (r.checked) picked++;
+      if (!r.status || r.status.indexOf('未装') === 0) miss++;
+    });
+    c.picked = picked;
+  }
+
+  // 顶栏三个数跟主窗口标题栏用同一套口径（位置 / 已选位置 / 未归类），
+  // 别在页面里再按卡片重算一遍 —— 分支卡会把同一个 MOD 数两遍
+  function refreshStats() {
+    var st = (state && state.stats) || {};
+    el('stMods').textContent = st.slots || 0;
+    el('stSel').textContent = st.slotsel || 0;
+    el('stMiss').textContent = st.unmatched || 0;
+  }
+
+  // 主程序那边随时可能变（安装完成、切换模式、搜索），这里轻轻轮询一次就够，
+  // 本地环回、十几 KB JSON，开销可以忽略
+  function refresh() {
+    if (document.hidden || dragState) return;
+    fetch('/api/state').then(function (r) { return r.json(); }).then(function (ns) {
+      if (!ns || !ns.cards) return;
+      var oldKeys = cards.map(function (c) { return c.data.key; }).join('|');
+      var newKeys = ns.cards.map(function (c) { return c.key; }).join('|');
+      state = ns;
+      if (oldKeys !== newKeys) { buildCards(); refreshStats(); return; }
+      cards.forEach(function (c, i) {
+        var d = ns.cards[i];
+        if (!d || !d.rows) return;
+        var changed = JSON.stringify(c.data.rows) !== JSON.stringify(d.rows);
+        c.data = d;
+        if (changed) drawCard(c);
+      });
+      refreshStats();
+    }).catch(function () { });
+  }
+
+  function startPoll() {
+    if (location.search.indexOf('demo') >= 0) return;
+    setInterval(refresh, 4000);
+    window.addEventListener('focus', refresh);
+  }
+
+  function tidy() {
+    layoutCards();
+    api('/api/tidy', {}).catch(function () {});
+    toast('桌面已理顺');
+  }
+
+  function goBack() {
+    api('/api/back', {}).then(function () { window.close(); })
+      .catch(function () { toast('按 Esc 或关闭这个窗口就回到方案树'); })
+      .then(function () {
+        setTimeout(function () { window.close(); }, 60);
+      });
+  }
+
+  // ---------- 动画 ----------
+  function animate() {
+    requestAnimationFrame(animate);
+    // 注意顺序：getElapsedTime() 内部会重置 delta 的基准，先取 delta 再读 elapsedTime，
+    // 否则 dt 恒为 0，所有缓动（抬卡、相机、视差）都会静止 —— 这个坑踩过一次
+    var dt = Math.min(clock.getDelta(), 0.05);
+    var t = clock.elapsedTime;
+
+    // 相机：坐姿微呼吸 + 跟随鼠标轻微视差 + 滚轮俯身
+    var bx = Math.sin(t * 0.31) * 0.006;
+    var by = Math.sin(t * 0.47 + 1.2) * 0.004;
+    camera.position.x += ((camBase.x + bx + mouseNX * 0.05) - camera.position.x) * Math.min(1, dt * 4);
+    camera.position.y += ((camBase.y + by - mouseNY * 0.012) - camera.position.y) * Math.min(1, dt * 4);
+    camera.position.z += ((camBase.z + leanZ) - camera.position.z) * Math.min(1, dt * 5);
+    camera.lookAt(mouseNX * 0.045, -0.105, -0.02 - leanZ * 0.4);
+
+    // 有卡被举起时，别的卡压暗一点，视线自然落到手里那张
+    var anyLift = 0;
+    for (var k = 0; k < cards.length; k++) anyLift = Math.max(anyLift, cards[k].lift);
+    var shadeOther = 1 - 0.20 * anyLift;
+
+    for (var i = 0; i < cards.length; i++) {
+      var c = cards[i];
+      var isHover = (c === hoverCard || c.forced) && !dragState;
+      var targetLift = isHover ? 1 : 0;
+
+      c.lift += (targetLift - c.lift) * Math.min(1, dt * (isHover ? 7.5 : 5.5));
+
+      // 抬卡 = 立起来 + 往镜头方向滑近。只放大不动位置没用：
+      // 卡只有 19.6×27.2cm，在桌面距离上再放大也读不下 19 行，必须靠近才看得清
+      var sc = 1 + c.lift * 0.36;
+      var rx = c.lift * 1.15;
+      var px = c.pos.x * (1 - c.lift * 0.55);
+      var pz = c.pos.z + (0.05 - c.pos.z) * c.lift * 0.88;
+      var dy = 0.5 * CARD_D * sc * Math.sin(rx) + 0.0024;
+
+      c.group.scale.setScalar(sc);
+      c.group.rotation.x = rx;
+      c.group.rotation.y = c.lift * Math.atan2(camera.position.x - px, camera.position.z - pz) * 0.30;
+      c.group.position.set(px, dy, pz);
+
+      // 注意是乘不是覆盖：卡面材质本身带一层暖白底色（0xE9E2D2），
+      // 直接 setRGB(v,...) 会把这层底色抹掉，纸就变成纯白
+      if (c.shadow) {
+        c.shadow.position.set(c.pos.x, 0.0006, c.pos.z);
+        var ss = 1 + c.lift * 0.5;
+        c.shadow.scale.set(ss, ss, 1);
+        c.shadow.material.opacity = 0.42 - c.lift * 0.16;
+      }
+
+      var v = shadeOther + (1 - shadeOther) * c.lift;
+      c.face.material.color.setRGB(0.914 * v, 0.886 * v, 0.824 * v);
+    }
+
+    renderer.render(scene, camera);
+
+    if (DBG && DBG.i < cards.length) {
+      var d = cards[DBG.i];
+      DBG.n = (DBG.n || 0) + 1;
+      DBG.el.textContent = 'n=' + DBG.n + ' target=' + (d.forced ? 1 : 0) + ' lift=' + d.lift.toFixed(3)
+        + ' sc=' + d.group.scale.x.toFixed(2)
+        + ' rx=' + d.group.rotation.x.toFixed(2)
+        + ' y=' + d.group.position.y.toFixed(3)
+        + ' z=' + d.group.position.z.toFixed(3)
+        + ' vp=' + window.innerWidth + 'x' + window.innerHeight
+        + ' aspect=' + camera.aspect.toFixed(2);
+    }
+  }
+
+  function onResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  // ---------- 数据 ----------
+  function api(path, body) {
+    return fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
+    }).then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); });
+  }
+
+  function load() {
+    var url = location.search.indexOf('demo') >= 0 ? 'sample.json' : '/api/state';
+    fetch(url).then(function (r) { return r.json(); }).then(function (s) {
+      state = s;
+      boot();
+    }).catch(function () {
+      state = { cards: [], stats: {} };
+      boot();
+      toast('没读到数据，桌面是空的');
+    });
+  }
+
+  function boot() {
+    (state.cards || []).forEach(function (c) { recount(c); });
+    buildCards();
+    refreshStats();
+    if (state.title) document.title = state.title;
+
+    // 调试用：?lift=N 强制抬起第 N 张，方便在无头环境里看“阅读姿态”
+    var lq = /[?&]lift=(\d+)/.exec(location.search);
+    if (lq && cards[+lq[1]]) {
+      cards[+lq[1]].forced = true;
+      if (cards[+lq[1]].data.rows) cards[+lq[1]].hoverRow = 0;
+      var de = document.createElement('div');
+      de.id = 'dbg';
+      de.style.cssText = 'position:fixed;left:8px;bottom:52px;font:11px monospace;color:#8f8;z-index:99;white-space:pre';
+      document.body.appendChild(de);
+      if (/[?&]dbg=1/.test(location.search)) DBG = { i: +lq[1], el: de };
+      else { de.parentNode.removeChild(de); }
+      if (/[?&]hard=1/.test(location.search)) cards[+lq[1]].lift = 1;
+    }
+
+    startPoll();
+
+    requestAnimationFrame(function () {
+      var l = el('loading');
+      if (!l) return;
+      l.classList.add('gone');
+      setTimeout(function () { if (l.parentNode) l.parentNode.removeChild(l); }, 600);
+    });
+
+    // 入场只做缓缓淡入，别再动 transform：animate 每帧都会按 lift 重算位置，
+    // 这里改 group.position / lift 只会被下一帧覆盖（曾经因此把 ?hard=1 的调试值抹掉）
+    document.body.style.opacity = '0';
+    requestAnimationFrame(function () {
+      document.body.style.transition = 'opacity .45s ease-out';
+      document.body.style.opacity = '1';
+    });
+  }
+
+  init();
+  load();
+})();
+</script>
+</body>
+</html>

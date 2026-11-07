@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -110,6 +111,9 @@ namespace Installer
                     txtGame.SelectionLength = 0;
                 });
             };
+            // 主窗口一关，桌面的浏览器窗口和本地服务都跟着收摊，
+            // 别留一个孤儿窗口在那儿转圈（它轮询不到数据，看着像卡死）
+            FormClosing += delegate { CloseDesk(); };
         }
 
         private bool initializing = true;
@@ -163,7 +167,7 @@ namespace Installer
                         Core.Log("INFO", "启动计时: 冲突检查 " + __sw2.ElapsedMilliseconds + " ms");
                         initializing = false;
                         ShowPackStatus(packs, packOk);
-                        ShowDesk();                        // 启动第一屏就是台面（整窗一张桌子）
+                        ShowTree();                        // 启动第一屏是方案树；桌面要点按钮才开
                     });
                 }
                 catch (Exception ex) { Core.Log("FAIL", "初始化失败: " + ex.Message); }
@@ -232,10 +236,10 @@ namespace Installer
             Controls.Add(btnSettings);
 
             // 台面 / 方案树：同一份数据的两种看法，按钮上写的是「点了会去哪种」
-            btnView = new FlatButton(); btnView.Text = "方案树";
+            btnView = new FlatButton(); btnView.Text = "桌面";
             btnView.SetBounds(viewX, 16, viewW, Theme.H);
             btnView.Click += delegate { ToggleView(); };
-            tips.SetToolTip(btnView, "台面：每个大类/分支一张卡，随手拖到哪儿就停在哪儿，位置记在 U 盘。\r\n方案树：细到每个位置（AK-47 这种），挑候选 MOD、展开套装在那边。");
+            tips.SetToolTip(btnView, "打开第一人称的桌面：一张卡 = 一个大类/分支，摆在真桌子上，拖到哪儿就停在哪儿。\r\n每个位置（AK-47 这种）的候选、套装细调，回到左边的方案树。");
             Controls.Add(btnView);
 
             btnPanel = new FlatButton(); btnPanel.Text = "面板";
@@ -387,8 +391,6 @@ namespace Installer
             {
                 if (treeView != null)
                     treeView.SetBounds(0, 0, viewHost.ClientSize.Width, viewHost.ClientSize.Height);
-                if (deskView != null)
-                    deskView.SetBounds(0, 0, viewHost.ClientSize.Width, viewHost.ClientSize.Height);
             };
             gm.Controls.Add(viewHost);
 
@@ -2545,13 +2547,15 @@ namespace Installer
             ResumeLayout(true);
         }
 
-        /// <summary>台面 ⇄ 方案树。按钮上写的是「点了会去哪一种」。</summary>
+        /// <summary>开 / 关桌面窗口。桌面在另一个窗口里，这边不切视图。</summary>
         internal void ToggleView()
         {
-            bool deskOn = deskView != null && deskView.Visible;
-            if (deskOn) ShowTreeView(); else ShowDesk();
-            if (btnView != null) btnView.Text = deskOn ? "台面" : "方案树";
+            if (Desk != null && Desk.Running) CloseDesk();
+            ShowDesk();
         }
+
+        /// <summary>桌面上的「开始安装」按钮走这里。</summary>
+        internal void InstallFromDesk() { DoInstall(); }
 
         /// <summary>左栏抽屉：收起后右栏顶到左边距，整窗只剩台面。</summary>
         internal void SetDrawer(bool open)
@@ -2565,16 +2569,104 @@ namespace Installer
             ApplyResponsive();
         }
 
-        /// <summary>台面自检：--deskself 走这里。</summary>
+        /// <summary>桌面自检：--deskself 走这里。不弹浏览器，只验数据与本地服务。</summary>
         internal int DeskSelfTest()
         {
             int bad = 0;
-            ShowDesk();
-            if (deskView == null) return 1;
+            ShowTree();
+            if (treeView == null) { Core.Log("FAIL", "DESK 树没建起来"); return 1; }
 
-            bad += deskView.SelfTest();
+            // 1) 建卡
+            List<DeskCard> cards = DeskModel.Build(treeView);
+            int rows = 0;
+            foreach (DeskCard c in cards) rows += c.Rows.Count;
+            Core.Log("INFO", "DESK 建卡 " + cards.Count + " 张，行合计 " + rows);
+            if (cards.Count == 0) { bad++; Core.Log("FAIL", "DESK 一张卡都没建出来"); }
+            if (rows == 0) { bad++; Core.Log("FAIL", "DESK 卡里一行都没有"); }
 
-            // 抽屉：收起时右栏顶到左边距，展开时让出 396 给左栏
+            // 2) JSON 是不是能被前端直接吃
+            string json = DeskModel.ToJson(cards, treeView, this);
+            if (!json.StartsWith("{") || !json.EndsWith("}")) { bad++; Core.Log("FAIL", "DESK 导出的 JSON 头尾不对"); }
+            if (json.IndexOf("\"cards\":[") < 0) { bad++; Core.Log("FAIL", "DESK JSON 里没有 cards"); }
+            if (json.IndexOf("\"rows\":[") < 0) { bad++; Core.Log("FAIL", "DESK JSON 里没有 rows"); }
+            if (json.IndexOf('\u0001') >= 0 || json.IndexOf('\0') >= 0) { bad++; Core.Log("FAIL", "DESK JSON 里混进了控制字符"); }
+
+            // 3) 摆位：写进去能读回来，文件落盘，然后原样还原
+            string layFile = DeskLayout.FileOf();
+            byte[] before = null;
+            try { if (File.Exists(layFile)) before = File.ReadAllBytes(layFile); } catch { }
+            try
+            {
+                DeskLayout.Clear();
+                DeskLayout.Put("cat|枪械", 0.4f, -0.1f);
+                PointF pt;
+                if (!DeskLayout.TryGet("cat|枪械", out pt) || Math.Abs(pt.X - 0.4f) > 0.001f || Math.Abs(pt.Y + 0.1f) > 0.001f)
+                { bad++; Core.Log("FAIL", "DESK 摆位存取对不上"); }
+                else Core.Log("INFO", "DESK 摆位存取正常 (0.4, -0.1)");
+                if (!File.Exists(layFile)) { bad++; Core.Log("FAIL", "DESK 摆位文件没写出来"); }
+            }
+            finally
+            {
+                try
+                {
+                    if (before == null) { if (File.Exists(layFile)) File.Delete(layFile); }
+                    else File.WriteAllBytes(layFile, before);
+                }
+                catch { }
+                DeskLayout.Clear();
+            }
+
+            // 4) 本地服务：起一个不带窗口的，真的发一次 HTTP 请求
+            DeskServer srv = new DeskServer(this, treeView);
+            try
+            {
+                srv.Start(false);
+
+                // 必须放到后台线程去请求：服务端要 Invoke 回 UI 线程取数据，
+                // 而这里正占着 UI 线程等响应 —— 直接在 UI 线程 DownloadString 会死锁
+                // （第一次就是这么卡了 100 秒，报“操作超时”）
+                Func<string, string> get = delegate(string url)
+                {
+                    string res = null; Exception err = null;
+                    Thread t = new Thread(delegate()
+                    {
+                        try
+                        {
+                            using (System.Net.WebClient wc = new System.Net.WebClient())
+                            {
+                                wc.Encoding = Encoding.UTF8;
+                                res = wc.DownloadString(url);
+                            }
+                        }
+                        catch (Exception ex) { err = ex; }
+                    });
+                    t.IsBackground = true;
+                    t.Start();
+                    DateTime until = DateTime.Now.AddSeconds(10);
+                    while (t.IsAlive && DateTime.Now < until) { Application.DoEvents(); Thread.Sleep(10); }
+                    if (t.IsAlive) throw new Exception("请求超时：" + url);
+                    if (err != null) throw err;
+                    return res;
+                };
+
+                string body = get(srv.Url + "api/state");
+                if (string.IsNullOrEmpty(body) || body.IndexOf("\"cards\"") < 0)
+                { bad++; Core.Log("FAIL", "DESK 服务端返回的 state 不对"); }
+                else Core.Log("INFO", "DESK 服务端 state OK（" + body.Length + " 字节）");
+
+                string page = get(srv.Url);
+                if (string.IsNullOrEmpty(page) || page.IndexOf("three.min.js") < 0)
+                { bad++; Core.Log("FAIL", "DESK 首页没把 three.js 引进来"); }
+                else Core.Log("INFO", "DESK 首页 %OK%（" + page.Length + " 字节）".Replace("%OK%", "OK"));
+            }
+            catch (Exception ex)
+            {
+                bad++;
+                Core.Log("FAIL", "DESK 本地服务跑不通：" + ex.Message);
+            }
+            finally { srv.Dispose(); }
+
+            // 5) 抽屉：收起时右栏顶到左边距，展开时让出 396 给左栏
             SetDrawer(true);
             if (gPlat == null || !gPlat.Visible) { bad++; Core.Log("FAIL", "DESK 抽屉展开后左栏没出来"); }
             if (gMod.Left != Theme.M + 396 + Theme.G) { bad++; Core.Log("FAIL", "DESK 抽屉展开后右栏位置不对: " + gMod.Left); }
@@ -2582,23 +2674,7 @@ namespace Installer
             if (gPlat != null && gPlat.Visible) { bad++; Core.Log("FAIL", "DESK 抽屉收起后左栏还在"); }
             if (gMod.Left != Theme.M) { bad++; Core.Log("FAIL", "DESK 抽屉收起后右栏没顶到左边: " + gMod.Left); }
 
-            // 视图切换：树和台面必须互斥
-            ShowTreeView();
-            if (treeView == null || !treeView.Visible) { bad++; Core.Log("FAIL", "DESK 切不回方案树"); }
-            if (deskView.Visible) { bad++; Core.Log("FAIL", "DESK 切回树后台面还盖在上面"); }
-            ShowDesk();
-            if (!deskView.Visible) { bad++; Core.Log("FAIL", "DESK 切不回台面"); }
-            if (treeView.Visible) { bad++; Core.Log("FAIL", "DESK 切到台面后树还在"); }
-
-            // 留三张图给人工核对：整窗台面 / 抽屉展开 / 方案树
-            Snap("desk-closed");
-            SetDrawer(true);
-            Snap("desk-open");
-            ShowTreeView();
             Snap("desk-tree");
-
-            SetDrawer(false);
-            ShowDesk();
             return bad;
         }
 
