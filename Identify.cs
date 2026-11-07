@@ -436,9 +436,9 @@ namespace Installer
                         using (Stream s = hit.Open()) return ReadTree(s);
                     }
                 }
-                // 7z 拿不到包内文件的字节流：tar 对 LZMA 支持不全，图形版 WinRAR 又不写 stdout。
-                // 7z 包里的 vpk 放弃内容识别，交给路径和文件名去分类。
-                if (container.EndsWith(".7z", StringComparison.OrdinalIgnoreCase)) return null;
+                // 7z 拿不到包内文件的字节流：tar 往 stdout 写会报 Write error，图形版 WinRAR 也不写 stdout。
+                // 改成解到临时目录、边写边读（见 TreeOf7z），目录表在文件开头，不用等整包解完。
+                if (container.EndsWith(".7z", StringComparison.OrdinalIgnoreCase)) return TreeOf7z(container, inner);
                 string rar = Catalog.RarExe();
                 if (string.IsNullOrEmpty(rar)) return null;
                 ProcessStartInfo psi = new ProcessStartInfo(rar, "p -inul -y \"" + container + "\" \"" + inner + "\"");
@@ -461,6 +461,121 @@ namespace Installer
                 }
             }
             catch { return null; }
+        }
+
+        /// <summary>
+        /// 7z 包内 vpk 的目录表：解到临时目录，文件长到够读目录表就把进程杀掉。
+        /// bsdtar 解 7z 到磁盘是好的（中文名也行），但它往 stdout 写会报 Write error；
+        /// 而 vpk 的目录表就在文件最前面，所以没必要等整包解完 —— 大包也只解开头那一段。
+        /// </summary>
+        private static byte[] TreeOf7z(string container, string inner)
+        {
+            string tmp = null;
+            Process p = null;
+            try
+            {
+                tmp = Path.Combine(Path.GetTempPath(), "l4d2tree-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+                Directory.CreateDirectory(tmp);
+                string dst = Path.Combine(tmp, inner.Replace('/', '\\').TrimStart('\\'));
+
+                string exe, args;
+                string tar = Catalog.TarExe();
+                if (tar.Length > 0)
+                {
+                    exe = tar;
+                    args = "-xf \"" + container + "\" -C \"" + tmp + "\" \"" + inner + "\"";
+                }
+                else
+                {
+                    // 没有 tar.exe（Win10 1803 以前）才退回 WinRAR：图形版能解 7z，但不写 stdout，同样只能落盘
+                    string wr = Catalog.WinRarExe();
+                    if (wr.Length == 0) return null;
+                    exe = wr;
+                    args = "x -y -idq \"" + container + "\" \"" + inner + "\" \"" + tmp + "\\\"";
+                }
+
+                ProcessStartInfo psi = new ProcessStartInfo(exe, args);
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.RedirectStandardOutput = true;
+                psi.RedirectStandardError = true;
+                p = Process.Start(psi);
+                // 两个管道都得读掉：缓冲区满了子进程会停在写那一步，文件永远长不到目标长度
+                Drain(p.StandardOutput);
+                Drain(p.StandardError);
+
+                byte[] hdr = WaitHead(dst, 12, 20000, p);
+                if (hdr == null) return null;
+                uint sig = BitConverter.ToUInt32(hdr, 0);
+                uint ver = BitConverter.ToUInt32(hdr, 4);
+                uint tree = BitConverter.ToUInt32(hdr, 8);
+                if (sig != 0x55AA1234 || tree < 8 || tree > 16u * 1024 * 1024) return null;
+
+                int skip = ver == 2 ? 16 : 0;
+                byte[] all = WaitHead(dst, (int)(12 + skip + tree), 30000, p);
+                if (all == null) return null;
+                byte[] buf = new byte[tree];
+                Buffer.BlockCopy(all, 12 + skip, buf, 0, (int)tree);
+                return buf;
+            }
+            catch { return null; }
+            finally
+            {
+                if (p != null)
+                {
+                    try { if (!p.HasExited) p.Kill(); } catch { }
+                    try { p.Dispose(); } catch { }
+                }
+                if (tmp != null) { try { Directory.Delete(tmp, true); } catch { } }
+            }
+        }
+
+        /// <summary>把子进程的输出读干丢掉，防止管道写满把子进程卡住。</summary>
+        private static void Drain(StreamReader r)
+        {
+            System.Threading.Thread th = new System.Threading.Thread(delegate()
+            {
+                try { r.ReadToEnd(); } catch { }
+            });
+            th.IsBackground = true;
+            th.Start();
+        }
+
+        /// <summary>
+        /// 等文件长到 count 字节，再读它的前 count 字节（文件正在被解压进程写入，必须 FileShare.ReadWrite）。
+        /// 进程已经退出且还不够长 = 不会再有字节来了，直接放弃，别干等到超时。
+        /// </summary>
+        private static byte[] WaitHead(string path, int count, int timeoutMs, Process p)
+        {
+            Stopwatch sw = Stopwatch.StartNew();
+            while (true)
+            {
+                bool exited = false;
+                try { exited = p == null || p.HasExited; } catch { exited = true; }
+                try
+                {
+                    using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                    {
+                        if (fs.Length >= count)
+                        {
+                            byte[] b = new byte[count];
+                            int got = 0;
+                            while (got < count)
+                            {
+                                int r = fs.Read(b, got, count - got);
+                                if (r <= 0) break;
+                                got += r;
+                            }
+                            if (got == count) return b;
+                        }
+                    }
+                }
+                catch (FileNotFoundException) { }
+                catch (IOException) { }
+                if (exited) return null;
+                if (sw.ElapsedMilliseconds > timeoutMs) return null;
+                System.Threading.Thread.Sleep(40);
+            }
         }
 
         /// <summary>压缩包里的 vpk 也走缓存：同一个包没变就不用再解一遍。</summary>
@@ -491,6 +606,8 @@ namespace Installer
         private static string CacheFile
         {
             // 文件名带版本号：改了识别规则就把版本 +1，旧缓存自动作废，不会读到过时的结论
+            // 7z 补上目录表识别（v2.45）时刻意没有升版本：升一次要让整个库的 rar 重新解一遍
+            // （几百个包、每个条目一次 Rar.exe），代价太大。改成在 LoadCache 里只丢掉 7z 的旧结论。
             get { return Path.Combine(Core.LogDir, "identify-cache-v17.tsv"); }
         }
 
@@ -541,7 +658,16 @@ namespace Installer
                 foreach (string line in File.ReadAllLines(CacheFile, Encoding.UTF8))
                 {
                     string[] c = line.Split('\t');
-                    if (c.Length >= 9) cache[c[0]] = line;
+                    if (c.Length < 9) continue;
+                    // 旧缓存里 7z 条目存的是「读不出」的空结论（那时 TreeOfArchive 直接 return null）。
+                    // 只丢掉「一个条目都没读到」的 7z 记录；读到过内容的照用，否则每轮启动都要重解一遍。
+                    if (c[0].IndexOf(".7z\\", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        int en;
+                        int.TryParse(c[7], out en);
+                        if (en <= 0) continue;
+                    }
+                    cache[c[0]] = line;
                 }
             }
             catch { }
@@ -679,6 +805,24 @@ namespace Installer
             }
             catch { return false; }
             return ClassifyByPaths(ps, out cat, out sub);
+        }
+
+        /// <summary>
+        /// 压缩包里 vpk 的大类判定：先取目录表，再看包内路径。zip / rar / 7z 通用 ——
+        /// 7z 现在也能读了（TreeOf7z），不必再按格式分成几套实现。
+        /// </summary>
+        public static bool ClassifyByContentArchive(string arcPath, string innerPath, out string cat, out string sub)
+        {
+            cat = ""; sub = "";
+            byte[] tree = TreeOfArchive(arcPath, innerPath);
+            if (tree == null) return false;
+            try
+            {
+                List<string> ps = new List<string>();
+                Vpk.WalkBuffer(tree, 30000, delegate(string x) { if (ps.Count < 30000) ps.Add(x.ToLowerInvariant()); });
+                return ClassifyByPaths(ps, out cat, out sub);
+            }
+            catch { return false; }
         }
 
         /// <summary>rar 里的 vpk：让 Rar.exe 把文件吐到管道，只读前几百 KB 的目录表就断开（不解整包）</summary>

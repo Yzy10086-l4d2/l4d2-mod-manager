@@ -68,6 +68,30 @@ namespace Installer
                     }
                     string crc;
                     if (table.TryGetValue(m.Inner, out crc)) return crc;
+                    // tar -tvf 不吐 CRC32，7z 的目录表里没有这一项：解出来自己算一遍。
+                    // 解压很贵，所以算完回填 table，同一次运行里不再解第二遍。
+                    if (ext == ".7z")
+                    {
+                        string tmp = Path.Combine(Path.GetTempPath(), "l4d2crc-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+                        try
+                        {
+                            Directory.CreateDirectory(tmp);
+                            string one = Path.Combine(tmp, "entry.vpk");
+                            string why;
+                            if (!Catalog.ExtractEntryTo(m.FullPath, m.Inner, one, out why))
+                            {
+                                note = "7z 解不开：" + why;
+                                return null;
+                            }
+                            using (FileStream fs = new FileStream(one, FileMode.Open, FileAccess.Read, FileShare.Read))
+                                crc = Crc32(fs);
+                            table[m.Inner] = crc;
+                            Core.Log("INFO", "DUPFP 7z 无目录表 CRC，解出来算：" + m.Name + " = CRC32 " + crc);
+                            return crc;
+                        }
+                        catch (Exception ex) { note = ex.Message; return null; }
+                        finally { try { Directory.Delete(tmp, true); } catch { } }
+                    }
                     note = "包里读不到 CRC32";
                     return null;
                 }

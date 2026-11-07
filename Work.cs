@@ -544,59 +544,8 @@ namespace Installer
         /// <summary>从压缩包里只取出这一个 vpk 放到 addons：不整包解压，也不动 U 盘上的包。</summary>
         public static bool ExtractOne(ModItem it, string dst, out string why)
         {
-            why = null;
-            string arc = it.FullPath;
-            string inner = it.Inner;
-            if (inner == null || inner.Length == 0) { why = "包内路径为空"; return false; }
-            if (inner.IndexOf('*') >= 0 || inner.IndexOf('?') >= 0) { why = "文件名带通配符，暂不支持"; return false; }
-
-            if (Path.GetExtension(arc).ToLowerInvariant() == ".zip")
-            {
-                try
-                {
-                    using (System.IO.Compression.ZipArchive za = System.IO.Compression.ZipFile.OpenRead(arc))
-                    {
-                        System.IO.Compression.ZipArchiveEntry e = za.GetEntry(inner.Replace('\\', '/'));
-                        if (e == null) { why = "包里找不到 " + inner; return false; }
-                        using (Stream src = e.Open())
-                        using (FileStream fs = new FileStream(dst, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20))
-                            src.CopyTo(fs, 1 << 20);
-                    }
-                    return true;
-                }
-                catch (Exception ex) { why = ex.Message; return false; }
-            }
-
-            // 7z 只有图形版 WinRAR.exe 认（Rar.exe 只处理 rar），其余都走 Rar.exe
-            bool is7z = string.Equals(Path.GetExtension(arc), ".7z", StringComparison.OrdinalIgnoreCase);
-            string rar = is7z ? Catalog.WinRarExe() : Catalog.RarExe();
-            if (rar.Length == 0)
-            {
-                why = is7z ? "找不到 WinRAR（WinRAR.exe），7z 解不开" : "找不到 WinRAR（Rar.exe）";
-                return false;
-            }
-            string tmp = Path.Combine(Path.GetTempPath(), "l4d2-" + Guid.NewGuid().ToString("N").Substring(0, 8));
-            try
-            {
-                Directory.CreateDirectory(tmp);
-                ProcessStartInfo psi = new ProcessStartInfo(rar, "e -y -idq \"" + arc + "\" \"" + inner + "\" \"" + tmp + "\\\"");
-                psi.UseShellExecute = false;
-                psi.CreateNoWindow = true;
-                psi.WindowStyle = ProcessWindowStyle.Hidden;
-                using (Process p = Process.Start(psi))
-                {
-                    if (!p.WaitForExit(300000)) { try { p.Kill(); } catch { } why = "解压超时"; return false; }
-                    if (p.ExitCode != 0) { why = "WinRAR 返回 " + p.ExitCode; return false; }
-                }
-                string got = Path.Combine(tmp, Path.GetFileName(inner));
-                if (!File.Exists(got)) { why = "没解出文件"; return false; }
-                try { if (File.Exists(dst)) File.Delete(dst); } catch { }
-                try { File.Move(got, dst); }
-                catch { File.Copy(got, dst, true); }
-                return true;
-            }
-            catch (Exception ex) { why = ex.Message; return false; }
-            finally { try { Directory.Delete(tmp, true); } catch { } }
+            // 解包实现只有一份，在 Catalog 里 —— 识别层和判重层也要用，不能再各写各的
+            return Catalog.ExtractEntryTo(it.FullPath, it.Inner, dst, out why);
         }
 
         // U 盘上并行读会互相打断顺序读，反而更慢；网络共享才需要多路掩盖延迟

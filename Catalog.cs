@@ -154,6 +154,67 @@ namespace Installer
             return e == ".rar" || e == ".zip" || e == ".7z";
         }
 
+        /// <summary>
+        /// 从压缩包里只取出一个条目写到 dst：不整包解压，也不动盘上的包。
+        /// 安装、识别、判重都走这一份实现 —— 以前 Work 里有一份，7z 补识别时不能各写各的。
+        /// zip 走 .NET；rar 走 Rar.exe；7z 只有图形版 WinRAR.exe 认（Rar.exe 只处理 rar）。
+        /// </summary>
+        public static bool ExtractEntryTo(string arc, string inner, string dst, out string why)
+        {
+            why = null;
+            if (string.IsNullOrEmpty(arc) || !File.Exists(arc)) { why = "压缩包不存在"; return false; }
+            if (string.IsNullOrEmpty(inner)) { why = "包内路径为空"; return false; }
+            if (inner.IndexOf('*') >= 0 || inner.IndexOf('?') >= 0) { why = "文件名带通配符，暂不支持"; return false; }
+
+            if (Path.GetExtension(arc).ToLowerInvariant() == ".zip")
+            {
+                try
+                {
+                    using (System.IO.Compression.ZipArchive za = System.IO.Compression.ZipFile.OpenRead(arc))
+                    {
+                        System.IO.Compression.ZipArchiveEntry e = za.GetEntry(inner.Replace('\\', '/'));
+                        if (e == null) { why = "包里找不到 " + inner; return false; }
+                        using (Stream src = e.Open())
+                        using (FileStream fs = new FileStream(dst, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20))
+                            src.CopyTo(fs, 1 << 20);
+                    }
+                    return true;
+                }
+                catch (Exception ex) { why = ex.Message; return false; }
+            }
+
+            // 7z 只有图形版 WinRAR.exe 认（Rar.exe 只处理 rar），其余都走 Rar.exe
+            bool is7z = string.Equals(Path.GetExtension(arc), ".7z", StringComparison.OrdinalIgnoreCase);
+            string rar = is7z ? WinRarExe() : RarExe();
+            if (rar.Length == 0)
+            {
+                why = is7z ? "找不到 WinRAR（WinRAR.exe），7z 解不开" : "找不到 WinRAR（Rar.exe）";
+                return false;
+            }
+            string tmp = Path.Combine(Path.GetTempPath(), "l4d2-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            try
+            {
+                Directory.CreateDirectory(tmp);
+                ProcessStartInfo psi = new ProcessStartInfo(rar, "e -y -idq \"" + arc + "\" \"" + inner + "\" \"" + tmp + "\\\"");
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.WindowStyle = ProcessWindowStyle.Hidden;
+                using (Process p = Process.Start(psi))
+                {
+                    if (!p.WaitForExit(300000)) { try { p.Kill(); } catch { } why = "解压超时"; return false; }
+                    if (p.ExitCode != 0) { why = "WinRAR 返回 " + p.ExitCode; return false; }
+                }
+                string got = Path.Combine(tmp, Path.GetFileName(inner));
+                if (!File.Exists(got)) { why = "没解出文件"; return false; }
+                try { if (File.Exists(dst)) File.Delete(dst); } catch { }
+                try { File.Move(got, dst); }
+                catch { File.Copy(got, dst, true); }
+                return true;
+            }
+            catch (Exception ex) { why = ex.Message; return false; }
+            finally { try { Directory.Delete(tmp, true); } catch { } }
+        }
+
         /// <summary>列出压缩包里的 vpk（带原始大小）。zip 走 .NET，rar 走 WinRAR 命令行。</summary>
         public static List<ArcEntry> ListArchive(string arcPath, out string err)
         {
@@ -368,6 +429,8 @@ namespace Installer
         // ---------- 压缩包内容分类缓存（rar 只能靠 Rar.exe 流式读前缀，很慢，必须缓存） ----------
         static Dictionary<string, string> _arcContent;                 // key = rel|inner|size|ticks -> "cat|sub"
         static readonly Dictionary<string, string> _arcSigCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // 7z 补上内容识别（v2.45）时同样不升版本：v1 里 7z 存的是「读不出」的空结论，
+        // 在 LoadArcContent 里按 key 丢掉即可；rar 的结论仍然有效，不能跟着一起作废。
         static string ArcContentPath { get { return Path.Combine(Core.LogDir, "archive-content-v1.tsv"); } }
 
         static string ArcSig(string fullPath)
@@ -399,7 +462,10 @@ namespace Installer
                 foreach (string raw in File.ReadAllLines(ArcContentPath, Encoding.UTF8))
                 {
                     string[] p = raw.TrimEnd((char)13).Split((char)9);
-                    if (p.Length >= 4) _arcContent[p[0] + "|" + p[1] + "|" + p[2]] = p[3];
+                    if (p.Length < 4) continue;
+                    // 同上：7z 以前一律记成「读不出」（值是 "|"），现在能读了，这些作废；读到过结论的留着
+                    if (p[0].EndsWith(".7z", StringComparison.OrdinalIgnoreCase) && p[3] == "|") continue;
+                    _arcContent[p[0] + "|" + p[1] + "|" + p[2]] = p[3];
                 }
             }
             catch { }
@@ -440,7 +506,7 @@ namespace Installer
             return cat.Length > 0;
         }
 
-        /// <summary>把所有还没缓存的 rar 逐个探一遍（只读前几百 KB）。返回新识别成功的数量。</summary>
+        /// <summary>把所有还没缓存的 rar / 7z 逐个探一遍（只读前几百 KB 的目录表）。返回新识别成功的数量。</summary>
         public static int ProbeArchives(Action<string> progress)
         {
             LoadArcContent();
@@ -451,7 +517,8 @@ namespace Installer
                 {
                     foreach (string arc in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
                     {
-                        if (!arc.EndsWith(".rar", StringComparison.OrdinalIgnoreCase)) continue;
+                        // rar / 7z 都要探；zip 在扫描时已经读过目录表，这里不重复解
+                        if (!IsArchive(arc) || arc.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) continue;
                         string rel = RelOf(arc);
                         string sig = ArcSig(arc);
                         bool hit;
@@ -462,7 +529,7 @@ namespace Installer
                             if (_arcContent.ContainsKey(key)) continue;
                             if (progress != null) progress("识别 " + Path.GetFileName(arc) + " → " + Path.GetFileName(e.Inner));
                             string c, s;
-                            if (ModIdentify.ClassifyByContentRar(arc, e.Inner, out c, out s))
+                            if (ModIdentify.ClassifyByContentArchive(arc, e.Inner, out c, out s))
                                 _arcContent[key] = c + "|" + s;
                             else
                                 _arcContent[key] = "|";
@@ -635,13 +702,16 @@ namespace Installer
             catch { }
 
             // U 盘模式：库里已经有同名同大小的一份 → 游戏目录这份就是「已装」，合并进库条目、不再重复列
+            // 压缩包里的条目（zip/rar/7z）也算：它们的 Name 是包内文件名、Size 是包内原始大小，
+            // 判定口径和散装 vpk 完全一样。以前把它们排除在外，导致从包里装的 MOD 在游戏里是一条
+            // 「仅游戏内」、在库里还是一条「未装」，同一个 MOD 分裂成两条互相矛盾记录。
             Dictionary<string, List<ModItem>> libByName = null;
             if (!Core.IsLocal)
             {
                 libByName = new Dictionary<string, List<ModItem>>(StringComparer.OrdinalIgnoreCase);
                 foreach (ModItem m in Core.ModList)
                 {
-                    if (m.FromGame || m.IsArchive) continue;
+                    if (m.FromGame) continue;   // 只跳过游戏目录自己那份，别把自己跟自己配对
                     List<ModItem> l;
                     if (!libByName.TryGetValue(m.Name, out l)) { l = new List<ModItem>(); libByName[m.Name] = l; }
                     l.Add(m);
@@ -800,8 +870,11 @@ namespace Installer
                 {
                     hitContent = ModIdentify.ClassifyByContentZip(it.FullPath, it.Inner, out ccat, out csub);
                 }
-                else if (it.FullPath != null && it.FullPath.EndsWith(".rar", StringComparison.OrdinalIgnoreCase))
+                else if (it.FullPath != null && IsArchive(it.FullPath)
+                         && !it.FullPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
                 {
+                    // rar / 7z 共用一份内容分类缓存（由 ProbeArchives 填好）。
+                    // 扫描阶段只读缓存，绝不在这里解包 —— 一个 7z 里十几条 vpk，边扫边解会卡死启动。
                     hitContent = TryArcContent(it.FullPath, it.Inner, out ccat, out csub);
                 }
             }
