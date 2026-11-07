@@ -1068,19 +1068,25 @@ namespace Installer
                 if (PendingOf(p)) shownOn++;
             }
 
-            // 已装列
+            // 本地模式：游戏 addons 自己就是库，「已装 / 仅游戏内」这一维度恒为真、一点信息量都没有。
+            // 那一列已经在 Cols 里收成 0 宽，剩下的唯一状态就是 addonlist 的开关 → 开启 / 关闭。
+            bool local = Core.IsLocal;
+
+            // 已装列（本地模式下宽度为 0，看不见，只留空串）
             string instText; Color instInk;
-            if (inst == 0) { instText = "未装"; instInk = Theme.Ink3; }
+            if (local) { instText = ""; instInk = Theme.Ink3; }
+            else if (inst == 0) { instText = "未装"; instInk = Theme.Ink3; }
             else if (inst < total) { instText = "部分 " + inst + "/" + total; instInk = Theme.Info; }
             else if (game == total) { instText = "仅游戏内"; instInk = Theme.Ink2; }
             else { instText = "已装"; instInk = Theme.Ok; }
 
-            // 开关列：只有装进去的才谈得上开关
+            // 开关列：只有装进去的才谈得上开关。
+            // 本地模式下这列就是唯一的状态列，所以用「开启 / 关闭」说全称，不再用「开 / 关」。
             string swText; Color swInk; Color rowBg;
             if (ins == 0) { swText = "—"; swInk = Theme.Ink3; rowBg = Theme.Surface; }
-            else if (shownOn == ins) { swText = "开"; swInk = Theme.Ok; rowBg = Theme.RowOn; }
-            else if (shownOn == 0) { swText = "关"; swInk = Theme.Warn; rowBg = Theme.RowOff; }
-            else { swText = shownOn + "/" + ins; swInk = Theme.Warn; rowBg = Theme.RowOff; }
+            else if (shownOn == ins) { swText = local ? "开启" : "开"; swInk = Theme.Ok; rowBg = Theme.RowOn; }
+            else if (shownOn == 0) { swText = local ? "关闭" : "关"; swInk = Theme.Warn; rowBg = Theme.RowOff; }
+            else { swText = (local ? "开启 " : "") + shownOn + "/" + ins; swInk = Theme.Warn; rowBg = Theme.RowOff; }
 
             // 攒着还没落盘的（pending 里有、且跟文件里的实际值不一样）加个 *：
             // 一眼就能看出「这三行是我点过但还没写进游戏的」
@@ -3051,6 +3057,12 @@ namespace Installer
                 if (w >= 340) { sizeW = 64; instW = 70; swW = 54; }
                 else { sizeW = 56; instW = 60; swW = 46; }
             }
+
+            // 本地模式：没有「库」可比，「已装」恒为真 —— 这一列纯属噪音，收成 0 宽、把宽度并给开关列。
+            // 于是本地模式下能看到的只剩「开启 / 关闭」两个状态（开关列同时也是点击入口）。
+            bool local = Core.IsLocal && v.Columns.Count >= 5;
+            if (local) { swW += instW; instW = 0; }
+
             int nameW = Math.Max(90, w - kindW - sizeW - instW - swW);
             v.Columns[0].Width = nameW;
             v.Columns[1].Width = kindW;
@@ -3059,6 +3071,11 @@ namespace Installer
             {
                 v.Columns[3].Width = instW;
                 v.Columns[4].Width = swW;
+                // 表头跟着模式换：本地模式下没有「已装」，那一列叫「已装」会误导
+                string t3 = local ? "" : "已装";
+                string t4 = local ? "开启 ⇄" : "开关 ⇄";
+                if (v.Columns[3].Text != t3) v.Columns[3].Text = t3;
+                if (v.Columns[4].Text != t4) v.Columns[4].Text = t4;
             }
         }
     }

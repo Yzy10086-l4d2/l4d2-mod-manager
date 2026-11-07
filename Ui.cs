@@ -1520,6 +1520,16 @@ namespace Installer
             int total, inst, on, game;
             CountState(g, out total, out inst, out on, out game);
             ink = Theme.Ink3; bg = Theme.Surface;
+            // 本地模式只有两个状态：addonlist 里开着还是关着。
+            // 「已装 / 未装 / 仅游戏内」全都建立在「库 vs 游戏目录」这个对比上，本地模式没有这个对比。
+            if (Core.IsLocal)
+            {
+                if (inst == 0) return "—";
+                if (on == inst) { ink = Theme.Ok; bg = Theme.RowOn; return "开启"; }
+                if (on == 0) { ink = Theme.Warn; bg = Theme.RowOff; return "关闭"; }
+                ink = Theme.Warn; bg = Theme.RowOff;
+                return "开启 " + on + "/" + inst;
+            }
             if (inst == 0) return "未装";
             if (game == total)                       // 全都在游戏目录里、库里没有
             {
@@ -1543,6 +1553,13 @@ namespace Installer
             bg = Theme.Surface; ink = Theme.Ink3;
             if (p.FromGame)
             {
+                // 本地模式没有「库」的概念，游戏里这份开着就是开启、关着就是关闭
+                if (Core.IsLocal)
+                {
+                    ink = p.AddonOn ? Theme.Ok : Theme.Warn;
+                    bg = p.AddonOn ? Theme.RowOn : Theme.RowOff;
+                    return p.AddonOn ? "开启" : "关闭";
+                }
                 ink = Theme.Ink2; bg = Theme.RowGame;
                 return p.AddonOn ? "游戏内 · 开" : "游戏内 · 关";
             }
