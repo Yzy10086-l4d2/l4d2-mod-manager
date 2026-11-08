@@ -117,6 +117,10 @@ namespace Installer
         }
 
         private bool initializing = true;
+        // 后台扫库进行中：ModList / Catalog.Groups 正被那个线程重建，
+        // 这个时候 UI 线程再去枚举（冲突检查、重扫）必撞「集合已修改」。
+        private volatile bool scanning;
+        private string pendingRoot;                 // 扫库期间用户选的新目录，扫完接着切
 
         /// <summary>初始化（扫库、找游戏）跑完了没有。自测截图要等它。</summary>
         internal bool Ready { get { return !initializing; } }
@@ -151,6 +155,7 @@ namespace Installer
                         Core.Cfg.GameRoot = found;
                         Core.SaveConfig();
                     }
+                    scanning = true;
                     Core.ScanMods();
                     Core.Log("INFO", "启动计时: 扫库 " + __sw.ElapsedMilliseconds + " ms（" + Core.ModList.Count + " 个）");
 
@@ -165,8 +170,11 @@ namespace Installer
                         __sw2.Restart();
                         RefreshConflicts(false);          // 启动只做内存里的同名/同大小判断
                         Core.Log("INFO", "启动计时: 冲突检查 " + __sw2.ElapsedMilliseconds + " ms");
+                        scanning = false;
                         initializing = false;
                         ShowPackStatus(packs, packOk);
+                        // 扫库期间用户选过目录：现在安全了，接着切
+                        if (pendingRoot != null) { string pr = pendingRoot; pendingRoot = null; SwitchGameRoot(pr, "补切（扫库完成）"); }
                         ShowTree();                        // 启动第一屏是方案树；桌面要点按钮才开
                     });
                 }
@@ -550,13 +558,20 @@ namespace Installer
             Core.Log("OK", "工作模式：" + (want == "local" ? "本地模式（游戏目录 addons 当库）" : "U 盘模式（U 盘库是主，游戏目录重复项合并）"));
             lblStatus.Text = want == "local" ? "正在按「本地模式」重扫游戏目录…" : "正在按「U 盘模式」重扫库…";
             btnInstall.Enabled = false;
+            scanning = true;
             System.Threading.Thread th = new System.Threading.Thread(delegate()
             {
                 try { Core.ScanMods(); }
                 catch (Exception ex) { Core.Log("FAIL", "切换模式后重扫失败: " + ex.Message); }
                 SafeInvoke(delegate()
                 {
+                    scanning = false;
                     btnInstall.Enabled = true;
+                    RefreshMods();
+                    RefreshConflicts();
+                    if (treeView != null) RebuildViews();
+                    RunPendingRoot();
+                    lblStatus.Text = "就绪";
                     RefreshMods();
                     RefreshConflicts();
                     if (treeView != null) RebuildViews();
@@ -1737,7 +1752,14 @@ namespace Installer
         {
             string root = txtGame.Text.Trim();
             if (!Core.TestGame(root)) { lblConflict.Text = ""; conflictMsgs.Clear(); lblConflict.Visible = false; return; }
-            List<string> msgs = ConflictCheck.Run(Core.ModList, root, checkExisting);
+            List<string> msgs;
+            try { msgs = ConflictCheck.Run(Core.ModList, root, checkExisting); }
+            catch (Exception ex)
+            {
+                // 扫库线程正好在改表：这次跳过，扫完的回调还会再来一遍
+                Core.Log("WARN", "冲突检查赶上扫库在改表，跳过这一次: " + ex.Message);
+                return;
+            }
             conflictMsgs = msgs;
             if (msgs.Count == 0) { lblConflict.Text = ""; lblConflict.Visible = false; return; }
             lblConflict.ForeColor = Theme.Warn;
@@ -1877,6 +1899,16 @@ namespace Installer
                 lblStatus.ForeColor = Theme.Accent;
                 return;
             }
+            // 启动 / 换模式的扫库还在后台跑：这时候枚举 ModList 必撞「集合已修改」，
+            // 再起一个扫库线程更是两个线程同时重建一张表。先记下目录，扫完自动接着切。
+            if (scanning)
+            {
+                pendingRoot = root;
+                Core.Log("INFO", source + "：后台扫库还没结束，结束后自动切到 " + root);
+                SetStatus("正在扫库，结束后自动切换目录…");
+                return;
+            }
+
             bool same = string.Equals(root, Core.Cfg.GameRoot, StringComparison.OrdinalIgnoreCase);
             Core.Cfg.GameRoot = root;
             Core.SaveConfig();
@@ -1890,6 +1922,7 @@ namespace Installer
             SetBusy(true);
             SetStatus("正在按新游戏目录重扫…");
             bar.Style = ProgressBarStyle.Marquee;
+            scanning = true;
             Thread th = new Thread(delegate()
             {
                 string err = null;
@@ -1897,6 +1930,7 @@ namespace Installer
                 catch (Exception ex) { err = ex.Message; Core.Log("FAIL", "切换游戏目录后重扫失败: " + ex.Message); }
                 SafeBeginInvoke(delegate()
                 {
+                    scanning = false;
                     SetBusy(false);
                     bar.Style = ProgressBarStyle.Blocks;
                     RefreshMods();
@@ -1904,10 +1938,20 @@ namespace Installer
                     if (treeView != null) RebuildViews();
                     SetStatus(err == null ? "就绪" : "目录已切换，但重扫失败；请看日志");
                     if (err == null) lblStatus.ForeColor = Theme.Ink2;
+                    RunPendingRoot();
                 });
             });
             th.IsBackground = true;
             th.Start();
+        }
+
+        /// <summary>扫库结束后接着处理用户期间选下的目录（没有就什么都不做）。</summary>
+        private void RunPendingRoot()
+        {
+            if (pendingRoot == null) return;
+            string p = pendingRoot;
+            pendingRoot = null;
+            SwitchGameRoot(p, "补切（扫库完成）");
         }
 
         private ModGroup FirstSelectedGroup(ListView lv)

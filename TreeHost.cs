@@ -170,6 +170,35 @@ namespace Installer
             return bad;
         }
 
+        /// <summary>扫库竞态自检：伪造「扫描中」，切目录应被记账，扫完自动补切，不炸不丢。</summary>
+        internal int ScanRaceTest()
+        {
+            int bad = 0;
+            string root = Core.Cfg.GameRoot;
+            if (string.IsNullOrEmpty(root) || !Core.TestGame(root))
+            {
+                Core.Log("INFO", "SCANRACE 没有可用的游戏目录，跳过");
+                return 0;
+            }
+
+            scanning = true;                        // 伪造：后台正在扫库
+            SwitchGameRoot(root, "SCANRACE");
+            if (pendingRoot == null)
+            {
+                Core.Log("FAIL", "SCANRACE 扫库期间切目录没有被记账（会当场枚举正被改的表）");
+                bad++;
+            }
+            else Core.Log("INFO", "SCANRACE 扫库期间切目录已记账：" + pendingRoot);
+
+            scanning = false;                       // 扫完了
+            RunPendingRoot();
+            if (pendingRoot != null) { Core.Log("FAIL", "SCANRACE 补切没跑掉"); bad++; }
+            else Core.Log("INFO", "SCANRACE 补切完成，目录 = " + Core.Cfg.GameRoot);
+
+            Console.WriteLine("scanrace failures = " + bad);
+            return bad;
+        }
+
         /// <summary>方案树：按「能替换的东西」看这套方案，右边是候选 MOD。</summary>
         internal void ShowTree()
         {

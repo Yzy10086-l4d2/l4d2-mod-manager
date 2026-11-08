@@ -66,6 +66,7 @@ namespace Installer
             bool uiTree = false;
             bool mapShot = false;
             bool mapSelf = false;
+            bool scanRace = false;
             string uiSelect = null;
             string uiDrag = null;
             string uiDragCat = null;
@@ -115,6 +116,7 @@ namespace Installer
                 else if (string.Equals(a, "--uitree", StringComparison.OrdinalIgnoreCase)) uiTree = true;
                 else if (string.Equals(a, "--treeshot", StringComparison.OrdinalIgnoreCase)) { mapShot = true; uiTest = true; }
                 else if (string.Equals(a, "--treeself", StringComparison.OrdinalIgnoreCase)) { mapSelf = true; uiTest = true; }
+                else if (string.Equals(a, "--scanrace", StringComparison.OrdinalIgnoreCase)) { scanRace = true; uiTest = true; }
                 else if (a.StartsWith("--uiselect=", StringComparison.OrdinalIgnoreCase)) uiSelect = a.Substring(11);
                 else if (a.StartsWith("--uidrag=", StringComparison.OrdinalIgnoreCase)) uiDrag = a.Substring(9);
                 else if (a.StartsWith("--uidragcat=", StringComparison.OrdinalIgnoreCase)) uiDragCat = a.Substring(12);
@@ -421,6 +423,7 @@ namespace Installer
                     if (uiDup) { f.UiTestDup(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDeps) { f.UiTestDeps(); System.Windows.Forms.Application.DoEvents(); }
                     if (mapShot) { f.TreeMapShot(); System.Windows.Forms.Application.DoEvents(); return 0; }
+                    if (scanRace) { f.ScanRaceTest(); System.Windows.Forms.Application.DoEvents(); return 0; }
                     if (mapSelf)
                     {
                         int badm = f.TreeMapSelfTest();
