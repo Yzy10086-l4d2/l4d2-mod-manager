@@ -14,11 +14,11 @@ namespace Installer
     public partial class MainForm
     {
         private DeskServer desk;
-        private TreeCanvas map;
+        private OverviewCanvas map;
         private bool mapHooked;
 
-        /// <summary>科技树：整窗口一块画板，盖在左栏和方案树上面（顶栏和底栏留着）。</summary>
-        internal void ShowTreeMap()
+        /// <summary>套装总览：整窗口一块看板，盖在左栏和方案树上面（顶栏和底栏留着）。</summary>
+        internal void ShowOverview()
         {
             EnsureTree();
             DropLoading();
@@ -26,13 +26,13 @@ namespace Installer
 
             if (map == null)
             {
-                map = new TreeCanvas(this);
+                map = new OverviewCanvas(this);
                 Controls.Add(map);
             }
             if (!mapHooked)
             {
                 mapHooked = true;
-                Resize += delegate { if (MapOpen) FitMap(); };
+                Resize += delegate { if (OverviewOpen) FitMap(); };
             }
 
             FitMap();
@@ -53,36 +53,30 @@ namespace Installer
                 Math.Max(140, ClientSize.Height - top - bottom));
         }
 
-        internal void HideTreeMap()
+        internal void HideOverview()
         {
             if (map != null) map.Visible = false;
-            if (btnView != null) btnView.Text = "科技树";
+            if (btnView != null) btnView.Text = "总览";
             ShowTree();
         }
 
-        internal bool MapOpen { get { return map != null && map.Visible; } }
+        internal bool OverviewOpen { get { return map != null && map.Visible; } }
 
-        /// <summary>给某个位置换候选（科技树点候选走这里）。</summary>
-        internal void ChooseInSlot(Slot s, ModGroup g)
-        {
-            if (treeView != null) treeView.ChooseInSlot(s, g);
-        }
-
-        /// <summary>截图自检：把科技树画布存成 PNG（只抓画布，不抓整窗 —— 屏幕上可能盖着别的窗口）。</summary>
-        internal void TreeMapShot()
+        /// <summary>截图自检：把总览画布存成 PNG（只抓画布，不抓整窗 —— 屏幕上可能盖着别的窗口）。</summary>
+        internal void OverviewShot()
         {
             EnsureTree();
-            ShowTreeMap();
+            ShowOverview();
             Pump(700);
-            ShotCanvas("treemap");
+            ShotCanvas("overview");
 
-            if (map != null) map.SelectForShot("近战", null);
-            Pump(500);
-            ShotCanvas("treemap2");
+            if (map != null) map.SelectCatForShot("近战");
+            Pump(400);
+            ShotCanvas("overview2");
 
-            if (map != null) map.SelectForShot("枪械", "AK-47");
-            Pump(500);
-            ShotCanvas("treemap3");
+            if (map != null) map.SelectCatForShot("枪械");
+            Pump(400);
+            ShotCanvas("overview3");
         }
 
         private static void Pump(int ms)
@@ -102,75 +96,80 @@ namespace Installer
             }
         }
 
-        /// <summary>科技树自检：数字对得上、每个大类都排得下、点候选真的换得到。返回失败条数。</summary>
-        internal int TreeMapSelfTest()
+        /// <summary>总览自检：数字对得上、每个大类都排得下、点一行跳得到对应位置。返回失败条数。</summary>
+        internal int OverviewSelfTest()
         {
             int bad = 0;
             EnsureTree();
             treeView.Rebuild();
-            ShowTreeMap();
+            ShowOverview();
             Pump(300);
 
-            if (map == null) { Core.Log("FAIL", "treeself 画布没建起来"); return 1; }
+            if (map == null) { Core.Log("FAIL", "ovself 画布没建起来"); return 1; }
 
-            Core.Log("INFO", "TREESELF 尺寸: 画布 " + map.Width + "x" + map.Height
+            Core.Log("INFO", "OVSELF 尺寸: 画布 " + map.Width + "x" + map.Height
                             + "，窗体客户区 " + ClientSize.Width + "x" + ClientSize.Height
                             + "，可见 " + map.Visible);
 
-            Core.Log("INFO", "TREESELF 大类 " + map.CatCount + " / 位置 " + map.SlotNodeCount
-                            + "（方案树 " + treeView.SlotCount + "）");
-            if (map.SlotNodeCount != treeView.SlotCount)
+            // 数字必须和方案树同一份：位置总数、已装位置数
+            Core.Log("INFO", "OVSELF 大类 " + map.CatCount + " / 位置 " + map.SlotCount
+                            + "（方案树 " + treeView.SlotCount + "），已装 " + map.SlotsOn
+                            + "（方案树 " + treeView.SlotCheckedCount + "）");
+            if (map.SlotCount != treeView.SlotCount)
             {
-                Core.Log("FAIL", "TREESELF 位置数对不上：" + map.SlotNodeCount + " vs " + treeView.SlotCount);
+                Core.Log("FAIL", "OVSELF 位置数对不上：" + map.SlotCount + " vs " + treeView.SlotCount);
+                bad++;
+            }
+            if (map.SlotsOn != treeView.SlotCheckedCount)
+            {
+                Core.Log("FAIL", "OVSELF 已装位置数对不上：" + map.SlotsOn + " vs " + treeView.SlotCheckedCount);
                 bad++;
             }
 
-            // 每个大类都排一遍：不许有节点跑出画布、压在列标题上，或行高压到字放不下
+            // 每个大类都排一遍：行高、边界、放得下就别滚
             string[] cats = map.CatTitles;
             int fit = 0;
             foreach (string cat in cats)
             {
                 string why = map.LayoutProblem(cat);
-                if (why != null) { Core.Log("FAIL", "TREESELF 排版 " + why); bad++; }
+                if (why != null) { Core.Log("FAIL", "OVSELF 排版 " + why); bad++; }
                 else fit++;
             }
-            Core.Log("INFO", "TREESELF 排版检查：" + fit + "/" + cats.Length + " 个大类通过");
+            Core.Log("INFO", "OVSELF 排版检查：" + fit + "/" + cats.Length + " 个大类通过");
 
-            // 点一个候选：原来那件要下来，新的要上去，这个位置只剩一件
-            Slot probe = null;
-            foreach (Slot s in treeView.Slots)
-                if (s.Items.Count >= 2) { probe = s; break; }
+            // 点一行：命中到的位置要和画面上那一行是同一个
+            map.SelectCatForShot(cats.Length > 0 ? cats[0] : "");
+            RectangleF r = map.RowRect(0);
+            Slot want = map.RowSlot(0);
+            Slot got = r.IsEmpty ? null : map.SlotAtPoint(r.X + r.Width * 0.5f, r.Y + r.Height * 0.5f);
+            Core.Log("INFO", "OVSELF 点第一行：" + (want == null ? "无" : want.Name)
+                            + " → 命中 " + (got == null ? "无" : got.Name));
+            if (want != null && want != got) { Core.Log("FAIL", "OVSELF 点一行命中的不是那个位置"); bad++; }
 
-            if (probe == null) Core.Log("INFO", "TREESELF 没有两个以上候选的位置，跳过点选");
-            else
+            // 点一行真的会跳回方案树，并且选中那个位置（看板不收起来的话，树会被盖在下面）
+            if (want != null)
             {
-                List<string> backup = new List<string>(checkedKeys);
-                int total0 = checkedKeys.Count;
-                ModGroup a0 = probe.Items[0], a1 = probe.Items[1];
-
-                // 先把这个位置归零，再点第 2 个候选 —— 直接点一个已经开着的候选是幂等的，验不出东西
-                treeView.ChooseInSlot(probe, null);
-                Pump(40);
-                map.SelectForShot(probe.Cat, probe.Name);
-                bool picked = map.TestPick(1);
-                int on0 = CountChecked(a0), on1 = CountChecked(a1);
-                Core.Log("INFO", "TREESELF 点第 2 个候选「" + a1.Name + "」：第 1 件 " + on0
-                                + " 件，第 2 件 " + on1 + " 件，点中了=" + picked);
-                if (!picked) { Core.Log("FAIL", "TREESELF 点了候选但没选上"); bad++; }
-                if (on1 == 0) { Core.Log("FAIL", "TREESELF 点了候选但它没被勾上"); bad++; }
-                if (on0 > 0) { Core.Log("FAIL", "TREESELF 换候选后原来那件还开着"); bad++; }
-
-                checkedKeys.Clear();
-                foreach (string k in backup) checkedKeys.Add(k);
-                AfterTreePick();
-                if (treeView != null) treeView.Sync();
-                Pump(60);
-                Core.Log("INFO", "TREESELF 还原勾选：" + checkedKeys.Count + " 件（原 " + total0 + "）");
-                if (checkedKeys.Count != total0) { Core.Log("FAIL", "TREESELF 还原后勾选数对不上"); bad++; }
+                ShowSlotInTree(want);
+                Pump(120);
+                bool back = !OverviewOpen;
+                bool sel = treeView != null && treeView.SelectedKey == want.Key;
+                Core.Log("INFO", "OVSELF 点行跳转：" + want.Name + " → 看板已收=" + back + "，选中对=" + sel);
+                if (!back) { Core.Log("FAIL", "OVSELF 点了行看板没关，方案树被盖在下面"); bad++; }
+                if (!sel) { Core.Log("FAIL", "OVSELF 跳转后方案树选中的不是那个位置"); bad++; }
+                ShowOverview();                       // 后面还要写文本存档
+                Pump(80);
             }
 
-            HideTreeMap();
-            Console.WriteLine("treeself failures = " + bad);
+            // 摊成文本存档，数字对不上时好核对
+            try
+            {
+                System.IO.File.WriteAllText(System.IO.Path.Combine(Core.LogDir, "总览.txt"),
+                    map.Dump(), new System.Text.UTF8Encoding(false));
+            }
+            catch { }
+
+            HideOverview();
+            Console.WriteLine("ovself failures = " + bad);
             return bad;
         }
 
@@ -316,11 +315,12 @@ namespace Installer
             return bad;
         }
 
-        /// <summary>台面里双击一行：回树里定位到那个位置，候选列表就在右边。</summary>
+        /// <summary>总览里点一行：先把看板收起来，回方案树定位到那个位置（不收起的话树被盖在下面）。</summary>
         internal void ShowSlotInTree(Slot s)
         {
             if (s == null) return;
-            ShowTree();
+            if (OverviewOpen) HideOverview();
+            else ShowTree();
             if (treeView != null) treeView.SelectSlot(s.Key);
         }
 
@@ -349,7 +349,7 @@ namespace Installer
         internal void SyncPicks()
         {
             if (treeView != null && treeView.Visible) treeView.Sync();
-            if (MapOpen) map.RefreshPicks();
+            if (OverviewOpen) map.RefreshPicks();
             UpdateSel();
             UpdateSchemeLabel();
             UpdateModCaption();          // 台面标题上的「已选 N」也要跟着动

@@ -273,11 +273,11 @@ namespace Installer
             tips.SetToolTip(btnSettings, "工作模式、动效、MOD 库目录，以及配置和日志位置。");
             Controls.Add(btnSettings);
 
-            // 科技树 / 方案树：同一份数据的两种看法，按钮上写的是「点了会去哪种」
-            btnView = new FlatButton(); btnView.Text = "科技树";
+            // 总览 / 方案树：同一份数据的两种看法，按钮上写的是「点了会去哪种」
+            btnView = new FlatButton(); btnView.Text = "总览";
             btnView.SetBounds(viewX, 16, viewW, Theme.H);
             btnView.Click += delegate { ToggleView(); };
-            tips.SetToolTip(btnView, "科技树：从「MOD 库」往外长——大类 → 位置 → 候选，一条路径点亮，其余灰色待命。\r\n点候选就是换掉这个位置，点「留原版」就是清空。方向键也能走。\r\n再点一下回到方案树（搜索、批量勾选、看套装细目）。");
+            tips.SetToolTip(btnView, "套装总览：这套里每个位置装的是哪个 MOD，一眼看完。\r\n左边点大类，右边列这个类的位置和已装的 MOD；没装的灰着，库里没有的空心点。\r\n点一行就回方案树改那个位置（看板只看不改）。再点一下回到方案树。");
             Controls.Add(btnView);
 
             btnPanel = new FlatButton(); btnPanel.Text = "面板";
@@ -1574,6 +1574,18 @@ namespace Installer
             foreach (string k in p.Mods) schemeKeys.Add(k);
         }
 
+        /// <summary>总览要的：当前下拉里那套方案的名字（空 = 没套方案，看的就是当前勾选）。</summary>
+        internal string SchemeName { get { return schemeName; } }
+
+        /// <summary>总览要的：当前勾选和方案差多少（多几个 / 少几个）。</summary>
+        internal void SchemeDiff(out int add, out int del)
+        {
+            add = 0;
+            del = 0;
+            foreach (string k in checkedKeys) if (!schemeKeys.Contains(k)) add++;
+            foreach (string k in schemeKeys) if (!checkedKeys.Contains(k)) del++;
+        }
+
         // 分类列只放得下 130 px：人物的「二代 · 西装Nick」取最后一段，省「人物 · 二代」那截
         // 装没装已经单独有一列（状态），这里不再拼「· 已装」，免得一格里塞两件事
         private static string WhereText(ModGroup g)
@@ -2635,11 +2647,11 @@ namespace Installer
             ResumeLayout(true);
         }
 
-        /// <summary>科技树 ⇄ 方案树。科技树是整窗口一块画板，不是另一个窗口。</summary>
+        /// <summary>总览 ⇄ 方案树。总览是整窗口一块看板，不是另一个窗口。</summary>
         internal void ToggleView()
         {
-            if (MapOpen) HideTreeMap();
-            else ShowTreeMap();
+            if (OverviewOpen) HideOverview();
+            else ShowOverview();
         }
 
         /// <summary>桌面上的「开始安装」按钮走这里。</summary>

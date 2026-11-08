@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
@@ -93,7 +93,7 @@ namespace Installer
             bool addonSelf = false;
             bool dumpId = false;
             bool dumpTree = false;
-            bool treeShot = false;
+            bool ovDump = false;
             bool recogSelf = false;
             string vpkFile = null;
 
@@ -143,7 +143,7 @@ namespace Installer
                 else if (string.Equals(a, "--addonself", StringComparison.OrdinalIgnoreCase)) addonSelf = true;
                 else if (string.Equals(a, "--dumpid", StringComparison.OrdinalIgnoreCase)) dumpId = true;
                 else if (string.Equals(a, "--dumptree", StringComparison.OrdinalIgnoreCase)) dumpTree = true;
-                else if (string.Equals(a, "--tree", StringComparison.OrdinalIgnoreCase)) treeShot = true;
+                else if (string.Equals(a, "--ovdump", StringComparison.OrdinalIgnoreCase)) ovDump = true;
                 else if (string.Equals(a, "--recogself", StringComparison.OrdinalIgnoreCase)) recogSelf = true;
                 else if (a.StartsWith("--vpk=", StringComparison.OrdinalIgnoreCase)) vpkFile = a.Substring(6).Trim('"');
 
@@ -154,7 +154,7 @@ namespace Installer
             bool created;
             Mutex only = new Mutex(true, "L4D2Setup_SingleInstance", out created);
             if (!created && !selfTest && !uiTest && !copyTest && !tweakSelf && !launchSelf && !dupSelf
-                && !addonSelf && !dumpId && !dumpTree && !treeShot && !recogSelf && vpkFile == null)
+                && !addonSelf && !dumpId && !dumpTree && !ovDump && !recogSelf && vpkFile == null)
             {
                 ActivateExisting();
                 try { only.Dispose(); } catch { }
@@ -199,37 +199,28 @@ namespace Installer
                 Console.WriteLine("dumptree: " + f);
                 return 0;
             }
-            if (treeShot)
+            if (ovDump)
             {
-                // 科技树白模：只验结构和数字，不弹窗口、不写配置
+                // 总览：不开窗口，按当前勾选摊一份文本 —— 核对「哪个位置装了哪个」和各类的计数
                 Core.ScanMods();
                 System.Collections.Generic.List<Slot> tslots = SlotIndex.Build();
                 SlotIndex.SortForTree(tslots, null);      // 跟方案树同一套顺序
                 System.Collections.Generic.HashSet<string> onKeys =
                     new System.Collections.Generic.HashSet<string>(Core.Cfg.Mods, StringComparer.OrdinalIgnoreCase);
-                TreeNode troot = TreeModel.Build(tslots, delegate(ModGroup g)
-                {
-                    int n = 0;
-                    foreach (ModItem pi in g.Parts) if (onKeys.Contains(pi.Key)) n++;
-                    return n;
-                });
-                string png = TreeWhite.Render(troot, new System.Drawing.Size(1600, 1000));
-                string txt = System.IO.Path.Combine(Core.LogDir, "tree.txt");
-                System.IO.File.WriteAllText(txt, TreeModel.Dump(troot), new System.Text.UTF8Encoding(false));
-                int nSlot = 0, nCand = 0;
-                foreach (TreeNode tc in troot.Kids)
-                {
-                    nSlot += tc.Kids.Count;
-                    foreach (TreeNode ts in tc.Kids) nCand += ts.Kids.Count;
-                }
-                Console.WriteLine("tree: " + png);
-                float lo = 9999f, hi = 0f;
-                foreach (TreeNode tc in troot.Kids) { if (tc.Y < lo) lo = tc.Y; if (tc.Y + tc.H > hi) hi = tc.Y + tc.H; }
-                Console.WriteLine("tree: 大类 " + troot.Kids.Count + " / 位置 " + nSlot + " / 候选节点 " + nCand
-                    + " / 大类列 Y " + lo.ToString("0") + ".." + hi.ToString("0"));
-                lo = 9999f; hi = 0f;
-                foreach (TreeNode tc in troot.Kids) foreach (TreeNode ts in tc.Kids) { if (ts.Y < lo) lo = ts.Y; if (ts.Y + ts.H > hi) hi = ts.Y + ts.H; }
-                Console.WriteLine("tree: 位置列 Y " + lo.ToString("0") + ".." + hi.ToString("0"));
+                OvModel om = OvModel.Build(tslots,
+                    delegate(ModGroup g)
+                    {
+                        int n = 0;
+                        foreach (ModItem pi in g.Parts) if (onKeys.Contains(pi.Key)) n++;
+                        return n;
+                    },
+                    delegate(ModItem pi) { return onKeys.Contains(pi.Key); },
+                    "", 0, 0);
+                string txt = System.IO.Path.Combine(Core.LogDir, "总览.txt");
+                System.IO.File.WriteAllText(txt, om.Dump(), new System.Text.UTF8Encoding(false));
+                Console.WriteLine("ovdump: " + txt + "（大类 " + om.Cats.Count
+                    + " / 位置 " + om.SlotsTotal + " / 已装 " + om.SlotsOn
+                    + " / vpk " + om.Parts + " / " + Core.Human(om.Size) + "）");
                 return 0;
             }
             if (recogSelf)
@@ -340,7 +331,7 @@ namespace Installer
             }
             // 自检全程不许写配置：以前 --addonself 把 Mode 改成本地模式后没写回去，
             // 跑一次自检用户的工作模式就变了（库从 223 个 MOD 变成 49 个）
-            if (uiTest || selfTest || addonSelf || copyTest || treeShot) Core.SelfTesting = true;
+            if (uiTest || selfTest || addonSelf || copyTest || ovDump) Core.SelfTesting = true;
 
             if (uiTest)
             {
@@ -422,11 +413,11 @@ namespace Installer
                     if (uiLaunch) { f.UiTestLaunch(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDup) { f.UiTestDup(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDeps) { f.UiTestDeps(); System.Windows.Forms.Application.DoEvents(); }
-                    if (mapShot) { f.TreeMapShot(); System.Windows.Forms.Application.DoEvents(); return 0; }
+                    if (mapShot) { f.OverviewShot(); System.Windows.Forms.Application.DoEvents(); return 0; }
                     if (scanRace) { f.ScanRaceTest(); System.Windows.Forms.Application.DoEvents(); return 0; }
                     if (mapSelf)
                     {
-                        int badm = f.TreeMapSelfTest();
+                        int badm = f.OverviewSelfTest();
                         System.Windows.Forms.Application.DoEvents();
                         return badm == 0 ? 0 : 1;
                     }
