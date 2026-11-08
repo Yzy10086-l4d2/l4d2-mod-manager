@@ -120,12 +120,20 @@ namespace Installer
         }
 
         // ---------- L4N ----------
+        /// <summary>平台文件复制的结果：失败几个是判定「这次到底装成没有」的唯一依据。</summary>
+        private class CopyStat
+        {
+            public int Total, Written, Skipped, Failed;
+            public bool Cancelled;
+        }
+
         public static bool InstallL4N(string gameRoot, Action<int, int> progress)
         {
             string zip = Core.FirstFile(Core.PkgDir, "L4N_v*.zip");
             string dir = Path.Combine(Core.PkgDir, "L4N平台\\L4N");
             try
             {
+                CopyStat st;
                 if (zip != null)
                 {
                     string tmp = Path.Combine(Path.GetTempPath(), "l4n_" + DateTime.Now.Ticks);
@@ -133,43 +141,53 @@ namespace Installer
                     Unzip(zip, tmp);
                     string payload = ResolvePayloadRoot(tmp);
                     Core.Log("INFO", "解压到: " + tmp + "  实际内容根: " + payload);
-                    CopyPayloadWithProgress(payload, gameRoot, progress);
+                    st = CopyPayloadWithProgress(payload, gameRoot, progress);
                     try { Directory.Delete(tmp, true); } catch { }
                 }
                 else
                 {
                     Core.Log("INFO", "用解压好的 L4N平台\\L4N 覆盖");
-                    CopyPayloadWithProgress(dir, gameRoot, progress);
+                    st = CopyPayloadWithProgress(dir, gameRoot, progress);
                 }
-                bool ok = File.Exists(Path.Combine(gameRoot, "bin\\left4neko.dll"));
-                Core.Log(ok ? "OK" : "FAIL", ok ? "L4N 核心 bin\\left4neko.dll 到位" : "没看到 bin\\left4neko.dll");
+                string dll = Path.Combine(gameRoot, "bin\\left4neko.dll");
+                bool has = File.Exists(dll);
+                // 光看「文件在不在」等于没判：覆盖重装时它本来就在，写失败了也照样算成功。
+                // 现在要求：核心文件在 + 这一次没有一个文件复制失败 + 没被用户中途停掉。
+                bool ok = has && st.Failed == 0 && !st.Cancelled;
+                if (ok) Core.Log("OK", "L4N 核心 bin\\left4neko.dll 到位（写入 " + st.Written + " 个，跳过 " + st.Skipped + " 个）");
+                else if (!has) Core.Log("FAIL", "没看到 bin\\left4neko.dll");
+                else if (st.Cancelled) Core.Log("FAIL", "已停止：L4N 只写了一部分，算没装完");
+                else Core.Log("FAIL", "L4N 有 " + st.Failed + " 个文件没写进去（游戏多半还开着），算没装好");
                 return ok;
             }
             catch (Exception ex) { Core.Log("FAIL", "L4N 装失败: " + ex.Message); return false; }
         }
 
-        private static void CopyPayloadWithProgress(string payload, string gameRoot, Action<int, int> progress)
+        private static CopyStat CopyPayloadWithProgress(string payload, string gameRoot, Action<int, int> progress)
         {
+            CopyStat st = new CopyStat();
             string[] files = Directory.GetFiles(payload, "*", SearchOption.AllDirectories);
-            int total = files.Length, done = 0, skip = 0, write = 0;
+            st.Total = files.Length;
+            int done = 0;
             foreach (string f in files)
             {
-                if (CancelRequested) { Core.Log("WARN", "收到停止请求：平台文件在本文件结束后停止复制"); break; }
+                if (CancelRequested) { st.Cancelled = true; Core.Log("WARN", "收到停止请求：平台文件在本文件结束后停止复制"); break; }
                 try
                 {
                     string rel = f.Substring(payload.Length).TrimStart('\\');
                     string dst = Path.Combine(gameRoot, rel);
-                    if (!Core.SameFile(f, dst)) { Core.CopyOne(f, dst); write++; }
-                    else if (Overwrite) { Core.CopyOne(f, dst); write++; }   // 一样也照写：覆盖模式就是不信现状
-                    else skip++;
+                    if (!Core.SameFile(f, dst)) { Core.CopyOne(f, dst); st.Written++; }
+                    else if (Overwrite) { Core.CopyOne(f, dst); st.Written++; }   // 一样也照写：覆盖模式就是不信现状
+                    else st.Skipped++;
                 }
-                catch (Exception ex) { Core.Log("WARN", "复制 " + Path.GetFileName(f) + " 失败: " + ex.Message); }
+                catch (Exception ex) { st.Failed++; Core.Log("WARN", "复制 " + Path.GetFileName(f) + " 失败: " + ex.Message); }
                 done++;
-                if (progress != null && (done % 10 == 0 || done == total)) progress(done, total);
+                if (progress != null && (done % 10 == 0 || done == st.Total)) progress(done, st.Total);
             }
-            Core.Log("INFO", Overwrite
-                ? ("平台文件：写入 " + write + " 个（覆盖模式，全部重写）")
-                : ("平台文件：写入 " + write + " 个，已是最新跳过 " + skip + " 个"));
+            Core.Log(st.Failed == 0 ? "INFO" : "WARN", "平台文件：写入 " + st.Written + " 个，已是最新跳过 " + st.Skipped + " 个"
+                + (st.Failed > 0 ? "，失败 " + st.Failed + " 个" : "")
+                + (Overwrite ? "（覆盖模式，全部重写）" : ""));
+            return st;
         }
 
         // ---------- dxvk ----------
@@ -336,8 +354,25 @@ namespace Installer
         {
             string dir = Path.Combine(Core.PkgDir, "MQCam\\MQCam");
             string tool = Path.Combine(dir, "mqcore_package_tool.exe");
+            string manifest = Path.Combine(dir, "payload.sha256");
             string dll = Path.Combine(Path.Combine(Path.Combine(gameRoot, "bin"), "neko"), "mqcore\\mqcam.dll");
-            if (File.Exists(dll) && !Overwrite) { Core.Log("OK", "MQCam 已经装过（mqcam.dll 在），跳过，不动相机设置"); return true; }
+            if (File.Exists(dll) && !Overwrite)
+            {
+                // 「已经装过」也得核一遍：mqcam.dll 在，旁边的 plugins / 脚本可能早就没了。
+                // 包里有 payload.sha256（哈希 + 相对路径），照着点一遍再说话。
+                int total, bad; string detail;
+                bool haveManifest = VerifyPayload(manifest, gameRoot, out total, out bad, out detail);
+                if ((haveManifest && bad == 0) || (!haveManifest && File.Exists(dll)))
+                {
+                    Core.Log("OK", "MQCam 已经装过"
+                        + (haveManifest ? "（" + total + " 个文件核对通过）" : "（没有清单，只看文件在不在）")
+                        + "，跳过，不动相机设置");
+                    return true;
+                }
+                Core.Log("WARN", "MQCam 文件对不上 " + bad + "/" + total + " 个：" + detail
+                    + "；勾「覆盖重装」可以补回来");
+                return false;
+            }
             if (!File.Exists(tool)) { Core.Log("FAIL", "缺 mqcore_package_tool.exe"); return false; }
             foreach (string cmd in new string[] { "install plan", "install apply" })
             {
@@ -348,10 +383,62 @@ namespace Installer
                     if (s2.Length > 0) Core.Log("INFO", "  | " + s2);
                 }
             }
-            bool ok = File.Exists(dll);
-            Core.Log(ok ? "OK" : "FAIL", ok ? "mqcam.dll 到位" : "没看到 bin\\neko\\mqcore\\mqcam.dll");
+            // 原来只判 mqcam.dll 在不在 —— 覆盖重装时它本来就在，装失败也照样报成功。
+            // 有清单就按清单核内容；没有清单退回「文件在不在」并明说这是弱判定。
+            int nTotal, nBad; string why;
+            bool ok;
+            if (VerifyPayload(manifest, gameRoot, out nTotal, out nBad, out why))
+            {
+                ok = nBad == 0;
+                Core.Log(ok ? "OK" : "FAIL", ok
+                    ? ("MQCam 装好，清单 " + nTotal + " 个文件全部核对通过")
+                    : ("MQCam 有 " + nBad + "/" + nTotal + " 个文件不对：" + why));
+            }
+            else
+            {
+                ok = File.Exists(dll);
+                Core.Log(ok ? "OK" : "FAIL", ok ? "mqcam.dll 到位（没有清单，只看文件在不在）" : "没看到 bin\\neko\\mqcore\\mqcam.dll");
+            }
             if (ok) ResetCamState(gameRoot);
             return ok;
+        }
+
+        /// <summary>
+        /// 按 payload.sha256 核对装到游戏里的文件（清单格式：SHA256 + TAB + 相对路径，路径用 /）。
+        /// 配置文件（.ini）只要求存在：里面的值游戏/工具自己会改，按哈希比对必然误报。
+        /// 返回 false 表示没有清单可读。
+        /// </summary>
+        private static bool VerifyPayload(string manifest, string gameRoot, out int total, out int bad, out string detail)
+        {
+            total = 0; bad = 0; detail = "";
+            if (string.IsNullOrEmpty(manifest) || !File.Exists(manifest)) return false;
+            List<string> missing = new List<string>();
+            List<string> wrong = new List<string>();
+            try
+            {
+                foreach (string raw in File.ReadAllLines(manifest))
+                {
+                    string line = raw.Trim();
+                    if (line.Length == 0 || line.StartsWith("#")) continue;
+                    string[] p = line.Split(new char[] { '\t', ' ' }, 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (p.Length < 2) continue;
+                    string hash = p[0].Trim();
+                    string rel = p[1].Trim().Replace('/', '\\');
+                    if (hash.Length != 64 || rel.Length == 0) continue;
+                    total++;
+                    string dst = Path.Combine(gameRoot, rel);
+                    if (!File.Exists(dst)) { bad++; missing.Add(rel); continue; }
+                    if (rel.EndsWith(".ini", StringComparison.OrdinalIgnoreCase)) continue;
+                    string got = Core.HashOf(dst);
+                    if (!string.Equals(got, hash, StringComparison.OrdinalIgnoreCase)) { bad++; wrong.Add(rel); }
+                }
+            }
+            catch (Exception ex) { detail = "清单读不了：" + ex.Message; return false; }
+            List<string> bits = new List<string>();
+            if (missing.Count > 0) bits.Add("缺 " + string.Join("、", missing.ToArray()));
+            if (wrong.Count > 0) bits.Add("内容不符 " + string.Join("、", wrong.ToArray()));
+            detail = string.Join("；", bits.ToArray());
+            return true;
         }
 
         private static void ResetCamState(string gameRoot)
@@ -748,41 +835,95 @@ namespace Installer
             return null;
         }
 
-        public static List<string> CleanDuplicateMods()
+        /// <summary>清重计划：先算清楚要删哪些、留哪些，再让界面照着清单确认。</summary>
+        public class DupPlan
         {
-            List<string> moved = new List<string>();
+            /// <summary>内容与另一份完全一致，可以删。</summary>
+            public List<ModItem> Drop = new List<ModItem>();
+            /// <summary>每个内容组留下的那一份。</summary>
+            public List<ModItem> Keep = new List<ModItem>();
+            /// <summary>同名但内容不一样（或读不出来）：一律不动，只在清单里列出来。</summary>
+            public List<ModItem> Differ = new List<ModItem>();
+            public int ArchiveSkipped;
+            public bool NothingToDo { get { return Drop.Count == 0 && Differ.Count == 0; } }
+        }
+
+        /// <summary>扫库并算出清重清单（不删任何东西）。</summary>
+        public static DupPlan FindDuplicateMods()
+        {
             Core.ScanMods();
+            return PlanDuplicates(Core.ModList);
+        }
+
+        /// <summary>
+        /// 按「同名 + 同内容」分组。
+        /// 原来只按文件名分组、留第一个删其余 —— 两个来源的同名 vpk 内容根本不一样，
+        /// 照样被当重复删掉一份，而且留哪份只看扫描顺序。现在同名不同内容一律不动，只报给人。
+        /// </summary>
+        public static DupPlan PlanDuplicates(List<ModItem> items)
+        {
+            DupPlan plan = new DupPlan();
             Dictionary<string, List<ModItem>> byName = new Dictionary<string, List<ModItem>>(StringComparer.OrdinalIgnoreCase);
-            int arcSkipped = 0;
-            foreach (ModItem m in Core.ModList)
+            foreach (ModItem m in items)
             {
-                if (m.FromGame) continue;   // 游戏目录里的不参与清重：它和库里同名的那份是「已装的一份」，不能回收
+                if (m.FromGame) continue;   // 游戏目录里的不参与清重：它和库里同名的那份是「已装的一份」
                 // 压缩包里的条目共用同一个容器文件：删掉一条 = 删掉整个包，包里其它 MOD 全陪葬。
-                // 清重只处理散装 vpk；压缩包内的同名留给用户自己决定（界面里也不会删）。
-                if (m.IsArchive) { arcSkipped++; continue; }
+                if (m.IsArchive) { plan.ArchiveSkipped++; continue; }
                 if (!byName.ContainsKey(m.Name)) byName[m.Name] = new List<ModItem>();
                 byName[m.Name].Add(m);
             }
-            if (arcSkipped > 0) Core.Log("INFO", "清重：压缩包内 " + arcSkipped + " 条条目未参与（删一条会连整包一起删）");
-            List<ModItem> gone = new List<ModItem>();
+
             foreach (KeyValuePair<string, List<ModItem>> kv in byName)
             {
                 if (kv.Value.Count < 2) continue;
-                for (int i = 1; i < kv.Value.Count; i++)
+                Dictionary<string, List<ModItem>> byHash = new Dictionary<string, List<ModItem>>(StringComparer.OrdinalIgnoreCase);
+                List<ModItem> unknown = new List<ModItem>();
+                foreach (ModItem m in kv.Value)
                 {
-                    try
-                    {
-                        string err = DeleteMod(kv.Value[i]);
-                        if (err != null) throw new Exception(err);
-                        moved.Add(kv.Value[i].Name + "  (" + kv.Value[i].Cat + " · " + kv.Value[i].Sub + ")");
-                        gone.Add(kv.Value[i]);
-                    }
-                    catch (Exception ex) { Core.Log("WARN", "清理 " + kv.Value[i].Name + " 失败: " + ex.Message); }
+                    string h = Core.HashOf(m.FullPath);
+                    if (string.IsNullOrEmpty(h)) { unknown.Add(m); continue; }   // 读不出来就不碰
+                    if (!byHash.ContainsKey(h)) byHash[h] = new List<ModItem>();
+                    byHash[h].Add(m);
+                }
+                foreach (List<ModItem> g in byHash.Values)
+                {
+                    plan.Keep.Add(g[0]);
+                    for (int i = 1; i < g.Count; i++) plan.Drop.Add(g[i]);
+                }
+                if (byHash.Count > 1)
+                {
+                    // 同名的几种内容都留着，让人自己决定删哪个
+                    foreach (List<ModItem> g in byHash.Values) plan.Differ.Add(g[0]);
+                    Core.Log("WARN", "清重：同名但内容不同，未删除 —— " + kv.Key + "（" + byHash.Count + " 种内容）");
+                }
+                if (unknown.Count > 0)
+                {
+                    plan.Differ.AddRange(unknown);
+                    Core.Log("WARN", "清重：同名文件读不出来（可能被占用），未删除 —— " + kv.Key);
                 }
             }
-            // 文件已经挪走，直接把它从内存列表里摘掉，不再花几秒重扫全库
+            return plan;
+        }
+
+        /// <summary>按清单真删。返回删掉的条目（给人的一句话说明）。</summary>
+        public static List<string> DeleteDuplicates(DupPlan plan)
+        {
+            List<string> done = new List<string>();
+            List<ModItem> gone = new List<ModItem>();
+            foreach (ModItem m in plan.Drop)
+            {
+                try
+                {
+                    string err = DeleteMod(m);
+                    if (err != null) throw new Exception(err);
+                    done.Add(m.Name + "  (" + m.Cat + " · " + m.Sub + ")");
+                    gone.Add(m);
+                }
+                catch (Exception ex) { Core.Log("WARN", "清理 " + m.Name + " 失败: " + ex.Message); }
+            }
+            // 文件已经删掉，直接把它从内存列表里摘掉，不再花几秒重扫全库
             foreach (ModItem g in gone) { Core.ModList.Remove(g); Core.ByRel.Remove(g.Key); }
-            return moved;
+            return done;
         }
 
         // ---------- 换整套：只翻 addonlist 的开关，文件一个都不动 ----------
@@ -1212,11 +1353,101 @@ namespace Installer
                 SafeCheck(ref bad, err != null, "压缩包内条目删除被拒");
                 SafeCheck(ref bad, File.Exists(arc), "压缩包本体没被删");
 
-                // 5) 中途失败不留垃圾
+                // 5) 清重只删「同名且内容一样」的：同名不同内容必须留着
+                string dA = Path.Combine(dir, "dupA"), dB = Path.Combine(dir, "dupB"), dC = Path.Combine(dir, "dupC");
+                Directory.CreateDirectory(dA); Directory.CreateDirectory(dB); Directory.CreateDirectory(dC);
+                File.WriteAllBytes(Path.Combine(dA, "ak47.vpk"), data);
+                File.WriteAllBytes(Path.Combine(dB, "ak47.vpk"), data);
+                byte[] other = new byte[data.Length];
+                Array.Copy(data, other, data.Length);
+                other[0] ^= 0xFF;                                   // 同名，内容差一个字节
+                File.WriteAllBytes(Path.Combine(dC, "ak47.vpk"), other);
+                List<ModItem> fake = new List<ModItem>();
+                foreach (string p in new string[] { Path.Combine(dA, "ak47.vpk"), Path.Combine(dB, "ak47.vpk"), Path.Combine(dC, "ak47.vpk") })
+                {
+                    ModItem mi = new ModItem();
+                    mi.Name = "ak47.vpk";
+                    mi.FullPath = p;
+                    mi.RelPath = p;
+                    fake.Add(mi);
+                }
+                DupPlan plan = PlanDuplicates(fake);
+                SafeCheck(ref bad, plan.Drop.Count == 1, "清重：3 个同名文件里只挑出 1 个真重复（实际 " + plan.Drop.Count + "）");
+                SafeCheck(ref bad, plan.Drop.Count == 1 && plan.Drop[0].FullPath.IndexOf("dupB", StringComparison.OrdinalIgnoreCase) >= 0,
+                    "清重：留第一份（dupA），删第二份（dupB）");
+                SafeCheck(ref bad, plan.Differ.Count == 2, "清重：同名但内容不同的两个都留下（实际 " + plan.Differ.Count + "）");
+                SafeCheck(ref bad, File.Exists(Path.Combine(dC, "ak47.vpk")) && File.Exists(Path.Combine(dA, "ak47.vpk")),
+                    "清重清单只算不删，文件一个没动");
+
+                // 6) MQCam 那种「按清单核内容」：dll 必须哈希一致，.ini 只看在不在（里面的值会被游戏改）
+                string gt = Path.Combine(dir, "fakeroot");
+                string mqDir = Path.Combine(gt, "bin\\neko\\mqcore");
+                Directory.CreateDirectory(mqDir);
+                string mqDll = Path.Combine(mqDir, "mqcam.dll");
+                string mqIni = Path.Combine(mqDir, "mqcam.ini");
+                File.WriteAllBytes(mqDll, data);
+                File.WriteAllText(mqIni, "fov=90");
+                string mf = Path.Combine(dir, "payload.sha256");
+                File.WriteAllText(mf,
+                    Core.HashOf(mqDll) + "\tbin/neko/mqcore/mqcam.dll\r\n"
+                    + new string('A', 64) + "\tbin/neko/mqcore/mqcam.ini\r\n"
+                    + new string('B', 64) + "\tbin/neko/plugins/mqcore.dll\r\n",
+                    new UTF8Encoding(false));
+                int mt, mb; string mdetail;
+                bool gotMf = VerifyPayload(mf, gt, out mt, out mb, out mdetail);
+                SafeCheck(ref bad, gotMf && mt == 3, "清单核对：解析出 3 条（实际 " + mt + "）");
+                SafeCheck(ref bad, gotMf && mb == 1, "清单核对：缺 1 个文件只算 1 个不对（实际 " + mb + "）");
+                SafeCheck(ref bad, mdetail.IndexOf("mqcore.dll", StringComparison.OrdinalIgnoreCase) >= 0, "清单核对：报出缺的是哪个文件");
+                File.WriteAllBytes(mqDll, other);          // 内容被换掉
+                VerifyPayload(mf, gt, out mt, out mb, out mdetail);
+                SafeCheck(ref bad, mb == 2 && mdetail.IndexOf("mqcam.dll", StringComparison.OrdinalIgnoreCase) >= 0,
+                    "清单核对：内容不符也算不对（实际 " + mb + "）");
+                File.WriteAllBytes(mqDll, data);
+                File.WriteAllText(mqIni, "fov=120");       // 用户改过 ini
+                VerifyPayload(mf, gt, out mt, out mb, out mdetail);
+                SafeCheck(ref bad, mb == 1, "清单核对：ini 被改过不算错（实际 " + mb + "）");
+
+                // 6) 并发扫库：两条线程同时扫，不能把自己的列表清成半截
+                Core.ScanMods();
+                int baseline = Core.ModList.Count;
+                int raceErrors = 0;
+                int[] seen = new int[3];
+                System.Threading.Thread[] ths = new System.Threading.Thread[3];
+                for (int ti = 0; ti < ths.Length; ti++)
+                {
+                    int idx = ti;
+                    ths[ti] = new System.Threading.Thread(delegate()
+                    {
+                        try
+                        {
+                            Core.ScanMods();
+                            seen[idx] = Core.ModList.Count;
+                            if (seen[idx] <= 0) System.Threading.Interlocked.Increment(ref raceErrors);
+                        }
+                        catch (Exception exs)
+                        {
+                            System.Threading.Interlocked.Increment(ref raceErrors);
+                            Console.WriteLine("RACE 扫描异常: " + exs.Message);
+                        }
+                    });
+                    ths[ti].IsBackground = true;
+                    ths[ti].Start();
+                }
+                bool allDone = true;
+                foreach (System.Threading.Thread t in ths) if (!t.Join(180000)) allDone = false;
+                SafeCheck(ref bad, allDone, "并发扫描都在 3 分钟内结束（没有互相等死）");
+                SafeCheck(ref bad, raceErrors == 0, "并发扫描没有异常、没有空表");
+                Core.ScanMods();
+                if (baseline > 0)
+                    SafeCheck(ref bad, Core.ModList.Count == baseline,
+                        "并发扫描后条目数不变（" + Core.ModList.Count + " / " + baseline + "）");
+                else Console.WriteLine("SKIP  库是空的，并发扫描只验证了不炸");
+
+                // 7) 中途失败不留垃圾
                 SafeCheck(ref bad, Directory.GetFiles(dir, "*.part", SearchOption.TopDirectoryOnly).Length == 0, "没有残留 .part");
                 SafeCheck(ref bad, Directory.GetDirectories(dir, "~l4d2-*").Length == 0, "没有残留解包暂存目录");
 
-                // 6) 路径校验
+                // 8) 路径校验
                 SafeCheck(ref bad, Core.IsUnder(dir, Path.Combine(dir, "left4dead2\\addons\\x.vpk")), "子路径判定在目录内");
                 SafeCheck(ref bad, !Core.IsUnder(dir, Path.Combine(dir, "..\\x.vpk")), ".. 往上跳判定在目录外");
             }

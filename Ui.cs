@@ -2083,10 +2083,55 @@ namespace Installer
 
         internal void CleanDupMods()
         {
-            if (MessageBox.Show("扫描全库同名文件，每个名字只留第一个，其余直接删掉（删了没法恢复）？", "清理重复", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
-            List<string> moved = Work.CleanDuplicateMods();
-            Core.Log("OK", "清理重复: 删除 " + moved.Count + " 个");
-            MessageBox.Show(moved.Count == 0 ? "没有同名重复。" : ("已删除 " + moved.Count + " 个重复文件，详见日志。"));
+            Cursor = Cursors.WaitCursor;
+            Work.DupPlan plan;
+            try { plan = Work.FindDuplicateMods(); }
+            catch (Exception ex) { Cursor = Cursors.Default; MessageBox.Show("扫描失败：" + ex.Message); return; }
+            Cursor = Cursors.Default;
+
+            if (plan.NothingToDo)
+            {
+                MessageBox.Show("没有同名重复。", "清理重复");
+                return;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            if (plan.Drop.Count > 0)
+            {
+                sb.AppendLine("下面 " + plan.Drop.Count + " 个文件与库里另一份【同名且内容完全一致】，准备删掉（删了没法恢复）：");
+                sb.AppendLine();
+                int n = Math.Min(15, plan.Drop.Count);
+                for (int i = 0; i < n; i++)
+                    sb.AppendLine("  · " + plan.Drop[i].RelPath + "    " + Core.Human(plan.Drop[i].Size));
+                if (plan.Drop.Count > n) sb.AppendLine("  …… 还有 " + (plan.Drop.Count - n) + " 个（会一并删掉，详见日志）");
+                sb.AppendLine();
+            }
+            if (plan.Differ.Count > 0)
+            {
+                sb.AppendLine("同名但内容不同，这次一个都不动，请自己判断留哪个：");
+                int n = Math.Min(10, plan.Differ.Count);
+                for (int i = 0; i < n; i++)
+                    sb.AppendLine("  · " + plan.Differ[i].RelPath + "    " + Core.Human(plan.Differ[i].Size));
+                if (plan.Differ.Count > n) sb.AppendLine("  …… 还有 " + (plan.Differ.Count - n) + " 个");
+            }
+            if (plan.ArchiveSkipped > 0)
+                sb.AppendLine("\n（压缩包内的 " + plan.ArchiveSkipped + " 条同名条目已跳过：删一条会把整包带走）");
+
+            if (plan.Drop.Count == 0)
+            {
+                MessageBox.Show(sb.ToString(), "清理重复", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (MessageBox.Show(sb.ToString(), "清理重复（确认删除）", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+
+            // 清单落到日志里，删完还能查到删了哪些
+            foreach (ModItem m in plan.Drop) Core.Log("INFO", "清重删除: " + m.RelPath);
+            List<string> done = Work.DeleteDuplicates(plan);
+            Core.Log("OK", "清理重复: 删除 " + done.Count + " 个"
+                + (plan.Differ.Count > 0 ? "，跳过同名不同内容 " + plan.Differ.Count + " 个" : ""));
+            MessageBox.Show("已删除 " + done.Count + " 个重复文件"
+                + (plan.Differ.Count > 0 ? "；另有 " + plan.Differ.Count + " 个同名但内容不同，没动。" : "。")
+                + "\n详见日志。", "清理重复");
             Core.ScanMods(); RefreshMods(); RefreshConflicts();
         }
 
@@ -2876,7 +2921,11 @@ namespace Installer
 
         private void AppendLog(string line)
         {
-            SafeInvoke(delegate
+            // 只排队、不等界面线程。
+            // 原来用 Invoke：后台线程写一行日志就得等界面线程处理完。
+            // 现在扫库有互斥锁（Core.ScanMods），界面线程点删除时要等后台那次扫描结束，
+            // 后台又在等界面线程画日志 —— 两边互等，直接卡死。日志本来就不需要同步显示。
+            SafePost(delegate
             {
                 if (++logLines > 1200) { txtLog.Clear(); logLines = 1; logWarnings = 0; }
                 if (line.IndexOf("] WARN", StringComparison.Ordinal) >= 0
@@ -2885,6 +2934,18 @@ namespace Installer
                 if (gLog != null)
                     gLog.Caption = logWarnings > 0 ? "日志 · " + logWarnings + " 条提醒" : "日志";
             });
+        }
+
+        /// <summary>把活排到界面线程，不等待（Invoke 是等，BeginInvoke 是排队）。</summary>
+        private void SafePost(Action a)
+        {
+            try
+            {
+                if (IsDisposed || Disposing || !IsHandleCreated) return;
+                if (InvokeRequired) BeginInvoke(a); else a();
+            }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
         }
 
         // 统一的“安全”调用：窗口已经关掉 / 句柄没了就直接放弃，别再抛 ObjectDisposedException

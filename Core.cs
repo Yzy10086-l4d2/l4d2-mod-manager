@@ -96,6 +96,13 @@ namespace Installer
         private static StreamWriter _logWriter;
         private static readonly object _logGate = new object();
 
+        // 扫库互斥：ModList / ByRel / DirCount / Groups 只在扫描里整体清空重填，
+        // 两条线程同时进来就会各清一半、拼成一份缺胳膊少腿的列表。
+        private static readonly object _scanGate = new object();
+        private static volatile bool _scanBusy;
+        /// <summary>此刻是不是有扫描在跑（界面据此避免拿正在重建的表做判断）。</summary>
+        public static bool ScanInProgress { get { return _scanBusy; } }
+
         public static void Init()
         {
             Here = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
@@ -485,20 +492,39 @@ namespace Installer
 
         public static void ScanMods()
         {
+            // 同一时刻只允许一次扫描在跑。
+            // 原来没有这道门：启动扫描还在后台跑，用户在界面上点删除 / 清理同名 / 改名，
+            // UI 线程会再调一次，两条线程同时 Clear + 重填 ModList、ByRel、Groups ——
+            // 列表可能只剩半截（按那次扫描的进度拼出来的），枚举时还会抛「集合已修改」。
+            // 后到的那次在这里排队（最多等 60 s），拿到的永远是完整的一份。
+            if (!System.Threading.Monitor.TryEnter(_scanGate, 60000))
+            {
+                Log("WARN", "已有一次扫描超过 60 s 没结束，这次跳过扫描（列表可能不是最新的）");
+                return;
+            }
+            _scanBusy = true;
             try
             {
-                System.Diagnostics.Stopwatch swg = System.Diagnostics.Stopwatch.StartNew();
-                Catalog.ScanMods();
-                Log("INFO", "扫库阶段完成（含缓存落盘），开始归组");
-                Catalog.BuildGroups();
-                Log("INFO", "归组计时: 扫库后归组 " + swg.ElapsedMilliseconds + " ms");
+                try
+                {
+                    System.Diagnostics.Stopwatch swg = System.Diagnostics.Stopwatch.StartNew();
+                    Catalog.ScanMods();
+                    Log("INFO", "扫库阶段完成（含缓存落盘），开始归组");
+                    Catalog.BuildGroups();
+                    Log("INFO", "归组计时: 扫库后归组 " + swg.ElapsedMilliseconds + " ms");
+                }
+                catch (Exception ex)
+                {
+                    Log("FAIL", "整理 MOD 出错: " + ex);
+                    throw;
+                }
+                Log("INFO", "整理成 " + Catalog.Groups.Count + " 个 MOD（其中 " + CountSets() + " 个是多 vpk 套装）");
             }
-            catch (Exception ex)
+            finally
             {
-                Log("FAIL", "整理 MOD 出错: " + ex);
-                throw;
+                _scanBusy = false;
+                System.Threading.Monitor.Exit(_scanGate);
             }
-            Log("INFO", "整理成 " + Catalog.Groups.Count + " 个 MOD（其中 " + CountSets() + " 个是多 vpk 套装）");
         }
 
         private static int CountSets()
