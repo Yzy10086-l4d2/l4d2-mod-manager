@@ -111,7 +111,8 @@ namespace Installer
         public LaunchForm(string current)
         {
             Text = "启动项参数";
-            ClientSize = new Size(660, 258);
+            Theme.UseDpi(this);
+            ClientSize = Dpi.Sz(660, 258);
             Font = Theme.UI;
             BackColor = Theme.Bg;
             StartPosition = FormStartPosition.CenterParent;

@@ -42,17 +42,32 @@ namespace Installer
             return (c ^ 0xFFFFFFFFu).ToString("X8");
         }
 
+        /// <summary>
+        /// 独立文件的内容指纹（CRC32）。
+        /// 清重清单和「重复嫌疑」窗口都走这一个函数 —— 早先一处 SHA256、一处 CRC32，
+        /// 同一个文件两边结论不一样，用户会以为哪个在骗他。
+        ///
+        /// 不做跨调用缓存：Windows 上文件刚被改写的那一下，目录项里的修改时间可能还没刷新，
+        /// 用「大小 + 时间」当缓存键会把换过内容的文件当成同一份（自测里踩到过）。宁可多读一遍。
+        /// </summary>
+        public static string OfPath(string path, out string note)
+        {
+            note = "";
+            try
+            {
+                using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                    return Crc32(fs);
+            }
+            catch (Exception ex) { note = ex.Message; return null; }
+        }
+
         /// <summary>返回内容指纹（CRC32）；算不出来（文件被占用/包有问题）返回 null 并给出说明。</summary>
         public static string Fingerprint(ModItem m, out string note)
         {
             note = "";
             try
             {
-                if (!m.IsArchive)
-                {
-                    using (FileStream fs = new FileStream(m.FullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                        return Crc32(fs);
-                }
+                if (!m.IsArchive) return OfPath(m.FullPath, out note);
 
                 string ext = Path.GetExtension(m.Container).ToLowerInvariant();
                 if (ext == ".rar" || ext == ".7z")
@@ -212,7 +227,8 @@ namespace Installer
             others = otherMsgs == null ? new List<string>() : otherMsgs;
 
             Text = "重复嫌疑 · " + groups.Count + " 组";
-            ClientSize = new Size(820, 560);
+            Theme.UseDpi(this);
+            ClientSize = Dpi.Sz(820, 560);
             Font = Theme.UI;
             BackColor = Theme.Bg;
             StartPosition = FormStartPosition.CenterParent;

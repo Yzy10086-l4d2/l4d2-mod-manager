@@ -916,6 +916,9 @@ namespace Installer
             mf = owner;
             BackColor = Theme.Surface;
             Font = Theme.UI;
+            // UserControl 默认会跟着父窗体再缩放一次：父窗体已经把这块控件放到放大后的位置了，
+            // 这里再缩一次就是双倍。树内部的行高由 RowH 自己按 DPI 算。
+            AutoScaleMode = AutoScaleMode.None;
 
             // ---- 左：树 ----
             scroll = new ScrollHost();
@@ -3437,7 +3440,7 @@ namespace Installer
     /// </summary>
     internal sealed class ScrollHost : Panel
     {
-        private const int BarW = 10;
+        private static readonly int BarW = Dpi.S(10);
         private Control body;
         private int offset;
         private bool dragging, hoverBar;
@@ -3579,7 +3582,10 @@ namespace Installer
     // ============================================================
     internal sealed class SlotTree : Control
     {
-        private const int RowH = 28;
+        // 行高跟着 DPI 走：树是自绘的，控件被放大而这里还是 28 的话，
+        // 字体按 point 变大、行距不变，几行文字就叠在一起了。
+        // 100% 缩放下 Dpi.S 原样返回 28，布局和以前一模一样。
+        private static readonly int RowH = Dpi.S(28);
         private readonly CatTree owner;
         private readonly List<TreeRow> rows = new List<TreeRow>();
         private int hover = -1;

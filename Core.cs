@@ -55,6 +55,7 @@ namespace Installer
         public bool Overwrite = false;      // false = 已装的跳过；true = 全部重装一遍
         public string TweakSet = "";        // 套用哪套参数存档（空 = 不套）
         public bool ReduceMotion = false;   // true = 关闭轻量过渡，直接显示最终状态
+        public bool DpiAware = true;        // true = 自己按 DPI 缩放界面（高 DPI 下不再模糊）；false = 老样子交给系统拉伸
         public string Mode = "usb";         // 工作模式：usb = U 盘库是主（默认）；local = 游戏目录 addons 当库
         public string Appearance = "system";  // 外观：system = 跟随系统（默认）/ light / dark
         public string LibraryRoot = "";     // U 盘模式的主库根；空 = 跟随程序所在盘
@@ -315,6 +316,7 @@ namespace Installer
                     else if (k == "Overwrite") Cfg.Overwrite = (v == "1");
                     else if (k == "TweakSet") Cfg.TweakSet = v;
                     else if (k == "ReduceMotion") Cfg.ReduceMotion = (v == "1");
+                    else if (k == "DpiAware") Cfg.DpiAware = (v != "0");
                     else if (k == "Mode") Cfg.Mode = v;
                     else if (k == "Appearance") Cfg.Appearance = v;
                     else if (k == "LibraryRoot") Cfg.LibraryRoot = v;
@@ -348,6 +350,7 @@ namespace Installer
                 sb.AppendLine("Overwrite=" + (Cfg.Overwrite ? "1" : "0"));
                 sb.AppendLine("TweakSet=" + Cfg.TweakSet);
                 sb.AppendLine("ReduceMotion=" + (Cfg.ReduceMotion ? "1" : "0"));
+                sb.AppendLine("DpiAware=" + (Cfg.DpiAware ? "1" : "0"));
                 sb.AppendLine("Mode=" + (ModeLock ?? Cfg.Mode));
                 sb.AppendLine("Appearance=" + Cfg.Appearance);
                 sb.AppendLine("LibraryRoot=" + Cfg.LibraryRoot);
@@ -868,6 +871,40 @@ namespace Installer
 
         public static void SelfTestCore(string gameRoot)
         {
+        }
+    }
+
+    /// <summary>
+    /// 写盘操作的全局互斥。装机、还原、清重、只装某个位置、应用开关这些流程里都会
+    /// Application.DoEvents() 泵消息（为了刷新进度和响应「停止」），泵消息就意味着用户能
+    /// 在流程中途再点一次菜单、快捷键、方案树或桌面卡片。两件事同时往同一批文件上写，
+    /// 轻则日志对不上，重则把刚写完的文件按旧基线判成冲突。
+    ///
+    /// 放在全局而不是某个窗体上：桌面卡片走 Socket、方案树走 UserControl，
+    /// 各拿各的锁等于没锁。
+    /// </summary>
+    public static class OpGuard
+    {
+        private static string current;
+        private static readonly object gate = new object();
+
+        public static string Current { get { lock (gate) return current; } }
+
+        /// <summary>占住写盘权。已经有别的操作在跑就返回 false（调用方只需 return）。</summary>
+        public static bool Enter(string what)
+        {
+            lock (gate)
+            {
+                if (current != null) return false;
+                current = what;
+                return true;
+            }
+        }
+
+        /// <summary>按名字释放：防止 A 的收尾把 B 的锁放掉。</summary>
+        public static void Exit(string what)
+        {
+            lock (gate) { if (current == what) current = null; }
         }
     }
 }

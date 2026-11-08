@@ -96,6 +96,8 @@ namespace Installer
             bool dumpTree = false;
             bool ovDump = false;
             bool recogSelf = false;
+            bool layoutSelf = false;
+            bool noDpi = false;
             string vpkFile = null;
 
 
@@ -147,6 +149,8 @@ namespace Installer
                 else if (string.Equals(a, "--dumptree", StringComparison.OrdinalIgnoreCase)) dumpTree = true;
                 else if (string.Equals(a, "--ovdump", StringComparison.OrdinalIgnoreCase)) ovDump = true;
                 else if (string.Equals(a, "--recogself", StringComparison.OrdinalIgnoreCase)) recogSelf = true;
+                else if (string.Equals(a, "--nodpi", StringComparison.OrdinalIgnoreCase)) noDpi = true;
+                else if (string.Equals(a, "--layoutself", StringComparison.OrdinalIgnoreCase)) layoutSelf = true;
                 else if (a.StartsWith("--vpk=", StringComparison.OrdinalIgnoreCase)) vpkFile = a.Substring(6).Trim('"');
 
                 else if (a.StartsWith("--game=", StringComparison.OrdinalIgnoreCase)) gameRoot = a.Substring(7).Trim('"');
@@ -158,7 +162,7 @@ namespace Installer
             // 以前这行写在所有自检分支后面，等于对它们全部无效。
             Core.SelfTesting = selfTest || uiTest || copyTest || tweakSelf || launchSelf || dupSelf
                             || addonSelf || safeSelf || dumpId || dumpTree || ovDump || recogSelf
-                            || mapShot || mapSelf || scanRace;
+                            || mapShot || mapSelf || scanRace || layoutSelf;
 
             // 单实例只约束界面模式：已经开着就把那个窗口叫到前面来
             bool created;
@@ -173,6 +177,10 @@ namespace Installer
 
             Core.Init();
             Theme.Init();
+            // 高 DPI：必须在任何窗口创建之前声明，否则系统已经按老规矩把窗口当位图拉伸了。
+            // --nodpi 或配置里 DpiAware=0 时完全跳过，界面行为和以前一模一样。
+            Dpi.Init(!noDpi && Core.Cfg.DpiAware);
+            if (Dpi.Scaled) Core.Log("INFO", "界面缩放：" + (int)Math.Round(Dpi.Factor * 100) + "%（按设计值等比放大，不再是模糊拉伸）");
             // 诊断用：临时覆盖外观，不写回配置
             if (!string.IsNullOrEmpty(themeOverride)) Theme.SetMode(Theme.Parse(themeOverride));
             // 诊断用：临时覆盖工作模式，不写回配置
@@ -194,6 +202,20 @@ namespace Installer
                 foreach (string p in ps) sbv.AppendLine(p);
                 System.IO.File.WriteAllText(System.IO.Path.Combine(Core.LogDir, "vpklist.txt"), sbv.ToString(), new System.Text.UTF8Encoding(false));
                 return 0;
+            }
+            if (layoutSelf)
+            {
+                // 布局自检：不显示窗口，只把主窗口的排版在几档缩放下算一遍，
+                // 看按钮有没有叠在一起、右栏有没有跑到窗口外面。
+                using (MainForm lf = new MainForm(gameRoot))
+                {
+                    int bad = 0;
+                    float[] scales = new float[] { 1f, 1.25f, 1.5f, 2f };
+                    foreach (float k in scales) bad += lf.LayoutSelfTest(k, 1440, 940);
+                    foreach (float k in scales) bad += lf.LayoutSelfTest(k, 1120, 740);
+                    Console.WriteLine("layoutself failures = " + bad);
+                    return bad == 0 ? 0 : 1;
+                }
             }
             if (dumpId)
             {

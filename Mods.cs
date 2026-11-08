@@ -679,7 +679,8 @@ namespace Installer
         {
             gameRoot = root;
             Text = "已装 MOD 开关 —— 勾上=进游戏时启用";
-            ClientSize = new Size(560, 480);
+            Theme.UseDpi(this);
+            ClientSize = Dpi.Sz(560, 480);
             Font = new Font("Microsoft YaHei UI", 9F);
             StartPosition = FormStartPosition.CenterParent;
             MinimizeBox = false;

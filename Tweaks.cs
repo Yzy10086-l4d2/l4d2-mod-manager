@@ -360,7 +360,8 @@ namespace Installer
         {
             gameRoot = root;
             Text = "参数配置（L4N 按键 / Skeeto 设置）";
-            ClientSize = new Size(664, 452);
+            Theme.UseDpi(this);
+            ClientSize = Dpi.Sz(664, 452);
             Font = Theme.UI;
             BackColor = Theme.Bg;
             StartPosition = FormStartPosition.CenterParent;

@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  这份工程文件只给 IDE 用（Visual Studio / Rider 打开看代码、下断点、看报错行号）。
+  真正的构建始终走 build.bat：Windows 自带的 csc.exe，不需要 SDK、不需要 NuGet、不需要联网，
+  产物固定写到 U 盘根目录的 L4D2Setup.exe。
+
+  源文件刻意用通配符（和 build.bat 一样），不维护手工清单：
+  新增一个 .cs，两边都自动包含，不会出现"漏加一个文件、编出来的 exe 里没有这段改动"。
+-->
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{6B1F0B7A-3C7E-4E1D-9E2A-1A2B3C4D5E6F}</ProjectGuid>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>Installer</RootNamespace>
+    <AssemblyName>L4D2Setup</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="*.cs" />
+    <EmbeddedResource Include="desk\index.html">
+      <LogicalName>desk.html</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="desk\three.min.js">
+      <LogicalName>three.js</LogicalName>
+    </EmbeddedResource>
+    <None Include="app.ico" />
+    <None Include="build.bat" />
+    <None Include="README.md" />
+    <None Include="LICENSE" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

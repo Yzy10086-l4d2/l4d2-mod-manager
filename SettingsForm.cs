@@ -62,7 +62,8 @@ namespace Installer
             pendingRoot = Core.ModRoot;
 
             Text = "设置 · L4D2 MOD 管理工具";
-            ClientSize = new Size(620, 730);
+            Theme.UseDpi(this);
+            ClientSize = Dpi.Sz(620, 730);
             Font = Theme.UI;
             BackColor = Theme.Bg;
             ForeColor = Theme.Ink;

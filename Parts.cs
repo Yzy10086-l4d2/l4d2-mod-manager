@@ -29,7 +29,8 @@ namespace Installer
         {
             g = group;
             Text = "选择部件 — " + group.Name;
-            ClientSize = new Size(620, 468);
+            Theme.UseDpi(this);
+            ClientSize = Dpi.Sz(620, 468);
             Font = Theme.UI;
             BackColor = Theme.Bg;
             StartPosition = FormStartPosition.CenterParent;

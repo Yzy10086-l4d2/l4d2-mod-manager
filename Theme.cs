@@ -385,6 +385,20 @@ namespace Installer
             }
         }
 
+        /// <summary>
+        /// 让窗体按「设计值 × DPI 比例」缩放子控件。
+        /// 用 Dpi 模式而不是 Font 模式：这个程序的坐标全是 96dpi 下量出来的像素，
+        /// 基线和比例都应当是纯几何的（实际 DPI / 96）；Font 模式按字体度量算因子，
+        /// 算出来往往不是 1.25 / 1.5 这种整比例，坐标会整体偏几个像素。
+        /// 字体本身是按 point 声明的，系统会自己按 DPI 放大，和这里缩放后的控件大小正好配套。
+        /// </summary>
+        public static void UseDpi(Form f)
+        {
+            if (f == null) return;
+            f.AutoScaleDimensions = new SizeF(96F, 96F);
+            f.AutoScaleMode = AutoScaleMode.Dpi;
+        }
+
         /// <summary>标题栏跟主题走 + Win11 圆角。Win10 上这两个属性会静默失败，不影响功能。</summary>
         public static void ApplyChrome(Form f)
         {

@@ -420,7 +420,8 @@ namespace Installer
         public BranchPickForm(List<string> names)
         {
             Text = "放进我的分支";
-            ClientSize = new Size(360, 340);
+            Theme.UseDpi(this);
+            ClientSize = Dpi.Sz(360, 340);
             Font = Theme.UI;
             BackColor = Theme.Bg;
             StartPosition = FormStartPosition.CenterParent;

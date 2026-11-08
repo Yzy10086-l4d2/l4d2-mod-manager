@@ -73,10 +73,12 @@ namespace Installer
             Version ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
             Text = "L4D2 MOD 管理工具  v" + ver.Major + "." + ver.Minor;
             // 一开始就开够大：右栏要放下方案树（左边位置 + 右边候选），窄了列会挤成一团
+            // 尺寸全部按设计值 × DPI 比例算：WorkingArea 是物理像素，设计值是 96dpi 下的数
+            Theme.UseDpi(this);
             Rectangle wa = Screen.PrimaryScreen.WorkingArea;
-            int w0 = Math.Min(1440, Math.Max(1120, wa.Width - 100));
-            int h0 = Math.Min(940, Math.Max(740, wa.Height - 80));
-            ClientSize = new Size(Math.Min(w0, wa.Width - 20), Math.Min(h0, wa.Height - 20));
+            int w0 = Math.Min(Dpi.S(1440), Math.Max(Dpi.S(1120), wa.Width - Dpi.S(100)));
+            int h0 = Math.Min(Dpi.S(940), Math.Max(Dpi.S(740), wa.Height - Dpi.S(80)));
+            ClientSize = new Size(Math.Min(w0, wa.Width - Dpi.S(20)), Math.Min(h0, wa.Height - Dpi.S(20)));
             Font = Theme.UI;
             DoubleBuffered = true;
             KeyPreview = true;
@@ -673,9 +675,9 @@ namespace Installer
             const int editW = 26, copyW = 44, gap = 4;
             int editX = leftW - 12 - editW;
             int copyX = editX - gap - copyW;
-            if (btnLaunchEdit != null) btnLaunchEdit.Left = editX;
-            if (btnLaunchCopy != null) btnLaunchCopy.Left = copyX;
-            if (txtLaunch != null) txtLaunch.Width = Math.Max(80, copyX - gap - 60);
+            if (btnLaunchEdit != null) btnLaunchEdit.Left = Dpi.S(editX);
+            if (btnLaunchCopy != null) btnLaunchCopy.Left = Dpi.S(copyX);
+            if (txtLaunch != null) txtLaunch.Width = Dpi.S(Math.Max(80, copyX - gap - 60));
         }
 
         /// <summary>一键复制启动项：复制清洗后的整段，还带 0/1 占位会额外提醒。</summary>
@@ -2083,6 +2085,13 @@ namespace Installer
 
         internal void CleanDupMods()
         {
+            if (!EnterLongOp("清理重复")) return;
+            try { CleanDupModsCore(); }
+            finally { ExitLongOp(); }
+        }
+
+        private void CleanDupModsCore()
+        {
             Cursor = Cursors.WaitCursor;
             Work.DupPlan plan;
             try { plan = Work.FindDuplicateMods(); }
@@ -2349,7 +2358,8 @@ namespace Installer
             {
                 Dirty = false;
                 Text = "库文件夹管理";
-                ClientSize = new Size(560, 380);
+                Theme.UseDpi(this);
+                ClientSize = Dpi.Sz(560, 380);
                 Font = Theme.UI;
                 BackColor = Theme.Bg;
                 StartPosition = FormStartPosition.CenterParent;
@@ -2637,35 +2647,39 @@ namespace Installer
 
         private void ApplyResponsive()
         {
-            int W = ClientSize.Width, H = ClientSize.Height;
-            if (W == lastRespW && H == lastRespH) return;
-            lastRespW = W;
-            lastRespH = H;
+            int physW = ClientSize.Width, physH = ClientSize.Height;
+            if (physW == lastRespW && physH == lastRespH) return;
+            lastRespW = physW;
+            lastRespH = physH;
+            // 全部按 96dpi 的设计坐标算，最后一次性乘缩放比例。
+            // 直接拿物理像素算会把已经缩放过的控件又按原值压回去（越排越小）。
+            int W = Dpi.Un(physW);
             SuspendLayout();
             int leftW = 396;                                   // 左栏定宽：够放最长的复选框文案
             // 抽屉收起时右栏直接顶到左边距：整个窗口就剩一条顶栏 + 一张台面
             int rightX = drawerOpen ? Theme.M + leftW + Theme.G : Theme.M;
             int rightW = W - Theme.M - rightX;
 
-            gPlat.Width = leftW;
-            gOpt.Width = leftW;
-            gLog.Width = leftW;
-            txtLog.Width = leftW - 24;
+            gPlat.Width = Dpi.S(leftW);
+            gOpt.Width = Dpi.S(leftW);
+            gLog.Width = Dpi.S(leftW);
+            txtLog.Width = Dpi.S(leftW - 24);
             LayoutLaunchRow(leftW);
-            chkSwap.Width = leftW - 24;
-            chkStrict.Width = leftW - 24;
-            cboTweak.Width = Math.Max(120, leftW - 24 - 70 - 90 - 8);
-            btnTweak.Left = cboTweak.Left + cboTweak.Width + 4;
+            chkSwap.Width = Dpi.S(leftW - 24);
+            chkStrict.Width = Dpi.S(leftW - 24);
+            int tweakComboW = Math.Max(120, leftW - 24 - 70 - 90 - 8);   // 70 = cboTweak 的设计左边距
+            cboTweak.Width = Dpi.S(tweakComboW);
+            btnTweak.Left = Dpi.S(70 + tweakComboW + 4);
 
-            gMod.Left = rightX;
-            gMod.Width = rightW;
-            viewHost.Width = rightW - 24;
-            lblSel.Width = rightW - 24;
-            lblConflict.Width = rightW - 24;
+            gMod.Left = Dpi.S(rightX);
+            gMod.Width = Dpi.S(rightW);
+            viewHost.Width = Dpi.S(rightW - 24);
+            lblSel.Width = Dpi.S(rightW - 24);
+            lblConflict.Width = Dpi.S(rightW - 24);
 
-            txtSearch.Width = rightW - 126;
-            btnClearSearch.Left = rightW - 68;
-            btnManage.Left = rightW - 12 - 88;
+            txtSearch.Width = Dpi.S(rightW - 126);
+            btnClearSearch.Left = Dpi.S(rightW - 68);
+            btnManage.Left = Dpi.S(rightW - 12 - 88);
 
             // 顶部：游戏目录 / 模式 / 浏览 / 自动找 / 设置
             const int modeW = 104;
@@ -2681,24 +2695,78 @@ namespace Installer
             int findX = viewX - topGap - findW;
             int browseX = findX - topGap - browseW;
             int modeX = browseX - topGap - modeW;
-            txtGame.Width = modeX - 8 - 76;
-            cboMode.Left = modeX;
-            cboMode.Top = 18;
-            btnBrowse.Left = browseX;
-            btnFind.Left = findX;
-            btnSettings.Left = settingsX;
-            btnView.Left = viewX;
-            btnPanel.Left = panelX;
+            txtGame.Width = Dpi.S(modeX - 8 - 76);
+            cboMode.Left = Dpi.S(modeX);
+            cboMode.Top = Dpi.S(18);
+            btnBrowse.Left = Dpi.S(browseX);
+            btnFind.Left = Dpi.S(findX);
+            btnSettings.Left = Dpi.S(settingsX);
+            btnView.Left = Dpi.S(viewX);
+            btnPanel.Left = Dpi.S(panelX);
 
             // 底部（按钮整组贴右下）
-            btnOpen.Left = W - Theme.M - 104;
-            btnRestore.Left = btnOpen.Left - 8 - 96;
-            btnSwitch.Left = btnRestore.Left - 8 - 116;
-            btnInstall.Left = btnSwitch.Left - 8 - 112;
-            lblStatus.Width = W - 2 * Theme.M;
-            bar.Width = Math.Max(200, btnInstall.Left - 8 - Theme.M);
+            btnOpen.Left = Dpi.S(W - Theme.M - 104);
+            btnRestore.Left = Dpi.S(W - Theme.M - 104 - 8 - 96);
+            btnSwitch.Left = Dpi.S(W - Theme.M - 104 - 8 - 96 - 8 - 116);
+            btnInstall.Left = Dpi.S(W - Theme.M - 104 - 8 - 96 - 8 - 116 - 8 - 112);
+            lblStatus.Width = Dpi.S(W - 2 * Theme.M);
+            bar.Width = Dpi.S(Math.Max(200, (W - Theme.M - 104 - 8 - 96 - 8 - 116 - 8 - 112) - 8 - Theme.M));
 
             ResumeLayout(true);
+        }
+
+        /// <summary>
+        /// 自检用：换一个缩放比例跑一遍排版，看控件有没有排到窗口外面、有没有互相盖住。
+        /// 只验证 ApplyResponsive 自己的算术（那里面每个数都乘了缩放比例）；
+        /// 真实窗体加载时还会有一轮 AutoScale 去放大 BuildUi 里写死的 Bounds，
+        /// 那部分只能在 125% / 150% 的真机上看，这里模拟不出来。
+        /// </summary>
+        internal int LayoutSelfTest(float factor, int designW, int designH)
+        {
+            int bad = 0;
+            float savedFactor = Dpi.Factor;
+            Size savedSize = ClientSize;
+            try
+            {
+                Dpi.Factor = factor;
+                int W = Dpi.S(designW);
+                ClientSize = new Size(W, Dpi.S(designH));
+                lastRespW = lastRespH = -1;
+                ApplyResponsive();
+
+                string tag = "LAYOUT " + (int)Math.Round(factor * 100) + "%：";
+                int m = Dpi.S(Theme.M);
+
+                // 底部四个按钮从右往左排：位置必须严格递减，最左的不能压进左边距，最右的不能出窗
+                FlatButton[] bottom = new FlatButton[] { btnOpen, btnRestore, btnSwitch, btnInstall };
+                if (btnOpen.Left + Dpi.S(104) > W - m + 1) { bad++; Core.Log("FAIL", tag + "「打开」按钮出窗"); }
+                for (int i = 1; i < bottom.Length; i++)
+                    if (bottom[i].Left >= bottom[i - 1].Left) { bad++; Core.Log("FAIL", tag + "底部按钮顺序错：" + bottom[i].Text); }
+                if (btnInstall.Left < m + Dpi.S(200)) { bad++; Core.Log("FAIL", tag + "底部按钮把进度条挤没了"); }
+
+                // 顶部：设置 ← 抽屉 ← 台面 ← 自动找 ← 浏览（从左到右依次右移）
+                FlatButton[] top = new FlatButton[] { btnBrowse, btnFind, btnView, btnPanel, btnSettings };
+                if (btnSettings.Left + Dpi.S(60) > W - m + 1) { bad++; Core.Log("FAIL", tag + "「设置」出窗"); }
+                for (int i = 1; i < top.Length; i++)
+                    if (top[i].Left <= top[i - 1].Left + Dpi.S(56)) { bad++; Core.Log("FAIL", tag + "顶部按钮叠在一起：" + top[i].Text); }
+
+                // 两栏：右栏整体落在窗口里，且不压到左栏
+                if (gMod.Left < m) { bad++; Core.Log("FAIL", tag + "右栏左边距算成负数"); }
+                if (gMod.Left + gMod.Width > W) { bad++; Core.Log("FAIL", tag + "右栏超出窗口"); }
+                if (viewHost.Width <= 0) { bad++; Core.Log("FAIL", tag + "台面宽度算成 0"); }
+                if (txtLog.Width <= 0) { bad++; Core.Log("FAIL", tag + "日志框宽度算成 0"); }
+                if (cboTweak.Width <= 0 || btnTweak.Left + Dpi.S(90) > Dpi.S(396)) { bad++; Core.Log("FAIL", tag + "参数配置那一行排歪了"); }
+                if (bad == 0) Core.Log("OK", tag + "无重叠、无越界（窗口 " + W + "px，设计宽 " + designW + "）");
+            }
+            catch (Exception ex) { bad++; Core.Log("FAIL", "LAYOUT 异常: " + ex.Message); }
+            finally
+            {
+                Dpi.Factor = savedFactor;
+                ClientSize = savedSize;
+                lastRespW = lastRespH = -1;
+                ApplyResponsive();
+            }
+            return bad;
         }
 
         /// <summary>总览 ⇄ 方案树。总览是整窗口一块看板，不是另一个窗口。</summary>
@@ -3110,6 +3178,33 @@ namespace Installer
         private void Log(string s) { Core.Log("INFO", s); }
         private void Log(string level, string s) { Core.Log(level, s); }
 
+        // ---- 长操作重入守卫 ----
+        // 装机、还原、清重、导入这些流程里都会 Application.DoEvents()（为了刷新进度和响应「停止」），
+        // 泵消息就意味着用户能在流程中途再点一次菜单、快捷键或桌面卡片。两步同时往同一批文件上写，
+        // 轻则日志对不上，重则把刚写的文件按旧的基线判成冲突。
+        // 真正的互斥在 Core.OpGuard：桌面服务和方案树也走同一把锁。
+        private string longOpName;
+
+        private bool EnterLongOp(string what)
+        {
+            if (!OpGuard.Enter(what))
+            {
+                string busy = OpGuard.Current;
+                Core.Log("WARN", "「" + what + "」被忽略：正在" + (busy ?? "别的操作") + "，等它结束再操作");
+                SetStatus("正在" + (busy ?? "别的操作") + "，请等它结束");
+                return false;
+            }
+            longOpName = what;
+            return true;
+        }
+
+        private void ExitLongOp()
+        {
+            if (longOpName == null) return;
+            OpGuard.Exit(longOpName);
+            longOpName = null;
+        }
+
         private void SetBusy(bool busy)
         {
             // 这个方法会被后台线程调用，必须回到 UI 线程再改控件
@@ -3153,6 +3248,13 @@ namespace Installer
         }
 
         private void DoRestore()
+        {
+            if (!EnterLongOp("还原")) return;
+            try { DoRestoreCore(); }
+            finally { ExitLongOp(); }
+        }
+
+        private void DoRestoreCore()
         {
             string root = txtGame.Text.Trim();
             if (!Core.TestGame(root)) { MessageBox.Show("先选对游戏根目录。"); return; }
@@ -3298,6 +3400,7 @@ namespace Installer
             if (MessageBox.Show(q, "只装这个位置", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
 
             bool overwrite = !rdSkip.Checked;
+            if (!EnterLongOp("只装这个位置")) return;   // 线程结束时在 SafeBeginInvoke 里放
             SetBusy(true);
             bar.Style = ProgressBarStyle.Marquee;
             SetStatus(needCopy.Count == 0 ? "正在改开关「" + slotName + "」…" : "正在装「" + slotName + "」…");
@@ -3357,6 +3460,7 @@ namespace Installer
                             + "\r\n\r\n进游戏就能看到；这个位置的其它 MOD 没动。",
                             failed.Count > 0 ? "部分失败" : "只装这里 · 完成",
                             MessageBoxButtons.OK, failed.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+                        ExitLongOp();
                     });
                 }
                 catch (Exception ex)
@@ -3365,6 +3469,7 @@ namespace Installer
                     SafeBeginInvoke(delegate
                     {
                         SetBusy(false); SetBar(0); SetStatus("就绪");
+                        ExitLongOp();
                         MessageBox.Show("装失败: " + ex.Message, "出错了", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     });
                 }
@@ -3373,105 +3478,152 @@ namespace Installer
             th.Start();
         }
 
-        private void DoInstall()
+        /// <summary>
+        /// 一次装机的全部输入：在 UI 线程收齐（所有弹框确认都在那之前问完），后台线程只读它。
+        /// 原来 400 行方法里，勾选状态、弹框答案、进度计数全是闭包局部变量，
+        /// 谁在哪个线程改的都看不出来；现在换成这个对象，读写边界一眼可见。
+        /// </summary>
+        private sealed class InstallJob
         {
-            string root = txtGame.Text.Trim();
-            if (!Core.TestGame(root)) { MessageBox.Show("这个目录里没有 left4dead2.exe，先选对游戏根目录。", "路径不对"); return; }
+            public string Root;
+            public List<ModItem> Sel = new List<ModItem>();
+            public bool L4N, Dxvk, Skeeto, Asset, Mqcam, Launch, Cfg, Swap;
+            public string LaunchVal = "";
+            public string Tweak = "";
+            public string AssetName;
+            /// <summary>没做成的步骤名（给用户看的一句话）。</summary>
+            public List<string> Failed = new List<string>();
+            /// <summary>这次新写进 addons 的文件名，最后写还原清单用。</summary>
+            public List<string> Added = new List<string>();
+            public int StepDone, StepTotal;
+            public volatile bool Canceled;
+        }
+
+        private void BeginStep(InstallJob j, string what)
+        {
+            j.StepDone++;
+            SetStatus("第 " + j.StepDone + "/" + j.StepTotal + " 步 · " + what);
+        }
+
+        /// <summary>收勾选、做装机前的所有确认。返回 null = 用户取消或校验没过（提示已经给过）。</summary>
+        private InstallJob CollectInstallJob(string root)
+        {
             if (!TestWritable(root))
             {
                 MessageBox.Show("这个游戏目录写不进去（可能只读、被占用或权限不足）。\r\n可以试试以管理员身份运行，或换一个有写权限的目录。", "目录不可写");
-                return;
+                return null;
             }
             if (GameRunning())
             {
                 MessageBox.Show("游戏还开着。先把《求生之路2》完全退出（不是最小化），否则 exe 和 dll 被占用，装不进去。", "游戏正在运行");
-                return;
+                return null;
             }
-            List<ModItem> sel = Selected();
-            bool wantL4N = chkL4N.Checked;
-            bool wantDxvk = chkDxvk.Checked;
-            bool wantSkeeto = chkSkeeto.Checked;
-            bool wantAsset = chkAsset.Checked;
-            bool wantMqcam = chkMqcam.Checked;
+
+            InstallJob j = new InstallJob();
+            j.Root = root;
+            j.Sel = Selected();
+            j.L4N = chkL4N.Checked;
+            j.Dxvk = chkDxvk.Checked;
+            j.Skeeto = chkSkeeto.Checked;
+            j.Asset = chkAsset.Checked;
+            j.Mqcam = chkMqcam.Checked;
             // 唯一真依赖：MQCam 跑在 L4N 的 neko 框架里。别的（Skeeto / dxvk / MOD）都不需要 L4N
-            if (wantMqcam && !wantL4N)
+            if (j.Mqcam && !j.L4N)
             {
-                wantL4N = true;
+                j.L4N = true;
                 Core.Log("WARN", "MQCam 要用 L4N 的 neko 框架，这次把 L4N 一起装上");
             }
-            bool wantLaunch = chkLaunch.Checked;
-            bool wantCfg = chkCfg.Checked;
-            string launchVal = LaunchArgs.ForWrite(txtLaunch.Text);
+            j.Launch = chkLaunch.Checked;
+            j.Cfg = chkCfg.Checked;
+            j.Swap = chkSwap.Checked;
+            j.LaunchVal = LaunchArgs.ForWrite(txtLaunch.Text);
+            j.Tweak = TweakName();
             Core.StrictVerify = chkStrict.Checked;
-            if (!wantL4N && !wantDxvk && !wantSkeeto && !wantMqcam && sel.Count == 0 && !wantLaunch && !wantAsset && !wantCfg)
-            { MessageBox.Show("什么都没勾。"); return; }
-            List<string> deep = null;
-            if (sel.Count >= 2)
+
+            if (!j.L4N && !j.Dxvk && !j.Skeeto && !j.Mqcam && j.Sel.Count == 0 && !j.Launch && !j.Asset && !j.Cfg)
+            { MessageBox.Show("什么都没勾。"); return null; }
+
+            if (j.Sel.Count >= 2)
             {
                 SetBusy(true);
                 try
                 {
-                    deep = RunBusy<List<string>>("正在检查 " + sel.Count + " 个 MOD 有没有文件重叠…", delegate { return ConflictCheck.DeepAll(sel); });
+                    List<string> deep = RunBusy<List<string>>("正在检查 " + j.Sel.Count + " 个 MOD 有没有文件重叠…", delegate { return ConflictCheck.DeepAll(j.Sel); });
+                    if (deep != null && deep.Count > 0)
+                    {
+                        string msg = string.Join("\r\n", deep.ToArray()) + "\r\n\r\n仍然继续装吗？";
+                        if (MessageBox.Show(msg, "这些 MOD 有文件重叠", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return null;
+                        foreach (string l in deep) Core.Log("WARN", l);
+                    }
                 }
                 catch (Exception ex)
                 {
                     Core.Log("FAIL", "冲突检查失败: " + ex.Message);
                     MessageBox.Show("安装前的冲突检查失败，这次没有开始安装。\r\n\r\n"
                         + ex.Message + "\r\n\r\n详细信息见日志。", "冲突检查失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
+                    return null;
                 }
                 finally { SetBusy(false); }
-            }
-            if (deep != null && deep.Count > 0)
-            {
-                string msg = string.Join("\r\n", deep.ToArray()) + "\r\n\r\n仍然继续装吗？";
-                if (MessageBox.Show(msg, "这些 MOD 有文件重叠", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
-                foreach (string l in deep) Core.Log("WARN", l);
             }
 
             // 装之前先看目标盘放不放得下
             long need = 0;
-            foreach (ModItem it in sel) need += it.Size;
+            foreach (ModItem it in j.Sel) need += it.Size;
             try
             {
                 DriveInfo di = new DriveInfo(Path.GetPathRoot(root));
                 if (di.AvailableFreeSpace < need + 300L * 1024 * 1024)
                 {
-                    if (MessageBox.Show("目标盘只剩 " + Core.Human(di.AvailableFreeSpace) + "，这次要铺 " + Core.Human(need) + "。\r\n空间可能不够，仍然继续吗？", "空间可能不足", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+                    if (MessageBox.Show("目标盘只剩 " + Core.Human(di.AvailableFreeSpace) + "，这次要铺 " + Core.Human(need) + "。\r\n空间可能不够，仍然继续吗？", "空间可能不足", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return null;
                 }
             }
             catch { }
+
             Work.Overwrite = !rdSkip.Checked;          // 所有 Install* 都读这个开关
             Core.Cfg.GameRoot = root;
-            Core.Cfg.L4N = wantL4N;
-            Core.Cfg.Dxvk = wantDxvk;
-            Core.Cfg.Skeeto = wantSkeeto;
-            Core.Cfg.AssetPack = wantAsset;
-            Core.Cfg.Mqcam = wantMqcam;
-            Core.Cfg.Launch = wantLaunch;
-            Core.Cfg.CfgFile = wantCfg;
+            Core.Cfg.L4N = j.L4N;
+            Core.Cfg.Dxvk = j.Dxvk;
+            Core.Cfg.Skeeto = j.Skeeto;
+            Core.Cfg.AssetPack = j.Asset;
+            Core.Cfg.Mqcam = j.Mqcam;
+            Core.Cfg.Launch = j.Launch;
+            Core.Cfg.CfgFile = j.Cfg;
             Core.Cfg.Overwrite = !rdSkip.Checked;
-            Core.Cfg.TweakSet = TweakName();
-            Core.Cfg.LaunchOptions = launchVal;
+            Core.Cfg.TweakSet = j.Tweak;
+            Core.Cfg.LaunchOptions = j.LaunchVal;
             Core.Cfg.Recent.RemoveAll(delegate(string s) { return string.Equals(s, root, StringComparison.OrdinalIgnoreCase); });
             Core.Cfg.Recent.Insert(0, root);
             while (Core.Cfg.Recent.Count > 6) Core.Cfg.Recent.RemoveAt(Core.Cfg.Recent.Count - 1);
             Core.Cfg.Mods = new List<string>();
-            foreach (ModItem it in sel) Core.Cfg.Mods.Add(it.Key);
+            foreach (ModItem it in j.Sel) Core.Cfg.Mods.Add(it.Key);
             Core.SaveConfig();
+            return j;
+        }
 
-            int stepTotal = (wantL4N ? 1 : 0) + (wantDxvk ? 1 : 0) + (wantSkeeto ? 1 : 0)
-                          + (wantAsset ? 1 : 0) + (wantCfg ? 1 : 0) + (wantMqcam ? 1 : 0)
-                          + (sel.Count > 0 ? 1 : 0) + (wantLaunch ? 1 : 0);
-            int stepDone = 0;
-            bool canceled = false;
-            List<string> failedSteps = new List<string>();
-            Action<string> BeginStep = delegate(string what)
+        private void DoInstall()
+        {
+            // 装机期间会 DoEvents 泵消息：菜单、快捷键、桌面卡片都可能再点进来一次。
+            // 第二次进来什么都不做 —— 否则两条线程同时往 addons 里写。
+            if (!EnterLongOp("装机")) return;
+            bool handed = false;
+            try
             {
-                stepDone++;
-                SetStatus("第 " + stepDone + "/" + stepTotal + " 步 · " + what);
-            };
+                string root = txtGame.Text.Trim();
+                if (!Core.TestGame(root)) { MessageBox.Show("这个目录里没有 left4dead2.exe，先选对游戏根目录。", "路径不对"); return; }
+                InstallJob j = CollectInstallJob(root);
+                if (j == null) return;
+                StartInstall(j);           // 交给后台线程，由 RunInstall 的 finally 放守卫
+                handed = true;
+            }
+            finally { if (!handed) ExitLongOp(); }
+        }
 
+        private void StartInstall(InstallJob j)
+        {
+            j.StepTotal = (j.L4N ? 1 : 0) + (j.Dxvk ? 1 : 0) + (j.Skeeto ? 1 : 0)
+                        + (j.Asset ? 1 : 0) + (j.Cfg ? 1 : 0) + (j.Mqcam ? 1 : 0)
+                        + (j.Sel.Count > 0 ? 1 : 0) + (j.Launch ? 1 : 0);
+            j.StepDone = 0;
             Work.CancelRequested = false;
             btnCancel.Enabled = true;
             btnCancel.Text = "停止剩余";
@@ -3479,301 +3631,311 @@ namespace Installer
             SetBusy(true);
             bar.Style = ProgressBarStyle.Marquee;
             lblStatus.Text = "正在准备…";
-            Thread th = new Thread(delegate()
-            {
-                try
-                {
-                    Core.Log("STEP", "开始写入");
-                    Core.Log("INFO", Work.Overwrite ? "模式：覆盖重装（已装的也全部重写一遍）" : "模式：跳过已装（只写缺的和不一样的）");
-                    if (wantL4N)
-                    {
-                        Core.Log("STEP", "装 L4N");
-                        BeginStep("正在装 L4N…");
-                        if (!Work.InstallL4N(root, delegate(int done, int total) { SetBar(total > 0 ? done * 1000 / total : 0); }))
-                            failedSteps.Add("L4N 平台");
-                        if (Work.CancelRequested) canceled = true;
-                    }
-                    if (!canceled && wantDxvk)
-                    {
-                        Core.Log("STEP", "装 dxvk");
-                        BeginStep("正在装 dxvk…");
-                        if (!Work.InstallDxvk(root)) failedSteps.Add("dxvk 防闪退");
-                        if (Work.CancelRequested) canceled = true;
-                    }
-                    if (!canceled && wantSkeeto)
-                    {
-                        Core.Log("STEP", "装 Skeeto");
-                        BeginStep("正在装 Skeeto…");
-                        if (!Work.InstallSkeeto(root)) failedSteps.Add("Skeeto 增强框架");
-                        if (Work.CancelRequested) canceled = true;
-                    }
-                    string assetName = null;
-                    if (!canceled && wantAsset)
-                    {
-                        Core.Log("STEP", "装素材包");
-                        BeginStep("正在复制素材包…");
-                        assetName = Work.InstallAssetPack(root);
-                        if (assetName == null) failedSteps.Add("Skeeto 素材包");
-                        if (Work.CancelRequested) canceled = true;
-                    }
-                    if (!canceled && wantCfg)
-                    {
-                        string tw = TweakName();
-                        if (tw.Length > 0 && Tweaks.Exists(tw))
-                        {
-                            Core.Log("STEP", "写参数配置「" + tw + "」");
-                            BeginStep("正在写参数配置…");
-                            List<string> twLines;
-                            string twErr = Tweaks.Apply(root, tw, out twLines);
-                            if (twErr != null)
-                            {
-                                Core.Log("FAIL", "参数配置没写进去: " + twErr);
-                                failedSteps.Add("参数配置");
-                            }
-                        }
-                        else
-                        {
-                            Core.Log("STEP", "搬 autoexec.cfg（没选参数存档，走旧做法）");
-                            BeginStep("正在搬 autoexec.cfg…");
-                            if (!Work.InstallCfg(root)) failedSteps.Add("参数配置（autoexec.cfg）");
-                        }
-                        if (Work.CancelRequested) canceled = true;
-                    }
-                    if (!canceled && wantMqcam)
-                    {
-                        Core.Log("STEP", "装 MQCam");
-                        BeginStep("正在装 MQCam…");
-                        if (!Work.InstallMqcam(root)) failedSteps.Add("MQCam 相机");
-                        if (Work.CancelRequested) canceled = true;
-                    }
-                    List<string> added = new List<string>();
-                    if (!canceled && sel.Count > 0)
-                    {
-                        Core.Log("STEP", "铺 MOD（" + sel.Count + " 个）");
-                        BeginStep("正在铺 MOD…");
-                        int finalFailed = 0;
-                        List<ModItem> todo = new List<ModItem>(sel);
-                        for (int attempt = 0; attempt <= 2; attempt++)
-                        {
-                            int copied, skipped;
-                            List<string> addedThis, failed;
-                            Work.CopyMods(root, todo, delegate(long done, long total)
-                            {
-                                int pct = total > 0 ? (int)(done * 1000 / total) : 0;
-                                SetBar(pct);
-                            }, out copied, out skipped, out addedThis, out failed);
-                            if (addedThis.Count > 0) added.AddRange(addedThis);
-                            finalFailed = failed.Count;
-                            if (Work.CancelRequested) { canceled = true; break; }
-                            if (failed.Count == 0 || attempt == 2) break;
-                            List<ModItem> retryList = new List<ModItem>();
-                            foreach (ModItem it in todo) if (failed.Contains(it.Name)) retryList.Add(it);
-                            if (retryList.Count == 0) break;
-                            string q = "有 " + retryList.Count + " 个 MOD 复制失败，重试一次？（最多重试 2 次）";
-                            bool yes = false;
-                            Invoke(new Action(delegate { yes = MessageBox.Show(q, "复制失败", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes; }));
-                            if (!yes) break;
-                            Core.Log("WARN", "重试 " + retryList.Count + " 个失败的 MOD");
-                            todo = retryList;
-                        }
-                        if (finalFailed > 0) failedSteps.Add("MOD 复制（" + finalFailed + " 个）");
-                        // 停止时不改 addonlist：已经复制完的文件先留在 addons 里，但不把它们突然启用。
-                        if (!canceled)
-                        {
-                            // 换整套：只翻 addonlist 的开关（这次的打开、上一套的关上），文件一个都不动
-                            if (chkSwap.Checked)
-                            {
-                                Core.Log("STEP", "换整套：把不在这套里的 MOD 关掉");
-                                SetStatus("正在切换 MOD 开关…");
-                                int onN, offN, keepN;
-                                Work.SwitchAddons(root, sel, assetName, out onN, out offN, out keepN);
-                            }
-                            else
-                            {
-                                Dictionary<string, bool> st = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-                                foreach (ModItem it in sel) st[it.Name] = true;
-                                if (assetName != null) st[assetName] = true;
-                                AddonList.Write(root, st);
-                                Core.Log("OK", "启用状态已写入");
-                            }
-                        }
-                    }
-                    else if (!canceled && chkSwap.Checked)
-                    {
-                        // 一个 MOD 都没勾、但开着「换整套」：等于这套不要 MOD，全关掉
-                        Core.Log("STEP", "换整套：这套没有 MOD，把旧的都关掉");
-                        int onN, offN, keepN;
-                        Work.SwitchAddons(root, sel, assetName, out onN, out offN, out keepN);
-                    }
-                    else if (!canceled && assetName != null)
-                    {
-                        Dictionary<string, bool> st2 = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-                        st2[assetName] = true;
-                        AddonList.Write(root, st2);
-                    }
-                    if (!canceled && wantLaunch)
-                    {
-                        Core.Log("STEP", "写 Steam 启动项");
-                        BeginStep("正在写 Steam 启动项…");
-                        string launchMsg = Work.WriteLaunchOptions(launchVal);
-                        Core.Log("INFO", launchMsg);
-                        if (launchMsg.IndexOf("没写成功", StringComparison.Ordinal) >= 0)
-                            failedSteps.Add("Steam 启动项");
-                        if (Work.CancelRequested) canceled = true;
-                    }
-                    if (canceled || Work.CancelRequested)
-                    {
-                        SetStatus("已停止 · 已复制文件保留，开关未写入");
-                        Core.Log("WARN", "安装已停止：没有继续后续步骤，也没有改 addonlist；已写入的文件保留。");
-                        SafeBeginInvoke(delegate()
-                        {
-                            bool summary = MessageBox.Show(
-                                "安装已停止。\r\n\r\n"
-                                + "· 已经写完的文件保留在游戏目录里\r\n"
-                                + "· 后续组件没有继续安装\r\n"
-                                + "· addonlist 的开关没有改动\r\n\r\n"
-                                + "这不是“还原”。要清理，请用「一键还原」或手动处理。\r\n"
-                                + "需要继续时，可以再点一次「开始装」。",
-                                "安装已停止", MessageBoxButtons.OK, MessageBoxIcon.Information) == DialogResult.OK;
-                            try { Core.ScanMods(); } catch { }
-                            RefreshMods();
-                            RefreshConflicts(true);
-                        });
-                        return;
-                    }
-                    Core.Log("STEP", "逐项核对");
-                    Work.Verify(root);
-                    Work.WriteManifest(root, added);
-                    if (failedSteps.Count == 0)
-                    {
-                        SetStatus("完成");
-                        Core.Log("OK", "全部完成。进游戏即可，开关在「已装 MOD 开关」里调。");
-                    }
-                    else
-                    {
-                        SetStatus("部分完成 · " + failedSteps.Count + " 项需要处理");
-                        Core.Log("FAIL", "安装结束，但有 " + failedSteps.Count + " 项失败：" + string.Join("、", failedSteps.ToArray()));
-                    }
-                    SafeBeginInvoke(delegate
-                    {
-                        UpdateTweakTip();
-                        // 装完必须重扫：状态列（已装·开 / 已装·关）是现读 addons 和 addonlist 得出的，
-                        // 不重扫的话回到列表看到的还是装机前的旧状态
-                        try { Core.ScanMods(); }
-                        catch (Exception exs) { Core.Log("WARN", "装完重扫失败: " + exs.Message); }
-                        RefreshMods();
-                        RefreshConflicts(true);
-                        if (failedSteps.Count > 0)
-                        {
-                            // 有失败就不引导启动：先让用户看到“哪些没成”，而不是一句笼统的“装好了”。
-                            MessageBox.Show(
-                                "安装结束，但不是全部成功。\r\n\r\n没完成的 " + failedSteps.Count + " 项：\r\n  · "
-                                + string.Join("\r\n  · ", failedSteps.ToArray())
-                                + "\r\n\r\n已经写入的文件会保留；请查看下面的日志，处理后可以再装一次。\r\n"
-                                + "这次不会自动启动游戏。",
-                                "部分完成 · 需要处理", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                            return;
-                        }
-                        bool go = MessageBox.Show(
-                            "装好了。\r\n\r\n现在启动游戏吗？\r\n\r\n"
-                            + "启动就是校验 —— 不用跑两遍：\r\n"
-                            + "· 起游戏后顺带盯 2 分钟的崩溃记录\r\n"
-                            + "· 没崩 → 这次装的没问题，游戏留着直接玩\r\n"
-                            + "· 崩了 → 弹提示，说明这次至少有一个坏包\r\n\r\n"
-                            + "全程不改任何文件。不想现在玩就选「否」，游戏不会开。",
-                            "完成 · 启动游戏", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
-                        if (!go) return;
-                        Core.Log("STEP", "启动游戏（同时盯崩溃记录，不再二次启动）");
-                        SetBusy(true);
-                        SetStatus("正在启动游戏…");
-                        Thread thTest = new Thread(delegate()
-                        {
-                            SelfTest.Result sr = null;
-                            bool released = false;
-                            Action<string> onStep = delegate(string s)
-                            {
-                                SetStatus(s);
-                                // 游戏一旦起来就放开按钮，别让它一直锁着
-                                if (!released) { released = true; SetBusy(false); }
-                            };
-                            try
-                            {
-                                sr = SelfTest.Run(root, 120, sel.Count, onStep, true,
-                                    delegate(SelfTest.Result cr)
-                                    {
-                                        Core.Log("FAIL", "玩着玩着崩了: " + cr.Message.Replace("\r\n", " "));
-                                        SafeBeginInvoke(delegate
-                                        {
-                                            MessageBox.Show(cr.Message, "游戏崩了", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                                        });
-                                    });
-                            }
-                            catch (Exception ex3) { Core.Log("FAIL", "启动出错: " + ex3.Message); }
-                            SetBusy(false);
-                            SetBar(0);
-                            SetStatus("就绪");
-                            if (sr == null) return;
-
-                            // 自检前置条件不满足（Steam 没开 / 没 reports 目录 / 起不来）：
-                            // 别把「启动游戏」一起吞掉，退化成就直接开
-                            if (sr.Kind == "nosteam" || sr.Kind == "noreport" || sr.Kind == "launchfail")
-                            {
-                                Core.Log("WARN", "这次盯不了崩溃记录（" + sr.Kind + "），改为直接启动游戏");
-                                StartGameDirect(root);
-                                return;
-                            }
-                            if (sr.Kind == "busy")
-                            {
-                                Core.Log("INFO", "游戏已经开着，不用再启动");
-                                SetStatus("游戏已经开着");
-                                return;
-                            }
-
-                            if (appliedProfile.Length > 0 && (sr.Kind == "crash" || sr.Kind == "clean"))
-                                ProfileStore.SetSelfTest(appliedProfile, sr.Kind == "crash" ? "FAIL" : "PASS", sr.Seconds);
-                            Core.Log(sr.Kind == "crash" ? "FAIL" : "OK", "启动: " + sr.Message.Replace("\r\n", " "));
-
-                            // 自己关掉游戏就别再弹框打扰
-                            if (sr.Kind == "exited" || sr.Kind == "clean")
-                            {
-                                if (sr.Kind == "clean") SetStatus("游戏已启动 · 后台盯着崩溃记录");
-                                return;
-                            }
-                            SafeBeginInvoke(delegate
-                            {
-                                MessageBox.Show(sr.Message, "启动结果 - " + sr.Kind,
-                                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                            });
-                        });
-                        thTest.IsBackground = true;
-                        thTest.Start();
-                    });
-                }
-                catch (Exception ex)
-                {
-                    Core.Log("FAIL", "中断: " + ex.Message);
-                    SetStatus("失败 · 查看日志");
-                }
-                finally
-                {
-                    Work.CancelRequested = false;
-                    SetBusy(false);
-                    SetBar(0);
-                    SafeBeginInvoke(delegate()
-                    {
-                        btnCancel.Visible = false;
-                        btnCancel.Enabled = true;
-                        btnCancel.Text = "停止剩余";
-                    });
-                    // 不再无条件改回“就绪”：失败、部分完成、完成都应留在状态栏上，
-                    // 这是用户离开安装按钮后唯一能确认结果的常驻反馈。
-                }
-            });
+            Thread th = new Thread(delegate() { RunInstall(j); });
             th.IsBackground = true;
             th.SetApartmentState(ApartmentState.STA);
             th.Start();
         }
 
+        /// <summary>后台线程主体：按顺序把勾选的组件写进游戏目录。</summary>
+        private void RunInstall(InstallJob j)
+        {
+            try
+            {
+                Core.Log("STEP", "开始写入");
+                Core.Log("INFO", Work.Overwrite ? "模式：覆盖重装（已装的也全部重写一遍）" : "模式：跳过已装（只写缺的和不一样的）");
+
+                if (j.L4N)
+                {
+                    Core.Log("STEP", "装 L4N");
+                    BeginStep(j, "正在装 L4N…");
+                    if (!Work.InstallL4N(j.Root, delegate(int done, int total) { SetBar(total > 0 ? done * 1000 / total : 0); }))
+                        j.Failed.Add("L4N 平台");
+                    if (Work.CancelRequested) j.Canceled = true;
+                }
+                if (!j.Canceled && j.Dxvk)
+                {
+                    Core.Log("STEP", "装 dxvk");
+                    BeginStep(j, "正在装 dxvk…");
+                    if (!Work.InstallDxvk(j.Root)) j.Failed.Add("dxvk 防闪退");
+                    if (Work.CancelRequested) j.Canceled = true;
+                }
+                if (!j.Canceled && j.Skeeto)
+                {
+                    Core.Log("STEP", "装 Skeeto");
+                    BeginStep(j, "正在装 Skeeto…");
+                    if (!Work.InstallSkeeto(j.Root)) j.Failed.Add("Skeeto 增强框架");
+                    if (Work.CancelRequested) j.Canceled = true;
+                }
+                if (!j.Canceled && j.Asset)
+                {
+                    Core.Log("STEP", "装素材包");
+                    BeginStep(j, "正在复制素材包…");
+                    j.AssetName = Work.InstallAssetPack(j.Root);
+                    if (j.AssetName == null) j.Failed.Add("Skeeto 素材包");
+                    if (Work.CancelRequested) j.Canceled = true;
+                }
+                if (!j.Canceled && j.Cfg) InstallCfgStep(j);
+                if (!j.Canceled && j.Mqcam)
+                {
+                    Core.Log("STEP", "装 MQCam");
+                    BeginStep(j, "正在装 MQCam…");
+                    if (!Work.InstallMqcam(j.Root)) j.Failed.Add("MQCam 相机");
+                    if (Work.CancelRequested) j.Canceled = true;
+                }
+                if (!j.Canceled && (j.Sel.Count > 0 || j.Swap || j.AssetName != null))
+                    InstallModsStep(j);
+                if (!j.Canceled && j.Launch)
+                {
+                    Core.Log("STEP", "写 Steam 启动项");
+                    BeginStep(j, "正在写 Steam 启动项…");
+                    string launchMsg = Work.WriteLaunchOptions(j.LaunchVal);
+                    Core.Log("INFO", launchMsg);
+                    if (launchMsg.IndexOf("没写成功", StringComparison.Ordinal) >= 0)
+                        j.Failed.Add("Steam 启动项");
+                    if (Work.CancelRequested) j.Canceled = true;
+                }
+
+                if (j.Canceled || Work.CancelRequested) { ReportInstallCanceled(); return; }
+                FinishInstall(j);
+            }
+            catch (Exception ex)
+            {
+                Core.Log("FAIL", "中断: " + ex.Message);
+                SetStatus("失败 · 查看日志");
+            }
+            finally
+            {
+                Work.CancelRequested = false;
+                SetBusy(false);
+                SetBar(0);
+                SafeBeginInvoke(delegate()
+                {
+                    btnCancel.Visible = false;
+                    btnCancel.Enabled = true;
+                    btnCancel.Text = "停止剩余";
+                    ExitLongOp();
+                });
+                // 不再无条件改回“就绪”：失败、部分完成、完成都应留在状态栏上，
+                // 这是用户离开安装按钮后唯一能确认结果的常驻反馈。
+            }
+        }
+
+        /// <summary>参数配置：有选中的参数存档就按存档写，没有就退回搬 autoexec.cfg。</summary>
+        private void InstallCfgStep(InstallJob j)
+        {
+            if (j.Tweak.Length > 0 && Tweaks.Exists(j.Tweak))
+            {
+                Core.Log("STEP", "写参数配置「" + j.Tweak + "」");
+                BeginStep(j, "正在写参数配置…");
+                List<string> twLines;
+                string twErr = Tweaks.Apply(j.Root, j.Tweak, out twLines);
+                if (twErr != null)
+                {
+                    Core.Log("FAIL", "参数配置没写进去: " + twErr);
+                    j.Failed.Add("参数配置");
+                }
+            }
+            else
+            {
+                Core.Log("STEP", "搬 autoexec.cfg（没选参数存档，走旧做法）");
+                BeginStep(j, "正在搬 autoexec.cfg…");
+                if (!Work.InstallCfg(j.Root)) j.Failed.Add("参数配置（autoexec.cfg）");
+            }
+            if (Work.CancelRequested) j.Canceled = true;
+        }
+
+        /// <summary>铺 MOD：复制（失败可重试）→ 写 addonlist 开关。</summary>
+        private void InstallModsStep(InstallJob j)
+        {
+            if (j.Sel.Count > 0)
+            {
+                Core.Log("STEP", "铺 MOD（" + j.Sel.Count + " 个）");
+                BeginStep(j, "正在铺 MOD…");
+                int finalFailed = 0;
+                List<ModItem> todo = new List<ModItem>(j.Sel);
+                for (int attempt = 0; attempt <= 2; attempt++)
+                {
+                    int copied, skipped;
+                    List<string> addedThis, failed;
+                    Work.CopyMods(j.Root, todo, delegate(long done, long total)
+                    {
+                        int pct = total > 0 ? (int)(done * 1000 / total) : 0;
+                        SetBar(pct);
+                    }, out copied, out skipped, out addedThis, out failed);
+                    if (addedThis.Count > 0) j.Added.AddRange(addedThis);
+                    finalFailed = failed.Count;
+                    if (Work.CancelRequested) { j.Canceled = true; break; }
+                    if (failed.Count == 0 || attempt == 2) break;
+                    List<ModItem> retryList = new List<ModItem>();
+                    foreach (ModItem it in todo) if (failed.Contains(it.Name)) retryList.Add(it);
+                    if (retryList.Count == 0) break;
+                    string q = "有 " + retryList.Count + " 个 MOD 复制失败，重试一次？（最多重试 2 次）";
+                    bool yes = false;
+                    Invoke(new Action(delegate { yes = MessageBox.Show(q, "复制失败", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes; }));
+                    if (!yes) break;
+                    Core.Log("WARN", "重试 " + retryList.Count + " 个失败的 MOD");
+                    todo = retryList;
+                }
+                if (finalFailed > 0) j.Failed.Add("MOD 复制（" + finalFailed + " 个）");
+            }
+
+            // 停止时不改 addonlist：已经复制完的文件先留在 addons 里，但不把它们突然启用。
+            if (j.Canceled) return;
+            if (j.Swap)
+            {
+                // 换整套：只翻 addonlist 的开关（这次的打开、上一套的关上），文件一个都不动
+                Core.Log("STEP", "换整套：把不在这套里的 MOD 关掉");
+                SetStatus("正在切换 MOD 开关…");
+                int onN, offN, keepN;
+                Work.SwitchAddons(j.Root, j.Sel, j.AssetName, out onN, out offN, out keepN);
+                return;
+            }
+            Dictionary<string, bool> st = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            foreach (ModItem it in j.Sel) st[it.Name] = true;
+            if (j.AssetName != null) st[j.AssetName] = true;
+            if (st.Count == 0) return;
+            AddonList.Write(j.Root, st);
+            Core.Log("OK", "启用状态已写入");
+        }
+
+        private void ReportInstallCanceled()
+        {
+            SetStatus("已停止 · 已复制文件保留，开关未写入");
+            Core.Log("WARN", "安装已停止：没有继续后续步骤，也没有改 addonlist；已写入的文件保留。");
+            SafeBeginInvoke(delegate()
+            {
+                bool summary = MessageBox.Show(
+                    "安装已停止。\r\n\r\n"
+                    + "· 已经写完的文件保留在游戏目录里\r\n"
+                    + "· 后续组件没有继续安装\r\n"
+                    + "· addonlist 的开关没有改动\r\n\r\n"
+                    + "这不是“还原”。要清理，请用「一键还原」或手动处理。\r\n"
+                    + "需要继续时，可以再点一次「开始装」。",
+                    "安装已停止", MessageBoxButtons.OK, MessageBoxIcon.Information) == DialogResult.OK;
+                try { Core.ScanMods(); } catch { }
+                RefreshMods();
+                RefreshConflicts(true);
+            });
+        }
+
+        /// <summary>核对、写还原清单、把结果告诉用户。</summary>
+        private void FinishInstall(InstallJob j)
+        {
+            Core.Log("STEP", "逐项核对");
+            Work.Verify(j.Root);
+            Work.WriteManifest(j.Root, j.Added);
+            if (j.Failed.Count == 0)
+            {
+                SetStatus("完成");
+                Core.Log("OK", "全部完成。进游戏即可，开关在「已装 MOD 开关」里调。");
+            }
+            else
+            {
+                SetStatus("部分完成 · " + j.Failed.Count + " 项需要处理");
+                Core.Log("FAIL", "安装结束，但有 " + j.Failed.Count + " 项失败：" + string.Join("、", j.Failed.ToArray()));
+            }
+            SafeBeginInvoke(delegate
+            {
+                UpdateTweakTip();
+                // 装完必须重扫：状态列（已装·开 / 已装·关）是现读 addons 和 addonlist 得出的，
+                // 不重扫的话回到列表看到的还是装机前的旧状态
+                try { Core.ScanMods(); }
+                catch (Exception exs) { Core.Log("WARN", "装完重扫失败: " + exs.Message); }
+                RefreshMods();
+                RefreshConflicts(true);
+                if (j.Failed.Count > 0)
+                {
+                    // 有失败就不引导启动：先让用户看到“哪些没成”，而不是一句笼统的“装好了”。
+                    MessageBox.Show(
+                        "安装结束，但不是全部成功。\r\n\r\n没完成的 " + j.Failed.Count + " 项：\r\n  · "
+                        + string.Join("\r\n  · ", j.Failed.ToArray())
+                        + "\r\n\r\n已经写入的文件会保留；请查看下面的日志，处理后可以再装一次。\r\n"
+                        + "这次不会自动启动游戏。",
+                        "部分完成 · 需要处理", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                OfferLaunchGame(j);
+            });
+        }
+
+        /// <summary>装完之后问一句要不要立刻起游戏，起了就顺带盯 2 分钟崩溃记录。</summary>
+        private void OfferLaunchGame(InstallJob j)
+        {
+            bool go = MessageBox.Show(
+                "装好了。\r\n\r\n现在启动游戏吗？\r\n\r\n"
+                + "启动就是校验 —— 不用跑两遍：\r\n"
+                + "· 起游戏后顺带盯 2 分钟的崩溃记录\r\n"
+                + "· 没崩 → 这次装的没问题，游戏留着直接玩\r\n"
+                + "· 崩了 → 弹提示，说明这次至少有一个坏包\r\n\r\n"
+                + "全程不改任何文件。不想现在玩就选「否」，游戏不会开。",
+                "完成 · 启动游戏", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+            if (!go) return;
+            Core.Log("STEP", "启动游戏（同时盯崩溃记录，不再二次启动）");
+            SetBusy(true);
+            SetStatus("正在启动游戏…");
+            Thread thTest = new Thread(delegate()
+            {
+                SelfTest.Result sr = null;
+                bool released = false;
+                Action<string> onStep = delegate(string s)
+                {
+                    SetStatus(s);
+                    // 游戏一旦起来就放开按钮，别让它一直锁着
+                    if (!released) { released = true; SetBusy(false); }
+                };
+                try
+                {
+                    sr = SelfTest.Run(j.Root, 120, j.Sel.Count, onStep, true,
+                        delegate(SelfTest.Result cr)
+                        {
+                            Core.Log("FAIL", "玩着玩着崩了: " + cr.Message.Replace("\r\n", " "));
+                            SafeBeginInvoke(delegate
+                            {
+                                MessageBox.Show(cr.Message, "游戏崩了", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            });
+                        });
+                }
+                catch (Exception ex3) { Core.Log("FAIL", "启动出错: " + ex3.Message); }
+                SetBusy(false);
+                SetBar(0);
+                SetStatus("就绪");
+                if (sr == null) return;
+
+                // 自检前置条件不满足（Steam 没开 / 没 reports 目录 / 起不来）：
+                // 别把「启动游戏」一起吞掉，退化成就直接开
+                if (sr.Kind == "nosteam" || sr.Kind == "noreport" || sr.Kind == "launchfail")
+                {
+                    Core.Log("WARN", "这次盯不了崩溃记录（" + sr.Kind + "），改为直接启动游戏");
+                    StartGameDirect(j.Root);
+                    return;
+                }
+                if (sr.Kind == "busy")
+                {
+                    Core.Log("INFO", "游戏已经开着，不用再启动");
+                    SetStatus("游戏已经开着");
+                    return;
+                }
+
+                if (appliedProfile.Length > 0 && (sr.Kind == "crash" || sr.Kind == "clean"))
+                    ProfileStore.SetSelfTest(appliedProfile, sr.Kind == "crash" ? "FAIL" : "PASS", sr.Seconds);
+                Core.Log(sr.Kind == "crash" ? "FAIL" : "OK", "启动: " + sr.Message.Replace("\r\n", " "));
+
+                // 自己关掉游戏就别再弹框打扰
+                if (sr.Kind == "exited" || sr.Kind == "clean")
+                {
+                    if (sr.Kind == "clean") SetStatus("游戏已启动 · 后台盯着崩溃记录");
+                    return;
+                }
+                SafeBeginInvoke(delegate
+                {
+                    MessageBox.Show(sr.Message, "启动结果 - " + sr.Kind,
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                });
+            });
+            thTest.IsBackground = true;
+            thTest.Start();
+        }
         /// <summary>直接开游戏：先走 Steam，起不来就直接跑 exe。盯不了崩溃记录时兜底用。</summary>
         private void StartGameDirect(string root)
         {
@@ -3867,7 +4029,8 @@ namespace Installer
         {
             owner = o;
             Text = "方案管理";
-            ClientSize = new Size(820, 520);
+            Theme.UseDpi(this);
+            ClientSize = Dpi.Sz(820, 520);
             MinimumSize = new Size(760, 470);
             BackColor = Theme.Bg;
             Font = Theme.UI;
@@ -4350,7 +4513,8 @@ namespace Installer
 
         private void Initialize(string title, string hint, string def)
         {
-            Text = title; ClientSize = new Size(420, 132); Font = Theme.UI; BackColor = Theme.Bg;
+            Theme.UseDpi(this);
+            Text = title; ClientSize = Dpi.Sz(420, 132); Font = Theme.UI; BackColor = Theme.Bg;
             StartPosition = FormStartPosition.CenterParent; MaximizeBox = false; MinimizeBox = false;
             Label l = new Label(); l.Text = hint; l.SetBounds(12, 12, 396, 20); Theme.Dress(l); Controls.Add(l);
             box = new TextBox(); box.SetBounds(12, 38, 396, 24); Theme.Dress(box); box.Text = def ?? ""; Controls.Add(box);

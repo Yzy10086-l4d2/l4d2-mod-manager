@@ -932,9 +932,13 @@ namespace Installer
         }
 
         /// <summary>
-        /// 按「同名 + 同内容」分组。
+        /// 按「同名 + 同大小 + 同内容」分组。
         /// 原来只按文件名分组、留第一个删其余 —— 两个来源的同名 vpk 内容根本不一样，
-        /// 照样被当重复删掉一份，而且留哪份只看扫描顺序。现在同名不同内容一律不动，只报给人。
+        /// 照样被当重复删掉一份，而且留哪份只看扫描顺序。
+        ///
+        /// 现在的内容判定和「重复嫌疑」窗口共用同一个指纹函数（DupVerify.OfPath，CRC32），
+        /// 不再是一套 SHA256、一套 CRC32 —— 两边结论不一样，用户会以为哪个在骗他。
+        /// 顺序：同名 → 体积必须一致（不一致一定不是同一个文件，连读都不用读）→ CRC32 → 分桶 → 删前 SHA256 复核。
         /// </summary>
         public static DupPlan PlanDuplicates(List<ModItem> items)
         {
@@ -952,25 +956,56 @@ namespace Installer
             foreach (KeyValuePair<string, List<ModItem>> kv in byName)
             {
                 if (kv.Value.Count < 2) continue;
-                Dictionary<string, List<ModItem>> byHash = new Dictionary<string, List<ModItem>>(StringComparer.OrdinalIgnoreCase);
-                List<ModItem> unknown = new List<ModItem>();
+
+                // 体积不同的同名文件：不可能同内容，直接列为「内容不同，自己看着办」
+                Dictionary<long, List<ModItem>> bySize = new Dictionary<long, List<ModItem>>();
                 foreach (ModItem m in kv.Value)
                 {
-                    string h = Core.HashOf(m.FullPath);
-                    if (string.IsNullOrEmpty(h)) { unknown.Add(m); continue; }   // 读不出来就不碰
-                    if (!byHash.ContainsKey(h)) byHash[h] = new List<ModItem>();
-                    byHash[h].Add(m);
+                    if (!bySize.ContainsKey(m.Size)) bySize[m.Size] = new List<ModItem>();
+                    bySize[m.Size].Add(m);
                 }
-                foreach (List<ModItem> g in byHash.Values)
+
+                List<ModItem> unknown = new List<ModItem>();
+                List<List<ModItem>> kinds = new List<List<ModItem>>();
+                foreach (List<ModItem> sameSize in bySize.Values)
                 {
-                    plan.Keep.Add(g[0]);
-                    for (int i = 1; i < g.Count; i++) plan.Drop.Add(g[i]);
+                    if (sameSize.Count < 2) { kinds.Add(sameSize); plan.Keep.Add(sameSize[0]); continue; }   // 只有一份这种体积，单独算一种
+                    Dictionary<string, List<ModItem>> byCrc = new Dictionary<string, List<ModItem>>(StringComparer.OrdinalIgnoreCase);
+                    foreach (ModItem m in sameSize)
+                    {
+                        string why;
+                        string fp = DupVerify.OfPath(m.FullPath, out why);
+                        if (string.IsNullOrEmpty(fp)) { unknown.Add(m); continue; }   // 读不出来就不碰
+                        if (!byCrc.ContainsKey(fp)) byCrc[fp] = new List<ModItem>();
+                        byCrc[fp].Add(m);
+                    }
+                    foreach (List<ModItem> g in byCrc.Values)
+                    {
+                        kinds.Add(g);
+                        plan.Keep.Add(g[0]);          // 每种内容留一份，Keep 就是这份
+                        if (g.Count < 2) continue;
+                        // CRC32 只有 32 位。分组用它（快），真要删之前用 SHA256 复核一遍：
+                        // 万一撞上碰撞，宁可留着让用户自己看，也不能删错文件。
+                        string keepSha = Core.HashOf(g[0].FullPath);
+                        for (int i = 1; i < g.Count; i++)
+                        {
+                            string sha = keepSha == null ? null : Core.HashOf(g[i].FullPath);
+                            if (sha == null || !string.Equals(sha, keepSha, StringComparison.OrdinalIgnoreCase))
+                            {
+                                unknown.Add(g[i]);
+                                Core.Log("WARN", "清重：CRC 相同但 SHA256 不符（或复核读不出），未删除 —— " + g[i].Name);
+                                continue;
+                            }
+                            plan.Drop.Add(g[i]);
+                        }
+                    }
                 }
-                if (byHash.Count > 1)
+
+                if (kinds.Count > 1)
                 {
                     // 同名的几种内容都留着，让人自己决定删哪个
-                    foreach (List<ModItem> g in byHash.Values) plan.Differ.Add(g[0]);
-                    Core.Log("WARN", "清重：同名但内容不同，未删除 —— " + kv.Key + "（" + byHash.Count + " 种内容）");
+                    foreach (List<ModItem> g in kinds) plan.Differ.Add(g[0]);
+                    Core.Log("WARN", "清重：同名但内容不同，未删除 —— " + kv.Key + "（" + kinds.Count + " 种内容）");
                 }
                 if (unknown.Count > 0)
                 {
@@ -1407,6 +1442,15 @@ namespace Installer
                 string src = Path.Combine(dir, "src.bin");
                 File.WriteAllBytes(src, data);
 
+                // 0) 写盘互斥：同一时间只允许一件事在跑，释放必须按名字
+                SafeCheck(ref bad, OpGuard.Enter("selftest-A"), "互斥：第一个操作能拿到写盘权");
+                SafeCheck(ref bad, !OpGuard.Enter("selftest-B"), "互斥：已有操作在跑时，第二个必须被拒");
+                OpGuard.Exit("selftest-B");                 // 名字不对：不能把 A 的锁放掉
+                SafeCheck(ref bad, !OpGuard.Enter("selftest-B"), "互斥：别人的 Exit 不能误放行");
+                OpGuard.Exit("selftest-A");
+                SafeCheck(ref bad, OpGuard.Enter("selftest-B"), "互斥：正确释放后能再进入");
+                OpGuard.Exit("selftest-B");
+
                 // 1) 覆盖写：目标已存在也要整份换掉，且不留 .part
                 string dst = Path.Combine(dir, "a.vpk");
                 File.WriteAllBytes(dst, new byte[] { 1, 2, 3 });
@@ -1473,6 +1517,34 @@ namespace Installer
                 SafeCheck(ref bad, plan.Differ.Count == 2, "清重：同名但内容不同的两个都留下（实际 " + plan.Differ.Count + "）");
                 SafeCheck(ref bad, File.Exists(Path.Combine(dC, "ak47.vpk")) && File.Exists(Path.Combine(dA, "ak47.vpk")),
                     "清重清单只算不删，文件一个没动");
+
+                // 5b) 指纹缓存不能把「换过内容的同名文件」当成同一份
+                string crcA1, crcA2;
+                string whyCrc;
+                crcA1 = DupVerify.OfPath(Path.Combine(dC, "ak47.vpk"), out whyCrc);
+                File.WriteAllBytes(Path.Combine(dC, "ak47.vpk"), data);        // 内容换成和 A 一样
+                crcA2 = DupVerify.OfPath(Path.Combine(dC, "ak47.vpk"), out whyCrc);
+                SafeCheck(ref bad, crcA1 != null && crcA2 != null && crcA1 != crcA2,
+                    "清重：文件被换掉后指纹跟着变（不能拿旧结论当新结论）");
+
+                // 5c) 同名但体积不同：连读都不用读，直接判「不是同一个文件」
+                string dD = Path.Combine(dir, "dupD"), dE = Path.Combine(dir, "dupE");
+                Directory.CreateDirectory(dD); Directory.CreateDirectory(dE);
+                File.WriteAllBytes(Path.Combine(dD, "ak47.vpk"), new byte[data.Length + 4096]);
+                File.WriteAllBytes(Path.Combine(dE, "ak47.vpk"), new byte[data.Length + 8192]);
+                List<ModItem> fake2 = new List<ModItem>();
+                foreach (string p in new string[] { Path.Combine(dA, "ak47.vpk"), Path.Combine(dD, "ak47.vpk"), Path.Combine(dE, "ak47.vpk") })
+                {
+                    ModItem mi = new ModItem();
+                    mi.Name = "ak47.vpk";
+                    mi.FullPath = p;
+                    mi.RelPath = p;
+                    mi.Size = new FileInfo(p).Length;
+                    fake2.Add(mi);
+                }
+                DupPlan plan2 = PlanDuplicates(fake2);
+                SafeCheck(ref bad, plan2.Drop.Count == 0, "清重：同名但体积不同的一个都不删（实际删了 " + plan2.Drop.Count + "）");
+                SafeCheck(ref bad, plan2.Differ.Count == 3, "清重：三种体积各留一份报给人（实际 " + plan2.Differ.Count + "）");
 
                 // 6) MQCam 那种「按清单核内容」：dll 必须哈希一致，.ini 只看在不在（里面的值会被游戏改）
                 string gt = Path.Combine(dir, "fakeroot");

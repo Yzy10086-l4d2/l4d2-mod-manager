@@ -7,6 +7,12 @@ _bak-*/
 Thumbs.db
 desktop.ini
 
+# IDE 打开 csproj 时生成的中间产物（构建本体的产物在 U 盘根目录，不在这里）
+bin/
+obj/
+*.pdb
+*.user
+
 # 开发过程文档：本地保留，不进仓库（仓库只留 README / LICENSE）
 改动说明_*.md
 优化建议_*.md

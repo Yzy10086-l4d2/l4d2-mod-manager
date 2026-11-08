@@ -584,7 +584,8 @@ namespace Installer
             curSlot = CatPrefs.SlotOf(group.Main);
 
             Text = "设置 MOD 分类 — " + group.Name;
-            ClientSize = new Size(680, 540);
+            Theme.UseDpi(this);
+            ClientSize = Dpi.Sz(680, 540);
             Font = Theme.UI;
             BackColor = Theme.Bg;
             StartPosition = FormStartPosition.CenterParent;
