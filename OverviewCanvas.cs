@@ -22,6 +22,13 @@ namespace Installer
 
         private OvSlot hover;
         private int hoverCat = -1;
+
+        // 拖大类：按下记起点，过了 5px 才算拖，松手时按落点重排（跟方案树共用 CatPrefs 的顺序）
+        private int dragCat = -1;
+        private bool dragging;
+        private Point dragStart, dragPos;
+        private int dropAt = -1;
+        private bool dropAfter;
         private readonly ToolTip tip;
 
         // 沿用原来那块画板的暖色：这是「看板」，不跟浅色/深色表单主题走
@@ -148,6 +155,7 @@ namespace Installer
                                      Math.Max(1f, OvLayout.ListBottom - OvLayout.ListY)));
             LeftList(g);
             Detail(g);
+            DragOverlay(g);
             g.Restore(save);
 
             ScrollBars(g);
@@ -236,6 +244,7 @@ namespace Installer
             for (int i = 0; i < model.Cats.Count; i++)
             {
                 OvCat c = model.Cats[i];
+                if (dragging && i == dragCat) continue;      // 被拖着的那张卡由 DragOverlay 画
                 if (c.Y + c.H < OvLayout.ListY - 2f || c.Y > OvLayout.ListBottom + 2f) continue;
 
                 RectangleF r = new RectangleF(OvLayout.ListX, c.Y, OvLayout.ListW, c.H);
@@ -315,6 +324,39 @@ namespace Installer
             }
         }
 
+        /// <summary>拖大类时：落点画一条线，手上那张卡跟着鼠标走。</summary>
+        private void DragOverlay(Graphics g)
+        {
+            if (!dragging || dragCat < 0 || dragCat >= model.Cats.Count) return;
+
+            if (dropAt >= 0 && dropAt < model.Cats.Count)
+            {
+                OvCat t = model.Cats[dropAt];
+                float y = dropAfter ? t.Y + t.H + 3f : t.Y - 3f;
+                using (Pen p = new Pen(Color.FromArgb(220, Accent), 2f))
+                    g.DrawLine(p, OvLayout.ListX, y, OvLayout.ListX + OvLayout.ListW, y);
+            }
+
+            OvCat src = model.Cats[dragCat];
+            RectangleF r = new RectangleF(OvLayout.ListX, dragPos.Y - src.H * 0.5f, OvLayout.ListW, src.H);
+            using (GraphicsPath p = Round(r, 8f))
+            {
+                using (SolidBrush b = new SolidBrush(Color.FromArgb(236, 46, 35, 24)))
+                    g.FillPath(b, p);
+                using (Pen pen = new Pen(Color.FromArgb(230, Accent), 1.6f))
+                    g.DrawPath(pen, p);
+            }
+            using (SolidBrush b = new SolidBrush(Ink1))
+                g.DrawString(src.Title, fCat, b, new RectangleF(r.X + 14f, r.Y + 9f, r.Width - 88f, 20f));
+            using (StringFormat sf = new StringFormat())
+            {
+                sf.Alignment = StringAlignment.Far;
+                using (SolidBrush b = new SolidBrush(src.On > 0 ? Good : Ink3))
+                    g.DrawString(src.On + "/" + src.Total, fNum, b,
+                                 new RectangleF(r.X, r.Y + 11f, r.Width - 14f, 18f), sf);
+            }
+        }
+
         private void Row(Graphics g, OvSlot s, bool hot)
         {
             RectangleF r = new RectangleF(OvLayout.DetailX, s.Y, OvLayout.DetailW, s.H);
@@ -324,12 +366,7 @@ namespace Installer
                 using (SolidBrush b = new SolidBrush(Color.FromArgb(14, 255, 240, 215)))
                     g.FillPath(b, p);
 
-            // 已装：左边一条绿杠，扫一眼就知道这格有东西
-            if (s.HasMod)
-                using (GraphicsPath p = Round(new RectangleF(r.X + 1f, r.Y + 8f, 2.4f, r.Height - 16f), 1.2f))
-                using (SolidBrush b = new SolidBrush(Color.FromArgb(170, Good)))
-                    g.FillPath(b, p);
-
+            // 已装用左边那个绿点标，不再画竖条 —— 彩色竖边框在列表行上是廉价信号
             // 状态点
             float dx = r.X + 16f, dy = r.Y + r.Height * 0.5f;
             if (s.HasMod)
@@ -349,18 +386,18 @@ namespace Installer
             }
 
             float nameW = OvLayout.DetailW >= 460f ? 168f : 128f;
-            float sizeW = 92f, stateW = 84f;
+            float sizeW = 84f;
+            float swW = 46f;
 
             // 位置名
             using (SolidBrush b = new SolidBrush(s.HasMod ? Ink1 : (s.Empty ? Ink3 : Ink2)))
                 g.DrawString(s.Name, fRow, b,
                     new RectangleF(r.X + 30f, r.Y + 8f, nameW, 20f), Ellipsis());
 
-            // 右边到左：大小 / 状态 / MOD 名
-            float sizeX = r.X + r.Width - sizeW;
-            float stateX = sizeX - stateW;
+            // 右边到左：开关 / 大小 / MOD 名
+            float sizeX = r.X + r.Width - swW - sizeW;
             float modX = r.X + 30f + nameW + 12f;
-            float modW = Math.Max(60f, stateX - modX - 10f);
+            float modW = Math.Max(60f, sizeX - modX - 10f);
 
             string sizeText = "";
             if (s.Size > 0) sizeText = Core.Human(s.Size);
@@ -373,26 +410,32 @@ namespace Installer
                         g.DrawString(sizeText, fSmall, b, new RectangleF(sizeX, r.Y + 11f, sizeW, 16f), sf);
                 }
 
-            string st = "";
-            if (s.On.Count > 0)
-            {
-                Color ink, bg;
-                st = MainForm.StatusOf(s.On[0], out ink, out bg);
-            }
-            if (st.Length > 0)
-                using (StringFormat sf = new StringFormat())
-                {
-                    sf.Alignment = StringAlignment.Far;
-                    using (SolidBrush b = new SolidBrush(StateInk(st)))
-                        g.DrawString(st, fSmall, b, new RectangleF(stateX, r.Y + 11f, stateW - 6f, 16f), sf);
-                }
-
             // MOD 名
             string mt = s.ModText;
             if (s.Partial && s.On.Count > 0) mt += "（" + s.Parts + "/" + s.AllParts + "）";
             Color mc = s.HasMod ? Color.FromArgb(238, 224, 200) : Ink3;
             using (SolidBrush b = new SolidBrush(mc))
                 g.DrawString(mt, fMod, b, new RectangleF(modX, r.Y + 8f, modW, 20f), Ellipsis());
+
+            Switch(g, s, r, swW);
+        }
+
+        /// <summary>行尾那个开关：开 = 这套里装它。轨道 34×18，整块 46×行高都算点击区。</summary>
+        private static void Switch(Graphics g, OvSlot s, RectangleF r, float swW)
+        {
+            if (s.Empty) return;                 // 库里没东西可装：不给一个按了没用的开关
+            RectangleF track = new RectangleF(r.Right - swW + 6f, r.Y + (r.Height - 18f) * 0.5f, 34f, 18f);
+            bool on = s.HasMod;
+            using (GraphicsPath p = Round(track, 9f))
+            {
+                using (SolidBrush b = new SolidBrush(on ? Color.FromArgb(185, Good) : Color.FromArgb(20, 255, 240, 215)))
+                    g.FillPath(b, p);
+                using (Pen pen = new Pen(on ? Color.FromArgb(220, Good) : Color.FromArgb(48, 255, 240, 215), 1f))
+                    g.DrawPath(pen, p);
+            }
+            float kx = on ? track.Right - 15f : track.X + 2f;
+            using (SolidBrush b = new SolidBrush(on ? Color.FromArgb(250, 22, 18, 12) : Color.FromArgb(190, 226, 216, 196)))
+                g.FillEllipse(b, kx, track.Y + 2f, 14f, 14f);
         }
 
         private static StringFormat Ellipsis()
@@ -401,15 +444,6 @@ namespace Installer
             sf.Trimming = StringTrimming.EllipsisCharacter;
             sf.FormatFlags = StringFormatFlags.NoWrap;
             return sf;
-        }
-
-        private static Color StateInk(string st)
-        {
-            if (st.IndexOf("部分") >= 0) return Accent;
-            if (st.IndexOf("未装") >= 0) return Ink3;
-            if (st.IndexOf("关") >= 0) return Amber;
-            if (st.IndexOf("装") >= 0 || st.IndexOf("开启") >= 0) return Good;
-            return Ink3;
         }
 
         private void ScrollBars(Graphics g)
@@ -451,7 +485,7 @@ namespace Installer
 
         private void Hint(Graphics g)
         {
-            string s = "点一行 → 回方案树改这个位置　·　↑↓ 换大类　·　滚轮翻明细　·　灰点=原版，空心=库里还没有";
+            string s = "右边开关＝这套装不装　·　点名字＝就地换一个　·　拖左边大类＝换顺序　·　灰点=原版，空心=库里还没有";
             using (SolidBrush b = new SolidBrush(Color.FromArgb(96, 200, 186, 162)))
                 g.DrawString(s, fSmall, b,
                     new RectangleF(OvLayout.SidePad, ClientSize.Height - 26f,
@@ -499,6 +533,23 @@ namespace Installer
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
+
+            // 拖着大类走：过了 5px 才算拖（不然点一下也会被当成拖）
+            if (dragCat >= 0 && (e.Button & MouseButtons.Left) != 0)
+            {
+                if (!dragging && Math.Abs(e.Y - dragStart.Y) > 5) dragging = true;
+                if (dragging)
+                {
+                    dragPos = e.Location;
+                    dropAt = HitCat(e.Location);
+                    dropAfter = dropAt >= 0 && model.Cats[dropAt].Y + model.Cats[dropAt].H * 0.5f < e.Y;
+                    tip.SetToolTip(this, "");
+                    Cursor = Cursors.SizeNS;
+                    Invalidate();
+                    return;
+                }
+            }
+
             OvSlot h = HitSlot(e.Location);
             int hc = HitCat(e.Location);
             if (h != hover || hc != hoverCat)
@@ -506,9 +557,121 @@ namespace Installer
                 hover = h;
                 hoverCat = hc;
                 tip.SetToolTip(this, h == null ? "" : TipFor(h));
-                Cursor = (h != null) ? Cursors.Hand : Cursors.Default;
+                Cursor = (h != null || hc >= 0) ? Cursors.Hand : Cursors.Default;
                 Invalidate();
             }
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            if (dragCat < 0) return;
+
+            int from = dragCat;
+            bool was = dragging;
+            dragCat = -1;
+            dragging = false;
+            Cursor = Cursors.Default;
+
+            if (was && dropAt >= 0 && dropAt != from && model != null && from < model.Cats.Count && dropAt < model.Cats.Count)
+            {
+                // 大类顺序跟方案树是同一份（CatPrefs）：这里拖完，方案树那边立刻也是这个顺序
+                CatPrefs.MoveCatTo(model.Cats[from].Title, model.Cats[dropAt].Title, dropAfter);
+                Rebuild();
+            }
+            else Invalidate();
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            Focus();
+            int ci = HitCat(e.Location);
+            if (ci >= 0)
+            {
+                if (ci != selCat) { selCat = ci; scrollDetail = 0f; hover = null; Relayout(); }
+                dragCat = ci;
+                dragging = false;
+                dragStart = e.Location;
+                dragPos = e.Location;
+                dropAt = -1;
+                return;
+            }
+            OvSlot s = HitSlot(e.Location);
+            if (s == null) return;
+
+            if (OnSwitch(s, e.Location)) Toggle(s, e.Location);
+            else ShowPicker(s, e.Location);
+        }
+
+        /// <summary>点的是不是行尾那个开关（整块 46×行高都算）。库里没候选的位置没有开关。</summary>
+        private static bool OnSwitch(OvSlot s, Point p)
+        {
+            if (s.Empty) return false;
+            return p.X >= OvLayout.DetailX + OvLayout.DetailW - 46f
+                && p.Y >= s.Y && p.Y <= s.Y + s.H;
+        }
+
+        /// <summary>开关：开着就关掉（这套里不装），关着就弹候选让人挑一个。</summary>
+        private void Toggle(OvSlot s, Point at)
+        {
+            if (!s.HasMod) { ShowPicker(s, at); return; }
+            foreach (ModGroup g in s.On) mf.UncheckGroup(g);
+            foreach (ModGroup g in s.Extra) mf.UncheckGroup(g);
+            mf.SyncPicks();
+        }
+
+        /// <summary>就地换 MOD：在那一行下面弹候选，选完直接生效，不换界面。</summary>
+        private void ShowPicker(OvSlot s, Point at)
+        {
+            ContextMenuStrip menu = new ContextMenuStrip();
+            menu.ShowImageMargin = false;
+            menu.Font = Font;
+
+            if (s.Slot.Items.Count == 0)
+            {
+                ToolStripMenuItem none = new ToolStripMenuItem("库里还没有这个位置的 MOD");
+                none.Enabled = false;
+                menu.Items.Add(none);
+            }
+            else
+            {
+                foreach (ModGroup g in s.Slot.Items)
+                {
+                    bool on = mf.CountChecked(g) > 0;
+                    ModGroup pick = g;
+                    ToolStripMenuItem mi = new ToolStripMenuItem((on ? "● " : "　 ") + g.Name);
+                    mi.Click += delegate { Pick(s, pick); };
+                    menu.Items.Add(mi);
+                }
+                menu.Items.Add(new ToolStripSeparator());
+                ToolStripMenuItem raw = new ToolStripMenuItem("留原版（这个位置不装）");
+                raw.Click += delegate { Pick(s, null); };
+                menu.Items.Add(raw);
+            }
+
+            menu.Items.Add(new ToolStripSeparator());
+            ToolStripMenuItem jump = new ToolStripMenuItem("在方案树里打开这个位置");
+            jump.Click += delegate { mf.ShowSlotInTree(s.Slot); };
+            menu.Items.Add(jump);
+
+            int y = (int)(s.Y + s.H);
+            if (y > ClientSize.Height - 40) y = (int)Math.Max(0, s.Y - 8);
+            menu.Closed += delegate { menu.Dispose(); };
+            menu.Show(this, new Point((int)OvLayout.DetailX + 24, y));
+        }
+
+        /// <summary>选一个候选（null = 留原版）。成堆的位置（地图 / 分支）是开一个不关别的。</summary>
+        private void Pick(OvSlot s, ModGroup g)
+        {
+            if (s.Slot.Pile)
+            {
+                if (g == null) { foreach (ModGroup o in s.Slot.Items) mf.UncheckGroup(o); }
+                else if (mf.CountChecked(g) > 0) mf.UncheckGroup(g);
+                else mf.CheckGroupDefault(g);
+            }
+            else if (mf.Tree != null) mf.Tree.ChooseInSlot(s.Slot, g);
+            mf.SyncPicks();
         }
 
         protected override void OnMouseLeave(EventArgs e)
@@ -521,20 +684,6 @@ namespace Installer
                 tip.SetToolTip(this, "");
                 Invalidate();
             }
-        }
-
-        protected override void OnMouseDown(MouseEventArgs e)
-        {
-            base.OnMouseDown(e);
-            Focus();
-            int ci = HitCat(e.Location);
-            if (ci >= 0)
-            {
-                if (ci != selCat) { selCat = ci; scrollDetail = 0f; hover = null; Relayout(); }
-                return;
-            }
-            OvSlot s = HitSlot(e.Location);
-            if (s != null) mf.ShowSlotInTree(s.Slot);       // 看板只负责看：点一行就回方案树去改
         }
 
         protected override void OnMouseWheel(MouseEventArgs e)
@@ -599,6 +748,7 @@ namespace Installer
             if (!s.HasMod)
             {
                 sb.Append(s.Empty ? "库里还没有这个位置的 MOD。" : "这个位置用的是原版（没装 MOD）。");
+                sb.Append("\r\n点名字：就地挑一个（不用换界面）");
                 return sb.ToString();
             }
 
@@ -613,6 +763,7 @@ namespace Installer
             Color ink, bg;
             sb.Append("游戏里：").Append(MainForm.StatusOf(s.On.Count > 0 ? s.On[0] : s.Extra[0], out ink, out bg));
             sb.Append("　合计 ").Append(Core.Human(s.Size));
+            sb.Append("\r\n点开关：这套装不装　点名字：就地换一个");
             return sb.ToString();
         }
 

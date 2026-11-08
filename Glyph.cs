@@ -26,7 +26,7 @@ namespace Installer
                 case "枪械": return "gun";
                 case "近战": return "melee";
                 case "投掷物": return "bottle";
-                case "武器升级": return "ammo";
+                case "弹药升级": return "ammo";
                 case "人物": return "person";
                 case "药品": return "medkit";
                 case "地图":
@@ -51,7 +51,7 @@ namespace Installer
                 case "特殊武器": return "launcher";
                 case "近战": return "melee";
                 case "投掷物": return "bottle";
-                case "武器升级": return "ammo";
+                case "弹药升级": return "ammo";
                 case "其他枪械": return "gun";
                 case "一代": return "survivor1";
                 case "二代": return "survivor2";

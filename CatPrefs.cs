@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -20,7 +20,7 @@ namespace Installer
     internal static class CatPrefs
     {
         // 默认顺序：树里看得见的四类在前，地图/喷漆不进树、排最后
-        public static readonly string[] DefaultCats = { "枪械", "近战", "投掷物", "武器升级", "人物", "特感", "药品", "杂项", "地图", "喷漆" };
+        public static readonly string[] DefaultCats = { "枪械", "近战", "投掷物", "弹药升级", "人物", "特感", "药品", "杂项", "地图", "喷漆" };
 
         private static bool loaded;
         private static int ver;                    // 每次改都 +1，Catalog.Cats 的缓存靠它失效
@@ -129,13 +129,32 @@ namespace Installer
             }
             catch { }
             // 缺了的默认大类插到它的默认位置（而不是一律追加在最后）：
-            // 老用户配置里没有「近战 / 投掷物 / 武器升级」，得让它们落在枪械后面，而不是排到喷漆后头
+            // 老用户配置里没有「近战 / 投掷物 / 弹药升级」，得让它们落在枪械后面，而不是排到喷漆后头
             for (int i = 0; i < DefaultCats.Length; i++)
             {
                 string d = DefaultCats[i];
                 if (cats.Contains(d)) continue;
                 cats.Insert(Math.Min(i, cats.Count), d);
             }
+            // 2026-11-09：「武器升级」改叫「弹药升级」。老配置里还写着旧名，
+            // 就地换掉并回写一次 —— 不然左栏会同时冒出旧名和默认的新名两个类。
+            bool renamed = false;
+            int oldCat = cats.IndexOf("武器升级");
+            if (oldCat >= 0)
+            {
+                if (cats.Contains("弹药升级")) { cats.RemoveAt(oldCat); renamed = true; }
+                else { cats[oldCat] = "弹药升级"; renamed = true; }
+            }
+            foreach (string k in new List<string>(modCat.Keys))
+                if (modCat[k] == "武器升级") { modCat[k] = "弹药升级"; renamed = true; }
+            List<string> oldSlots;
+            if (slotsOfCat.TryGetValue("武器升级", out oldSlots))
+            {
+                slotsOfCat.Remove("武器升级");
+                if (!slotsOfCat.ContainsKey("弹药升级")) slotsOfCat["弹药升级"] = oldSlots;
+                renamed = true;
+            }
+            if (renamed) Save();
             Touch();
         }
 
