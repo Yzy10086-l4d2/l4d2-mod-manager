@@ -68,7 +68,8 @@ namespace Installer
                 }
             }
             catch { }
-            File.WriteAllText(path, string.Join(nl, lines.ToArray()) + tail, Encoding.Default);
+            // 原子写：写一半被打断（拔 U 盘 / 空间满）会把 addonlist 留成空文件，游戏里所有开关就全丢了
+            Core.WriteAllTextAtomic(path, string.Join(nl, lines.ToArray()) + tail, Encoding.Default);
         }
 
         public static Dictionary<string, bool> Read(string gameRoot)

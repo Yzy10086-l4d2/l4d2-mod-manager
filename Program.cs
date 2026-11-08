@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
@@ -91,6 +91,7 @@ namespace Installer
             bool launchSelf = false;
             bool tweakSelf = false;
             bool addonSelf = false;
+            bool safeSelf = false;
             bool dumpId = false;
             bool dumpTree = false;
             bool ovDump = false;
@@ -141,6 +142,7 @@ namespace Installer
                 else if (string.Equals(a, "--launchself", StringComparison.OrdinalIgnoreCase)) launchSelf = true;
                 else if (string.Equals(a, "--tweakself", StringComparison.OrdinalIgnoreCase)) tweakSelf = true;
                 else if (string.Equals(a, "--addonself", StringComparison.OrdinalIgnoreCase)) addonSelf = true;
+                else if (string.Equals(a, "--safeself", StringComparison.OrdinalIgnoreCase)) safeSelf = true;
                 else if (string.Equals(a, "--dumpid", StringComparison.OrdinalIgnoreCase)) dumpId = true;
                 else if (string.Equals(a, "--dumptree", StringComparison.OrdinalIgnoreCase)) dumpTree = true;
                 else if (string.Equals(a, "--ovdump", StringComparison.OrdinalIgnoreCase)) ovDump = true;
@@ -154,7 +156,7 @@ namespace Installer
             bool created;
             Mutex only = new Mutex(true, "L4D2Setup_SingleInstance", out created);
             if (!created && !selfTest && !uiTest && !copyTest && !tweakSelf && !launchSelf && !dupSelf
-                && !addonSelf && !dumpId && !dumpTree && !ovDump && !recogSelf && vpkFile == null)
+                && !addonSelf && !safeSelf && !dumpId && !dumpTree && !ovDump && !recogSelf && vpkFile == null)
             {
                 ActivateExisting();
                 try { only.Dispose(); } catch { }
@@ -239,6 +241,11 @@ namespace Installer
             {
                 int bad = Work.SelfTestAddons();
                 Console.WriteLine("addonself failures = " + bad);
+                return bad == 0 ? 0 : 1;
+            }
+            if (safeSelf)
+            {
+                int bad = Work.SelfTestSafe();
                 return bad == 0 ? 0 : 1;
             }
             if (launchSelf)
@@ -331,7 +338,7 @@ namespace Installer
             }
             // 自检全程不许写配置：以前 --addonself 把 Mode 改成本地模式后没写回去，
             // 跑一次自检用户的工作模式就变了（库从 223 个 MOD 变成 49 个）
-            if (uiTest || selfTest || addonSelf || copyTest || ovDump) Core.SelfTesting = true;
+            if (uiTest || selfTest || addonSelf || safeSelf || copyTest || ovDump) Core.SelfTesting = true;
 
             if (uiTest)
             {

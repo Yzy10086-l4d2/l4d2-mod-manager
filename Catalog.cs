@@ -174,9 +174,20 @@ namespace Installer
                     {
                         System.IO.Compression.ZipArchiveEntry e = za.GetEntry(inner.Replace('\\', '/'));
                         if (e == null) { why = "包里找不到 " + inner; return false; }
-                        using (Stream src = e.Open())
-                        using (FileStream fs = new FileStream(dst, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20))
-                            src.CopyTo(fs, 1 << 20);
+                        // 先写到同目录的 .part，完整解出来才换名：解到一半失败不会在 addons 里留半截 vpk
+                        string part = Core.TempPathFor(dst);
+                        try
+                        {
+                            using (Stream src = e.Open())
+                            using (FileStream fs = new FileStream(part, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 20))
+                                src.CopyTo(fs, 1 << 20);
+                            Core.Swap(part, dst);
+                        }
+                        catch
+                        {
+                            try { if (File.Exists(part)) File.Delete(part); } catch { }
+                            throw;
+                        }
                     }
                     return true;
                 }
@@ -191,11 +202,15 @@ namespace Installer
                 why = is7z ? "找不到 WinRAR（WinRAR.exe），7z 解不开" : "找不到 WinRAR（Rar.exe）";
                 return false;
             }
-            string tmp = Path.Combine(Path.GetTempPath(), "l4d2-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            // 暂存目录建在目标同一个卷上：最后一步是纯改名，不是跨盘复制，失败不会留半截文件
+            string dstDir = Path.GetDirectoryName(dst);
+            if (!string.IsNullOrEmpty(dstDir) && !Directory.Exists(dstDir)) Directory.CreateDirectory(dstDir);
+            string stage = Path.Combine(string.IsNullOrEmpty(dstDir) ? Path.GetTempPath() : dstDir,
+                                        "~l4d2-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             try
             {
-                Directory.CreateDirectory(tmp);
-                ProcessStartInfo psi = new ProcessStartInfo(rar, "e -y -idq \"" + arc + "\" \"" + inner + "\" \"" + tmp + "\\\"");
+                Directory.CreateDirectory(stage);
+                ProcessStartInfo psi = new ProcessStartInfo(rar, "e -y -idq \"" + arc + "\" \"" + inner + "\" \"" + stage + "\\\"");
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;
                 psi.WindowStyle = ProcessWindowStyle.Hidden;
@@ -204,15 +219,13 @@ namespace Installer
                     if (!p.WaitForExit(300000)) { try { p.Kill(); } catch { } why = "解压超时"; return false; }
                     if (p.ExitCode != 0) { why = "WinRAR 返回 " + p.ExitCode; return false; }
                 }
-                string got = Path.Combine(tmp, Path.GetFileName(inner));
+                string got = Path.Combine(stage, Path.GetFileName(inner));
                 if (!File.Exists(got)) { why = "没解出文件"; return false; }
-                try { if (File.Exists(dst)) File.Delete(dst); } catch { }
-                try { File.Move(got, dst); }
-                catch { File.Copy(got, dst, true); }
+                Core.Swap(got, dst);
                 return true;
             }
             catch (Exception ex) { why = ex.Message; return false; }
-            finally { try { Directory.Delete(tmp, true); } catch { } }
+            finally { try { Directory.Delete(stage, true); } catch { } }
         }
 
         /// <summary>列出压缩包里的 vpk（带原始大小）。zip 走 .NET，rar 走 WinRAR 命令行。</summary>

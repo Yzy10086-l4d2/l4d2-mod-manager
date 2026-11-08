@@ -91,6 +91,7 @@ namespace Installer
         public static double LastRateMBps = 20.0;
 
         [ThreadStatic] private static byte[] _copyBuf;
+        private static bool _swapFallbackTold;   // 「本卷不支持 File.Replace」只提示一次
         private static StreamWriter _logWriter;
         private static readonly object _logGate = new object();
 
@@ -311,7 +312,7 @@ namespace Installer
                 foreach (string rp in Cfg.Recent) sb.AppendLine("Recent=" + rp);
                 sb.AppendLine("[mods]");
                 foreach (string m in Cfg.Mods) sb.AppendLine("Mod:" + m + "=1");
-                File.WriteAllText(CfgPath, sb.ToString(), new UTF8Encoding(true));
+                WriteAllTextAtomic(CfgPath, sb.ToString(), new UTF8Encoding(true));
             }
             catch (Exception ex) { Log("WARN", "配置写不进去: " + ex.Message); }
         }
@@ -617,6 +618,68 @@ namespace Installer
             catch { return false; }
         }
 
+        // ---------------- 原子落地：先写临时文件，成功后再换名 ----------------
+        /// <summary>
+        /// 和目标同目录的临时名。后缀不是 .vpk，扫库不会把它当成 MOD；
+        /// 同一目录 = 同一卷，后面的换名是原子改名，不会跨盘复制。
+        /// </summary>
+        public static string TempPathFor(string dst)
+        {
+            return dst + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".part";
+        }
+
+        /// <summary>
+        /// 把写完的临时文件换成正式文件。
+        /// 目标已存在时先用 File.Replace（一次系统调用换名，保留原文件的属性，exFAT 上也成立）；
+        /// 它失败就退回「删旧的 + 改名」—— 只有到这一步才碰正式文件，中途出错不会留下半截 vpk。
+        /// </summary>
+        public static void Swap(string tmp, string dst)
+        {
+            if (!File.Exists(dst)) { File.Move(tmp, dst); return; }
+            string first;
+            try { File.Replace(tmp, dst, null, true); return; }
+            catch (Exception ex) { first = ex.Message; }
+            // 这个卷不支持整体换名（少见），或者目标正被别的程序占着。
+            // 删不掉就让异常抛出去 —— 上层会如实报失败，旧文件也还在。
+            File.Delete(dst);
+            File.Move(tmp, dst);
+            if (!_swapFallbackTold)
+            {
+                _swapFallbackTold = true;
+                Log("INFO", "覆盖写改用「先删后换」: " + first);
+            }
+        }
+
+        /// <summary>写文本配置用：要么整份换成新的，要么原文件一个字都不动。</summary>
+        public static void WriteAllTextAtomic(string path, string text, Encoding enc)
+        {
+            string dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+            string tmp = TempPathFor(path);
+            try
+            {
+                File.WriteAllText(tmp, text, enc);
+                Swap(tmp, path);
+            }
+            catch
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                throw;
+            }
+        }
+
+        /// <summary>full 是否真的落在 root 下面（防止记录里的相对路径写到游戏目录外）。</summary>
+        public static bool IsUnder(string root, string full)
+        {
+            try
+            {
+                string r = Path.GetFullPath(root).TrimEnd('\\') + "\\";
+                string f = Path.GetFullPath(full);
+                return f.Length > r.Length && f.StartsWith(r, StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }
+
         public static void CopyOne(string src, string dst)
         {
             string h;
@@ -630,13 +693,23 @@ namespace Installer
             if (!string.IsNullOrEmpty(d) && !Directory.Exists(d)) Directory.CreateDirectory(d);
             if (_copyBuf == null) _copyBuf = new byte[2 * 1024 * 1024];
             byte[] buf = _copyBuf;
-            using (FileStream fi = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan))
-            using (FileStream fo = new FileStream(dst, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024))
+            string tmp = TempPathFor(dst);
+            try
             {
-                int n;
-                while ((n = fi.Read(buf, 0, buf.Length)) > 0) fo.Write(buf, 0, n);
+                using (FileStream fi = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan))
+                using (FileStream fo = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024))
+                {
+                    int n;
+                    while ((n = fi.Read(buf, 0, buf.Length)) > 0) fo.Write(buf, 0, n);
+                }
+                try { File.SetLastWriteTimeUtc(tmp, File.GetLastWriteTimeUtc(src)); } catch { }
+                Swap(tmp, dst);
             }
-            try { File.SetLastWriteTimeUtc(dst, File.GetLastWriteTimeUtc(src)); } catch { }
+            catch
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                throw;
+            }
         }
 
         // 文件名里不能出现的字符换成下划线，顺带掐掉路径分隔符，防止写到别的目录
@@ -652,6 +725,7 @@ namespace Installer
         }
 
         // 复制一遍的同时把源文件 SHA256 算掉（不额外读第二遍），并保留源文件的修改时间
+        // 写的是同目录临时文件，整份写完才换名 —— 中断只会在 addons 里留个 .part，不会留半截 vpk
         public static void CopyOneHash(string src, string dst, out string hash)
         {
             hash = null;
@@ -659,20 +733,30 @@ namespace Installer
             if (!string.IsNullOrEmpty(d) && !Directory.Exists(d)) Directory.CreateDirectory(d);
             if (_copyBuf == null) _copyBuf = new byte[2 * 1024 * 1024];
             byte[] buf = _copyBuf;
-            using (SHA256 sha = SHA256.Create())
-            using (FileStream fi = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan))
-            using (FileStream fo = new FileStream(dst, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024))
+            string tmp = TempPathFor(dst);
+            try
             {
-                int n;
-                while ((n = fi.Read(buf, 0, buf.Length)) > 0)
+                using (SHA256 sha = SHA256.Create())
+                using (FileStream fi = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan))
+                using (FileStream fo = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024))
                 {
-                    fo.Write(buf, 0, n);
-                    sha.TransformBlock(buf, 0, n, null, 0);
+                    int n;
+                    while ((n = fi.Read(buf, 0, buf.Length)) > 0)
+                    {
+                        fo.Write(buf, 0, n);
+                        sha.TransformBlock(buf, 0, n, null, 0);
+                    }
+                    sha.TransformFinalBlock(buf, 0, 0);
+                    hash = ToHex(sha.Hash);
                 }
-                sha.TransformFinalBlock(buf, 0, 0);
-                hash = ToHex(sha.Hash);
+                try { File.SetLastWriteTimeUtc(tmp, File.GetLastWriteTimeUtc(src)); } catch { }
+                Swap(tmp, dst);
             }
-            try { File.SetLastWriteTimeUtc(dst, File.GetLastWriteTimeUtc(src)); } catch { }
+            catch
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                throw;
+            }
         }
 
         private static string ToHex(byte[] h)

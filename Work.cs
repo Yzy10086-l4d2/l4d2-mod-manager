@@ -424,7 +424,7 @@ namespace Installer
                 }
                 changed = true;
             }
-            if (changed) File.WriteAllText(path, text, new UTF8Encoding(false));
+            if (changed) Core.WriteAllTextAtomic(path, text, new UTF8Encoding(false));
             return changed;
         }
 
@@ -581,8 +581,16 @@ namespace Installer
 
         static string DeleteModFile(ModItem m, string addonListRoot)
         {
+            // 最后一道防线：压缩包里的条目 FullPath 指向的是那个 rar/zip 本身，
+            // 删「一条」等于删整包（包里其它 MOD 一起没了）。界面上都拦过，这里再拦一次。
+            if (m.IsArchive) return "「" + m.Name + "」在压缩包里（" + m.Container + "），本工具不删压缩包";
             try { File.Delete(m.FullPath); }
-            catch (Exception ex) { return ex.Message; }
+            catch (Exception ex)
+            {
+                Core.Log("WARN", "删除 " + m.FullPath + " 失败: " + ex.Message);
+                return ex.Message;
+            }
+            Core.Log("OK", "已删除 " + m.FullPath);
             if (addonListRoot != null && addonListRoot.Length > 0)
             {
                 try { AddonList.Remove(addonListRoot, new string[] { m.Name }); }
@@ -608,12 +616,17 @@ namespace Installer
             List<string> moved = new List<string>();
             Core.ScanMods();
             Dictionary<string, List<ModItem>> byName = new Dictionary<string, List<ModItem>>(StringComparer.OrdinalIgnoreCase);
+            int arcSkipped = 0;
             foreach (ModItem m in Core.ModList)
             {
                 if (m.FromGame) continue;   // 游戏目录里的不参与清重：它和库里同名的那份是「已装的一份」，不能回收
+                // 压缩包里的条目共用同一个容器文件：删掉一条 = 删掉整个包，包里其它 MOD 全陪葬。
+                // 清重只处理散装 vpk；压缩包内的同名留给用户自己决定（界面里也不会删）。
+                if (m.IsArchive) { arcSkipped++; continue; }
                 if (!byName.ContainsKey(m.Name)) byName[m.Name] = new List<ModItem>();
                 byName[m.Name].Add(m);
             }
+            if (arcSkipped > 0) Core.Log("INFO", "清重：压缩包内 " + arcSkipped + " 条条目未参与（删一条会连整包一起删）");
             List<ModItem> gone = new List<ModItem>();
             foreach (KeyValuePair<string, List<ModItem>> kv in byName)
             {
@@ -728,7 +741,14 @@ namespace Installer
                 if (string.IsNullOrEmpty(rel)) continue;
                 string key = rel.TrimStart('\\');
                 if (!uniq.Add(key)) continue;
-                try { if (File.Exists(Path.Combine(gameRoot, key))) { File.Delete(Path.Combine(gameRoot, key)); del++; } } catch { }
+                // 清单来自安装包/压缩包，可能带 ../ ：越界的路径一律不删
+                string full = Path.Combine(gameRoot, key);
+                if (!Core.IsUnder(gameRoot, full)) { Core.Log("WARN", "包清单里有越界路径，已跳过: " + key); continue; }
+                try
+                {
+                    if (File.Exists(full)) { File.Delete(full); del++; }
+                }
+                catch (Exception ex) { Core.Log("WARN", "删除 " + key + " 失败: " + ex.Message); }
             }
             report.Add("删掉平台文件 " + del + " 个（L4N / Skeeto / 素材包 / dxvk / MQCam）");
 
@@ -755,12 +775,31 @@ namespace Installer
 
             string l4d2 = Path.Combine(gameRoot, "left4dead2");
             string addons = Path.Combine(l4d2, "addons");
-            int moved = 0;
+            int moved = 0, bad = 0, failed = 0;
             foreach (string a in added)
             {
-                try { string p = Path.Combine(addons, a); if (File.Exists(p)) { File.Delete(p); moved++; } } catch { }
+                // 装机记录是纯文本，可能被手改过：只认「直接躺在 addons 下的单个文件名」。
+                // 带目录分隔符 / 盘符 / .. 的一律不删 —— 否则记录里写一行 ..\..\ 就能删到游戏目录外。
+                string name = (a ?? "").Trim();
+                if (name.Length == 0) continue;
+                if (name.IndexOfAny(new char[] { '\\', '/', ':' }) >= 0 || name.IndexOf("..", StringComparison.Ordinal) >= 0)
+                {
+                    bad++;
+                    Core.Log("WARN", "装机记录里有可疑路径，已忽略: " + name);
+                    continue;
+                }
+                string p = Path.Combine(addons, name);
+                if (!Core.IsUnder(addons, p)) { bad++; Core.Log("WARN", "装机记录里的路径越界，已忽略: " + name); continue; }
+                try
+                {
+                    if (File.Exists(p)) { File.Delete(p); moved++; }
+                }
+                catch (Exception ex) { failed++; Core.Log("WARN", "删除 " + name + " 失败: " + ex.Message); }
             }
-            if (added.Count > 0) report.Add("本次铺的 MOD 已删除 " + moved + " 个");
+            if (added.Count > 0)
+                report.Add("本次铺的 MOD 已删除 " + moved + " 个"
+                    + (failed > 0 ? "，失败 " + failed + " 个（详见日志）" : "")
+                    + (bad > 0 ? "，跳过可疑记录 " + bad + " 条" : ""));
             report.Add("原版 exe / addonlist / autoexec 没有备份可还原，需要原版请用 Steam 校验文件");
             return report;
         }
@@ -965,10 +1004,99 @@ namespace Installer
                 StringBuilder sb = new StringBuilder();
                 sb.AppendLine("GameRoot=" + gameRoot);
                 sb.AppendLine("Time=" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
-                foreach (string a in added) sb.AppendLine("Added=" + a);
-                File.WriteAllText(Path.Combine(Core.LogDir, "最近一次.ini"), sb.ToString(), new UTF8Encoding(true));
+                foreach (string a in added)
+                {
+                    string name = Path.GetFileName((a ?? "").Trim());
+                    // 只记文件名：这份记录后面会被「一键还原」逐行拿来删文件，不能写进任何带路径的东西
+                    if (name.Length > 0) sb.AppendLine("Added=" + name);
+                }
+                Core.WriteAllTextAtomic(Path.Combine(Core.LogDir, "最近一次.ini"), sb.ToString(), new UTF8Encoding(true));
             }
             catch (Exception ex) { Core.Log("WARN", "装机记录写失败: " + ex.Message); }
+        }
+
+        // ---------- 自测：写/删的底线（在真正放数据的那个卷上跑） ----------
+        /// <summary>
+        /// --safeself：验证「写要整份落地、删不能删整包、路径不能越界」这三条。
+        /// 特意建在 _装机记录 下面 —— 那是装 MOD 的同一个卷（U 盘多半是 exFAT），
+        /// 换名/覆盖的行为跟系统盘 NTFS 不一样，只有在真盘上跑才算数。
+        /// </summary>
+        public static int SelfTestSafe()
+        {
+            int bad = 0;
+            string dir = Path.Combine(Core.LogDir, "safeself-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+            Console.WriteLine("SAFE 测试目录: " + dir);
+            try
+            {
+                Directory.CreateDirectory(dir);
+                byte[] data = new byte[512 * 1024];
+                for (int i = 0; i < data.Length; i++) data[i] = (byte)(i * 7);
+                string src = Path.Combine(dir, "src.bin");
+                File.WriteAllBytes(src, data);
+
+                // 1) 覆盖写：目标已存在也要整份换掉，且不留 .part
+                string dst = Path.Combine(dir, "a.vpk");
+                File.WriteAllBytes(dst, new byte[] { 1, 2, 3 });
+                string h;
+                Core.CopyOneHash(src, dst, out h);
+                SafeCheck(ref bad, new FileInfo(dst).Length == data.Length, "覆盖写后大小正确");
+                SafeCheck(ref bad, string.Equals(Core.HashOf(dst), h, StringComparison.OrdinalIgnoreCase), "覆盖写后内容哈希一致");
+
+                // 2) 目标被占用：必须报错（不能假装成功），旧文件一个字节都不许动
+                File.WriteAllBytes(dst, new byte[] { 9, 9 });
+                bool threw = false;
+                using (FileStream hold = new FileStream(dst, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    try { Core.CopyOneHash(src, dst, out h); }
+                    catch { threw = true; }
+                }
+                SafeCheck(ref bad, threw, "目标被占用时复制会失败");
+                SafeCheck(ref bad, new FileInfo(dst).Length == 2, "复制失败后旧文件原样保留");
+
+                // 3) 从 zip 里取一个条目
+                string arc = Path.Combine(dir, "pack.zip");
+                using (System.IO.Compression.ZipArchive za = System.IO.Compression.ZipFile.Open(arc, System.IO.Compression.ZipArchiveMode.Create))
+                {
+                    System.IO.Compression.ZipArchiveEntry e = za.CreateEntry("ak47.vpk");
+                    using (Stream s = e.Open()) s.Write(data, 0, 4096);
+                }
+                string ex = Path.Combine(dir, "ex.vpk");
+                string why;
+                bool got = Catalog.ExtractEntryTo(arc, "ak47.vpk", ex, out why);
+                SafeCheck(ref bad, got && new FileInfo(ex).Length == 4096, "zip 条目解出成功且大小正确" + (got ? "" : "：" + why));
+
+                // 4) 压缩包里的条目：绝不能删整包
+                ModItem it = new ModItem();
+                it.Name = "ak47.vpk";
+                it.FullPath = arc;
+                it.Container = "pack.zip";
+                it.Inner = "ak47.vpk";
+                string err = DeleteMod(it);
+                SafeCheck(ref bad, err != null, "压缩包内条目删除被拒");
+                SafeCheck(ref bad, File.Exists(arc), "压缩包本体没被删");
+
+                // 5) 中途失败不留垃圾
+                SafeCheck(ref bad, Directory.GetFiles(dir, "*.part", SearchOption.TopDirectoryOnly).Length == 0, "没有残留 .part");
+                SafeCheck(ref bad, Directory.GetDirectories(dir, "~l4d2-*").Length == 0, "没有残留解包暂存目录");
+
+                // 6) 路径校验
+                SafeCheck(ref bad, Core.IsUnder(dir, Path.Combine(dir, "left4dead2\\addons\\x.vpk")), "子路径判定在目录内");
+                SafeCheck(ref bad, !Core.IsUnder(dir, Path.Combine(dir, "..\\x.vpk")), ".. 往上跳判定在目录外");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("FAIL  自检本身出错: " + ex.Message);
+                bad++;
+            }
+            finally { try { Directory.Delete(dir, true); } catch { } }
+            Console.WriteLine("safeself failures = " + bad);
+            return bad;
+        }
+
+        static void SafeCheck(ref int bad, bool ok, string what)
+        {
+            Console.WriteLine((ok ? "PASS  " : "FAIL  ") + what);
+            if (!ok) bad++;
         }
 
         // ---------- 自测：换整套只翻开关，文件不动 ----------

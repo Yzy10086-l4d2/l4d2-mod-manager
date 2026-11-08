@@ -1,4 +1,4 @@
-# L4D2 MOD 管理工具
+﻿# L4D2 MOD 管理工具
 
 《求生之路 2》MOD 管理工具：把 U 盘（或任意本机目录）里的 MOD 成套装进游戏，装完还能在同一个界面里开关、查冲突、一键回滚。
 
@@ -169,6 +169,7 @@ U盘根\
 ```
 --selftest       安装流程自检
 --copytest       文件复制
+--safeself       写/删底线（原子落地、压缩包不误删、路径不越界；在数据卷上跑）
 --addonself      addonlist 读写 / 开关 / 删除
 --dupself        重复判定
 --launchself     启动项写入
