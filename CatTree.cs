@@ -778,7 +778,7 @@ namespace Installer
 
         /// <summary>树里的大类顺序：跟着分类顺序走，地图/喷漆不进树。</summary>
         /// <summary>
-        /// 方案树 / 科技树共用的排序：大类 → 小分类 → 手工拖过的位置 → 名字。
+        /// 方案树 / 总览共用的排序：大类 → 小分类 → 手工拖过的位置 → 名字。
         /// isOn 只是平局时让已装的排前面，传 null 表示不看勾选状态。
         /// </summary>
         public static void SortForTree(List<Slot> slots, Func<Slot, bool> isOn)
@@ -1296,7 +1296,7 @@ namespace Installer
 
         private void SortSlots()
         {
-            // 排序规则搬到 SlotIndex 里：科技树也要用同一套顺序，
+            // 排序规则搬到 SlotIndex 里：总览也要用同一套顺序，
             // 两边各写一份迟早会飘（第一次做白模就因为顺序不同，19 个位置每个都触发分组标题）
             SlotIndex.SortForTree(slots, HasChecked);
         }
@@ -3201,7 +3201,7 @@ namespace Installer
             FillDetail();
         }
 
-        /// <summary>给某个位置换候选（科技树 / 台面共用）：先清空这个位置，再勾这一个。</summary>
+        /// <summary>给某个位置换候选（台面共用）：先清空这个位置，再勾这一个。</summary>
         internal void ChooseInSlot(Slot s, ModGroup g)
         {
             if (s == null) return;

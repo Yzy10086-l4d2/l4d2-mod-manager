@@ -24,7 +24,7 @@ namespace Installer
         private int hoverCat = -1;
         private readonly ToolTip tip;
 
-        // 跟科技树同一套暖色：这是「看板」，不跟浅色/深色表单主题走
+        // 沿用原来那块画板的暖色：这是「看板」，不跟浅色/深色表单主题走
         private static readonly Color BoardTop = Color.FromArgb(40, 30, 21);
         private static readonly Color BoardBot = Color.FromArgb(11, 7, 4);
         private static readonly Color Ink1 = Color.FromArgb(240, 230, 211);
