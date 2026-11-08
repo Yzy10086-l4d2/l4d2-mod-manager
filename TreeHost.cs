@@ -196,6 +196,44 @@ namespace Installer
             return bad;
         }
 
+        /// <summary>
+        /// 布局自检：把窗口撑到 1440×940，挑一个带扩展的位置，看右半是不是真的并排了。
+        /// 排布算法本身在 CatTree.LayoutSelf 里，这里只负责给一个真实尺寸和真实位置。
+        /// </summary>
+        internal int TriPaneSelfTest()
+        {
+            int bad = 0;
+            Size saved = ClientSize;
+            try
+            {
+                ClientSize = new Size(Dpi.S(1440), Dpi.S(940));
+                lastRespW = lastRespH = -1;
+                ApplyResponsive();
+                EnsureTree();
+                // layoutself 走的是「不弹窗口」的直线路径，没有经过正常启动那轮的扫库，
+                // 这时 slots 是空的 —— 不补这一下，探测只会得到「库里没有带扩展的位置」。
+                if (treeView.SlotCount == 0) Core.ScanMods();
+                treeView.Rebuild();
+
+                bool side;
+                string r = treeView.LayoutProbe(out side);
+                Core.Log("INFO", "TRI " + r);
+                if (!side)
+                {
+                    bad++;
+                    Core.Log("FAIL", "TRI 1440 宽下没走并排（右半要 ≥ " + Theme.SideMin + " 设计像素，扩展栏该独立成右栏）");
+                }
+            }
+            finally
+            {
+                ClientSize = saved;
+                lastRespW = lastRespH = -1;
+                ApplyResponsive();
+            }
+            Console.WriteLine("tripane failures = " + bad);
+            return bad;
+        }
+
         /// <summary>扫库竞态自检：伪造「扫描中」，切目录应被记账，扫完自动补切，不炸不丢。</summary>
         internal int ScanRaceTest()
         {

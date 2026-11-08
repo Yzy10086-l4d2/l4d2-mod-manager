@@ -16,6 +16,8 @@ namespace Installer
         private FlatButton btnBrowse, btnFind, btnSettings, btnInstall, btnRestore, btnOpen, btnSwitch, btnCancel, btnClearSearch;
         private FlatButton btnView, btnPanel;     // 顶部：台面/方案树 切换、左栏抽屉
         private bool drawerOpen;                  // 左栏（装什么 / 安装选项 / 日志）是否展开
+        private FlatButton btnLogToggle;          // 左栏「显示日志 / 收起日志」
+        private bool logOpen;                     // 日志卡片展开（默认收起：排错才看，不该常驻）
         private CheckBox chkL4N, chkSkeeto, chkAsset, chkMqcam, chkDxvk, chkLaunch, chkCfg, chkSwap, chkStrict;
         private RadioButton rdSkip, rdOver;
         private ComboBox cboTweak;
@@ -403,18 +405,28 @@ namespace Installer
             btnTweak = new FlatButton(); btnTweak.Text = "参数配置…"; btnTweak.SetBounds(230, 106, 90, Theme.H); btnTweak.Click += delegate { ManageTweaks(); }; gOpt.Controls.Add(btnTweak);
             tips.SetToolTip(btnTweak, "保存这台机器调好的参数 / 套用存档 / 删除存档。");
 
-            // ---- 左栏下：日志 ----
+            // ---- 左栏下：日志（默认收起）----
+            // 日志是排错才看的东西：常驻的话左栏一半高度都被它占着，把「装什么 / 安装选项」
+            // 挤到上面一小块。收起来只留一个切换按钮，点了才展开；高度由 ApplyResponsive 算。
             Section gl = new Section();
-            gl.Caption = "日志"; gl.SetBounds(Theme.M, 438, leftW, CH - 438 - BottomBarH); Controls.Add(gl);
+            gl.Caption = "日志"; gl.SetBounds(Theme.M, 438, leftW, 220); gl.Visible = false; Controls.Add(gl);
             FlatButton btnLog = new FlatButton(); btnLog.Text = "打开日志"; btnLog.SetBounds(leftW - 12 - 68, 1, 68, 24); btnLog.Font = Theme.UISmall; btnLog.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", Core.LogDir); } catch { } }; gl.Controls.Add(btnLog);
             txtLog = new TextBox();
-            txtLog.SetBounds(12, 30, leftW - 24, Math.Max(60, CH - 438 - BottomBarH - 34));   // 日志框撑满卡片
+            txtLog.SetBounds(12, 30, leftW - 24, 170);
             txtLog.Multiline = true; txtLog.ScrollBars = ScrollBars.Both; txtLog.WordWrap = false; txtLog.ReadOnly = true;
             txtLog.BorderStyle = BorderStyle.None;
             txtLog.BackColor = Theme.Surface;
             txtLog.ForeColor = Theme.Ink2;
             txtLog.Font = Theme.Mono;      // 日志是数据：等宽才能让时间戳和级别对齐
             gl.Controls.Add(txtLog);
+
+            btnLogToggle = new FlatButton();
+            btnLogToggle.Text = "显示日志 ▾";
+            btnLogToggle.Font = Theme.UISmall;
+            btnLogToggle.SetBounds(Theme.M, 438, leftW, Theme.H);
+            btnLogToggle.Click += delegate { SetLogOpen(!logOpen); };
+            tips.SetToolTip(btnLogToggle, "安装日志：什么时候开始、每个文件复制到哪、哪一步跳过了。\r\n平时收起来，出问题再展开。");
+            Controls.Add(btnLogToggle);
 
             // ---- 右栏：MOD 库 ----
             // 只有一屏：方案树。左边是「能替换的东西」的位置，右边是它的候选。
@@ -2774,9 +2786,21 @@ namespace Installer
                 viewHost.Height = Dpi.S(Math.Max(80, modH - 118 - 74));
                 lblSel.Top = Dpi.S(modH - 64);
                 lblConflict.Top = Dpi.S(modH - 40);
-                gLog.Top = Dpi.S(438);
-                gLog.Height = Dpi.S(Math.Max(60, H - 438 - BottomBarH));
-                txtLog.Height = Dpi.S(Math.Max(60, H - 438 - BottomBarH - 34));
+                // 左栏纵向：两张卡高度由内容定死（装什么 222 / 安装选项 144），
+                // 日志切换按钮贴左栏底部，日志在它上方展开、吃掉中间那片空白，收起时高度归零。
+                // 以前日志是常驻的 CH-438-BottomBarH，窗口一高它就把左栏一半占了。
+                int btnLogTop = H - BottomBarH - Theme.H;
+                int logH = Math.Min(300, Math.Max(0, btnLogTop - Theme.S - 438 - Theme.H - Theme.S));
+                if (btnLogToggle != null)
+                {
+                    btnLogToggle.Top = Dpi.S(btnLogTop);
+                    btnLogToggle.Width = Dpi.S(leftW);
+                    btnLogToggle.Visible = drawerOpen;
+                }
+                gLog.Top = Dpi.S(btnLogTop - Theme.S - logH);
+                gLog.Height = Dpi.S(logOpen ? logH : 0);
+                gLog.Visible = drawerOpen && logOpen;
+                txtLog.Height = Dpi.S(logOpen ? Math.Max(60, logH - 34) : 0);
 
                 // 底部动作区同理：Anchor 只在「距底多远」这一维上跟，自检里连着改几档尺寸时
                 // 会一路漂（窗口缩回 900 却还停在 200% 的位置），所以每次按设计值钉死。
@@ -2889,6 +2913,23 @@ namespace Installer
                 if (txtLog.Width <= 0) { bad++; Core.Log("FAIL", tag + "日志框宽度算成 0"); }
                 if (cboTweak.Width <= 0 || btnTweak.Left + Dpi.S(90) > Dpi.S(396)) { bad++; Core.Log("FAIL", tag + "参数配置那一行排歪了"); }
 
+                // 左栏日志：默认收起（高度 0），展开后必须排在底栏之上，且不压到「安装选项」。
+                // 这条挡的是「日志又变回常驻、把左栏一半吃掉」的回归。
+                bool savedDrawer = drawerOpen;
+                SetDrawer(true);
+                if (gLog.Height > 0)
+                { bad++; Core.Log("FAIL", tag + "日志默认没收起（高 " + gLog.Height + "px）"); }
+                SetLogOpen(true);
+                if (gLog.Top + gLog.Height > btnInstall.Top + 1)
+                { bad++; Core.Log("FAIL", tag + "日志展开后压到底栏（底 " + (gLog.Top + gLog.Height) + " / 按钮 " + btnInstall.Top + "）"); }
+                if (gLog.Top < gOpt.Top + gOpt.Height)
+                { bad++; Core.Log("FAIL", tag + "日志展开后压到「安装选项」卡片"); }
+                if (gLog.Height < Dpi.S(120))
+                { bad++; Core.Log("FAIL", tag + "日志展开后只有 " + gLog.Height + "px，装不下内容"); }
+                Core.Log("INFO", tag + "日志展开 y" + gLog.Top + "–" + (gLog.Top + gLog.Height) + "（高 " + gLog.Height + "），按钮 " + btnLogToggle.Top);
+                SetLogOpen(false);
+                SetDrawer(savedDrawer);
+
                 // 候选列表的列宽：ListView 的 Columns[].Width 不受 AutoScaleMode.Dpi 管，
                 // 得自己乘。四个定宽列合计应当是 100+74+84+62=320 设计值按当前比例放大后的数
                 // （本地模式只是把「已装」并进「开关」，合计不变）。
@@ -2931,9 +2972,19 @@ namespace Installer
             drawerOpen = open;
             if (gPlat != null) gPlat.Visible = open;
             if (gOpt != null) gOpt.Visible = open;
-            if (gLog != null) gLog.Visible = open;
+            if (gLog != null) gLog.Visible = open && logOpen;
+            if (btnLogToggle != null) btnLogToggle.Visible = open;
             if (btnPanel != null) btnPanel.Text = open ? "收起" : "面板";
             lastRespW = -1;                    // 强制重排一次（尺寸没变也要排）
+            ApplyResponsive();
+        }
+
+        /// <summary>展开 / 收起左栏日志。收起时左栏只剩两张卡，日志不该常驻抢地方。</summary>
+        internal void SetLogOpen(bool open)
+        {
+            logOpen = open;
+            if (btnLogToggle != null) btnLogToggle.Text = open ? "收起日志 ▴" : "显示日志 ▾";
+            lastRespW = -1;
             ApplyResponsive();
         }
 

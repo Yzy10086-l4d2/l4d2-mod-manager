@@ -439,13 +439,17 @@ namespace Installer
         public static readonly Font UISmall = new Font("Microsoft YaHei UI", 8.25F, FontStyle.Regular, GraphicsUnit.Point);
         public static readonly Font Mono = new Font("Consolas", 9F, FontStyle.Regular, GraphicsUnit.Point);
 
-        // 栅格：16 外边距 / 12 栏间距 / 8 行内步长
+        // 栅格：16 外边距 / 12 栏间距 / 8 行内步长。
+        // 全窗只认这几个数，不再各处现算 18/22/26 这类一次性间距。
         public const int M = 16;
         public const int G = 12;
         public const int S = 8;
-        public const int H = 28;   // 普通控件高
+        public const int H = 32;   // 普通控件高（桌面端最小可点目标，也是列表行高）
         public const int HP = 36;  // 主操作高
         public const int R = 6;    // 控件圆角
+        public const int RowH = 32;      // 列表行高：与控件高同一档
+        public const int ExtraW = 340;   // 方案树右半「可叠加的扩展」栏定宽
+        public const int SideMin = 900;  // 右半够这个宽才并排，否则退回上下堆叠
 
         // 参照 iOS 26（Liquid Glass）的「分组列表」：卡片圆角 + 组标题在卡片外 + 内缩分隔线。
         // 触控端的 44pt 点击目标在桌面上按 26–32px 收敛；留白仍按 8 的倍数走。

@@ -1136,7 +1136,8 @@ namespace Installer
             ImageList pad = new ImageList();
             // 这一行决定 ListView 的行高。字体是按 point 放大的，行高还写死 28 的话，
             // 125% / 150% 下字会顶到上下一行的边界上（前面那一行字的下半截被裁掉）。
-            pad.ImageSize = new Size(1, Math.Max(16, Dpi.S(28)));
+            // 32 = 控件高，列表行和按钮行落在同一条节奏上。
+            pad.ImageSize = new Size(1, Math.Max(16, Dpi.S(Theme.RowH)));
             pad.ColorDepth = ColorDepth.Depth32Bit;
             v.SmallImageList = pad;
             v.StateImageList = Dots();
@@ -3391,47 +3392,83 @@ namespace Installer
 
             int x = treeW + 1;
             int rightW = Math.Max(120, W - x);
-            if (lblTitle != null) lblTitle.SetBounds(x + 16, 12, Math.Max(60, rightW - 32 - 100), 22);
-            if (lblCur != null) lblCur.SetBounds(x + 16, 34, Math.Max(60, rightW - 32), 18);
-
-            // 右半分上下：上半换本体（单选），下半可叠加的扩展（多选）。
-            // 没有扩展时下半只留一行说明，上半占满 —— 空列表摆在那儿只是浪费地方。
-            int top = 60, bottom = H - 42;
-            int avail = Math.Max(120, bottom - top);
-            const int gap = 26;                                   // 中间那行小标题占的高度
-            bool hasEx = lvExtra != null && lvExtra.Visible;
-            int mainH = hasEx ? Math.Max(110, avail * 56 / 100) : Math.Max(110, avail - gap);
-            int exTop = top + mainH + gap;
-            int exH = Math.Max(0, bottom - exTop);
+            int pad = Theme.CardPad;
+            int actH = Theme.H;
+            int by = H - actH - Theme.S;                   // 底部动作行的顶边
+            int top = 60;                                  // 标题两行下面是列表
+            int bottom = by - Theme.S;                     // 列表底边，与动作行之间留一个步长
             const int headH = 26;
+
+            // 右半分栏：够宽时「候选」和「可叠加的扩展」并排。
+            // 以前是上下按 56% 切，候选只有三行时上半留一大片空白、下半的扩展还被压扁；
+            // 并排之后两栏各自铺满可用高度，一边有几行都不影响另一边。
+            // 判据用条目数而不是 Visible：Visible 是本方法自己在改的，拿它当输入会互相打架
+            // （上一次隐藏了 → 这次走窄窗分支 → 又把隐藏的那块摆出来 → 下一轮变成可见）。
+            bool hasEx = lvExtra != null && lvExtra.Items.Count > 0;
+            bool side = hasEx && rightW >= Dpi.S(Theme.SideMin);
+            int mainX = x, mainW = rightW;
+            int exX = 0, exW = 0;
+            if (side)
+            {
+                // 扩展栏定宽，但最多占右半的三分之一：窗口再宽也不让它抢候选的地盘
+                exW = Math.Min(Dpi.S(Theme.ExtraW), rightW / 3);
+                mainW = rightW - exW - Theme.G;
+                exX = x + mainW + Theme.G;
+            }
+
+            if (lblTitle != null) lblTitle.SetBounds(mainX + pad, 12, Math.Max(60, mainW - 2 * pad - 100), 22);
+            if (lblCur != null) lblCur.SetBounds(mainX + pad, 34, Math.Max(60, mainW - 2 * pad), 18);
+
             if (headMain != null)
             {
-                headMain.SetBounds(x + 4, top, rightW - 8, headH);
+                headMain.SetBounds(mainX + 4, top, mainW - 8, headH);
                 headMain.Visible = lv != null && lv.Visible;
             }
-            if (lv != null) lv.SetBounds(x + 4, top + headH, rightW - 8, Math.Max(40, mainH - headH));
-            if (lblExtraTitle != null)
-                lblExtraTitle.SetBounds(x + 16, Math.Max(top + 8, exTop - 20), Math.Max(80, rightW - 32), 18);
+            int listH = Math.Max(40, bottom - top - headH);
+            if (lv != null) lv.SetBounds(mainX + 4, top + headH, mainW - 8, listH);
+
             if (lvExtra != null)
             {
-                if (exH >= 40)
+                if (side)
                 {
-                    lvExtra.SetBounds(x + 4, exTop + headH, rightW - 8, Math.Max(40, exH - headH));
+                    // 并排：两栏表头对齐在同一水平线上，只剩标题行在右侧重复一次。
+                    // 可见性也在这里定：走到这一支说明 Items 里确实有扩展，
+                    // 不能指望 FillDetail 一定把 Visible 打开（空位那一轮会把它关掉）。
+                    if (lblExtraTitle != null) lblExtraTitle.SetBounds(exX + pad, 34, Math.Max(60, exW - 2 * pad), 18);
                     lvExtra.Visible = true;
-                    if (headExtra != null)
-                    {
-                        headExtra.SetBounds(x + 4, exTop, rightW - 8, headH);
-                        headExtra.Visible = true;
-                    }
+                    if (headExtra != null) { headExtra.SetBounds(exX + 4, top, exW - 8, headH); headExtra.Visible = true; }
+                    lvExtra.SetBounds(exX + 4, top + headH, exW - 8, listH);
                 }
                 else
                 {
-                    lvExtra.Visible = false;
-                    if (headExtra != null) headExtra.Visible = false;
+                    // 窄窗（抽屉展开 / 小屏）：退回上下堆叠。候选先按内容收高，剩下的才给扩展；
+                    // 这个位置没有扩展时，候选照旧占满，只在底部留一行灰字说明。
+                    int rows = lv == null ? 0 : lv.Items.Count;
+                    int want = rows * Dpi.S(Theme.RowH) + headH + Theme.S;
+                    int gap = headH;
+                    int mainH = hasEx
+                        ? Math.Max(110, Math.Min(want, Math.Max(110, (bottom - top - gap) * 62 / 100)))
+                        : Math.Max(110, bottom - top - gap);
+                    if (lv != null) lv.SetBounds(mainX + 4, top + headH, mainW - 8, Math.Max(40, mainH - headH));
+                    int exTop = top + mainH + gap;
+                    if (lblExtraTitle != null)
+                        lblExtraTitle.SetBounds(mainX + pad, Math.Max(top + 8, exTop - 22), Math.Max(80, mainW - 2 * pad), 18);
+                    int exH = Math.Max(0, bottom - exTop);
+                    if (exH >= 40 + headH)
+                    {
+                        lvExtra.SetBounds(mainX + 4, exTop + headH, mainW - 8, Math.Max(40, exH - headH));
+                        lvExtra.Visible = true;
+                        if (headExtra != null) { headExtra.SetBounds(mainX + 4, exTop, mainW - 8, headH); headExtra.Visible = true; }
+                    }
+                    else
+                    {
+                        lvExtra.Visible = false;
+                        if (headExtra != null) headExtra.Visible = false;
+                    }
                 }
             }
 
-            if (btnPick != null) btnPick.SetBounds(x + 16, H - 34, 76, Theme.H);
+            if (btnPick != null) btnPick.SetBounds(x + pad, by, 76, actH);
             // 右下角从右往左排：「指定位置…」只在未归类页，「只装这里」在这个位置有勾选时；
             // 「应用改动」常驻最右（位置固定，不然没人找得到）。脚注按实际占用让位。
             bool catBtn = btnCat != null && btnCat.Visible;
@@ -3439,11 +3476,11 @@ namespace Installer
             bool appBtn = btnApply != null;                 // 常驻：位置固定，不让它在有改动时才挪出来
             int edge = x + rightW - 8;
             int used = 0;
-            if (catBtn) { btnCat.SetBounds(edge - 100, H - 34, 100, Theme.H); edge -= 108; used += 108; }
-            if (appBtn) { btnApply.SetBounds(edge - 104, H - 34, 104, Theme.H); edge -= 112; used += 112; }
-            if (depBtn) { btnDeploy.SetBounds(edge - 92, H - 34, 92, Theme.H); edge -= 100; used += 100; }
+            if (catBtn) { btnCat.SetBounds(edge - 100, by, 100, actH); edge -= 108; used += 108; }
+            if (appBtn) { btnApply.SetBounds(edge - 104, by, 104, actH); edge -= 112; used += 112; }
+            if (depBtn) { btnDeploy.SetBounds(edge - 92, by, 92, actH); edge -= 100; used += 100; }
             if (lblFoot != null)
-                lblFoot.SetBounds(x + 16, H - 30, Math.Max(60, rightW - 32 - used), 18);
+                lblFoot.SetBounds(x + pad, by + (actH - 18) / 2, Math.Max(60, rightW - 2 * pad - used), 18);
             LayoutCols();
         }
 
@@ -3505,6 +3542,37 @@ namespace Installer
         /// 自检用：给定客户区宽度算一遍列宽，返回 [改了什么, 大小, 已装, 开关] 四个定宽列。
         /// 走的就是真实的 <see cref="Cols"/>，不另写一份算法 —— 否则测的和用的又是两套。
         /// </summary>
+        /// <summary>
+        /// 自检：拿一个带扩展的位置跑一遍真实布局，回报右半是并排还是堆叠、两栏几何对不对。
+        /// 走的是 LayoutSelf 本身，不是另写一份算法；测完把选中恢复成原样。
+        /// </summary>
+        internal string LayoutProbe(out bool side)
+        {
+            side = false;
+            string saved = selKey;
+            Slot target = null;
+            foreach (Slot s in slots)
+                if (s != null && s.Extras.Count > 0) { target = s; break; }
+            if (target == null) return "库里没有带扩展的位置";
+
+            selKey = target.Key;
+            FillDetail();
+            LayoutSelf();
+
+            // 不要用 Visible 判断：自检不弹窗口，父级不可见时子控件的 Visible 一律返回 false。
+            // 只看几何——并排的特征是扩展栏整体落在候选栏右侧且有自己的宽度。
+            bool both = lv != null && lvExtra != null && lvExtra.Width > 0
+                     && headExtra != null && headExtra.Width > 0 && lvExtra.Left >= lv.Right;
+            side = both;
+            string r = target.Name + "（" + target.Extras.Count + " 个扩展）：候选 x" + lv.Left + "–" + lv.Right
+                     + "（宽 " + lv.Width + "），扩展 x" + lvExtra.Left + "–" + lvExtra.Right
+                     + "（宽 " + lvExtra.Width + "），" + (side ? "并排" : "上下堆叠")
+                     + "；动作行 y" + btnApply.Top + "，列表底 y" + (lv.Top + lv.Height);
+
+            if (saved != selKey) { selKey = saved; FillDetail(); LayoutSelf(); }
+            return r;
+        }
+
         internal static int[] ColsForTest(int clientWidth)
         {
             ListView v = new ListView();
@@ -3727,8 +3795,8 @@ namespace Installer
     {
         // 行高跟着 DPI 走：树是自绘的，控件被放大而这里还是 28 的话，
         // 字体按 point 变大、行距不变，几行文字就叠在一起了。
-        // 100% 缩放下 Dpi.S 原样返回 28，布局和以前一模一样。
-        private static readonly int RowH = Dpi.S(28);
+        // 100% 缩放下 Dpi.S 原样返回设计值，行高与列表行、按钮行同为 32。
+        private static readonly int RowH = Dpi.S(Theme.RowH);
         private readonly CatTree owner;
         private readonly List<TreeRow> rows = new List<TreeRow>();
         private int hover = -1;
@@ -5167,7 +5235,7 @@ namespace Installer
                 if (t != null && CatTree.IsBranchSlot(t)) { to = i; break; }
             }
             if (from < 0 || to < 0) { Core.Log("WARN", "DRAG 旁边没有别的分支行，画不出落点"); return; }
-            body.TestDragVisual(s.Name, to, 3, new Point(120, to * Dpi.S(28) + Dpi.S(20)));
+            body.TestDragVisual(s.Name, to, 3, new Point(120, to * Dpi.S(Theme.RowH) + Dpi.S(20)));
             Core.Log("INFO", "DRAG 预览：「" + s.Name + "」拖到第 " + to + " 行（成为子分支）");
         }
 
@@ -5189,7 +5257,7 @@ namespace Installer
                 else if (string.Equals(c, ontoCat, StringComparison.Ordinal)) to = i;
             }
             if (from < 0 || to < 0) { Core.Log("WARN", "DRAGCAT 没找到大类: " + catName + " / " + ontoCat); return; }
-            treeView.Body.TestCatDragVisual(catName, to, 2, new Point(120, to * Dpi.S(28) + Dpi.S(20)));
+            treeView.Body.TestCatDragVisual(catName, to, 2, new Point(120, to * Dpi.S(Theme.RowH) + Dpi.S(20)));
             Core.Log("INFO", "DRAGCAT 预览：「" + catName + "」拖到「" + ontoCat + "」后面");
         }
 
@@ -5305,7 +5373,7 @@ namespace Installer
             SlotTree body = treeView.Body;
             // 行高跟着 DPI 走（和 SlotTree.RowH 同一个值）；这里原来写死 28，
             // 高缩放下算出来的屏幕坐标会落在相邻行上，自动化拖动就拖错东西了。
-            int rh = Math.Max(16, Dpi.S(28));
+            int rh = Math.Max(16, Dpi.S(Theme.RowH));
             Point start = body.PointToScreen(new Point(40, from * rh + Dpi.S(18)));
             Point end = body.PointToScreen(new Point(40, to * rh + (isCat ? Dpi.S(28) : Dpi.S(18))));
             Native.POINT cp;
@@ -5335,6 +5403,16 @@ namespace Installer
         }
 
         /// <summary>自检：切到方案树并选某个槽位（按显示名）；传「未归类」就打开未归类页。</summary>
+        /// <summary>诊断：展开左栏（装什么 / 安装选项），可选连日志一起展开，给截图核对台面视图。</summary>
+        internal void UiTestDrawer(bool withLog)
+        {
+            SetDrawer(true);
+            if (withLog) SetLogOpen(true);
+            ShowTree();
+            Application.DoEvents();
+            Core.Log("INFO", "DRAWER 左栏已展开" + (withLog ? "，日志展开 高 " + gLog.Height + "px" : "，日志收起"));
+        }
+
         internal void UiTestSelect(string slotName)
         {
             if (viewHost == null) { Core.Log("FAIL", "TREE 没有 viewHost"); return; }

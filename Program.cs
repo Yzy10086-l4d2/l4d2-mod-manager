@@ -68,6 +68,8 @@ namespace Installer
             bool mapSelf = false;
             bool scanRace = false;
             string uiSelect = null;
+            bool uiDrawer = false;
+            bool uiLogOpen = false;
             string uiDrag = null;
             string uiDragCat = null;
             string uiDragReal = null;
@@ -122,6 +124,10 @@ namespace Installer
                 else if (string.Equals(a, "--treeself", StringComparison.OrdinalIgnoreCase)) { mapSelf = true; uiTest = true; }
                 else if (string.Equals(a, "--scanrace", StringComparison.OrdinalIgnoreCase)) { scanRace = true; uiTest = true; }
                 else if (a.StartsWith("--uiselect=", StringComparison.OrdinalIgnoreCase)) uiSelect = a.Substring(11);
+                // 诊断截图：展开左栏抽屉（装什么 / 安装选项 / 日志），看台面视图的排版
+                else if (string.Equals(a, "--drawer", StringComparison.OrdinalIgnoreCase)) uiDrawer = true;
+                // 诊断截图：把左栏日志一并展开（默认是收起的）
+                else if (string.Equals(a, "--logopen", StringComparison.OrdinalIgnoreCase)) uiLogOpen = true;
                 else if (a.StartsWith("--uidrag=", StringComparison.OrdinalIgnoreCase)) uiDrag = a.Substring(9);
                 else if (a.StartsWith("--uidragcat=", StringComparison.OrdinalIgnoreCase)) uiDragCat = a.Substring(12);
                 else if (a.StartsWith("--uidragreal=", StringComparison.OrdinalIgnoreCase)) uiDragReal = a.Substring(13);
@@ -214,6 +220,7 @@ namespace Installer
                     float[] scales = new float[] { 1f, 1.25f, 1.5f, 2f };
                     foreach (float k in scales) bad += lf.LayoutSelfTest(k, 1440, 940);
                     foreach (float k in scales) bad += lf.LayoutSelfTest(k, 1120, 740);
+                    bad += lf.TriPaneSelfTest();          // 右半并排：树 / 候选 / 扩展 三栏
                     Console.WriteLine("layoutself failures = " + bad);
                     return bad == 0 ? 0 : 1;
                 }
@@ -468,6 +475,7 @@ namespace Installer
                     }
                     if (uiTree) { f.UiTestTree(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiSelect != null) { f.UiTestSelect(uiSelect); System.Windows.Forms.Application.DoEvents(); }
+                    if (uiDrawer) { f.UiTestDrawer(uiLogOpen); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDrag != null) { f.UiTestDrag(uiDrag); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDragCat != null)
                     {
