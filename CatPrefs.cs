@@ -187,7 +187,8 @@ namespace Installer
                 if (u < 0) continue;
                 sb.AppendLine("slotsub=" + kv.Key.Substring(0, u) + "\t" + kv.Key.Substring(u + 1) + "\t" + kv.Value);
             }
-            try { File.WriteAllText(FileOf(), sb.ToString(), new UTF8Encoding(true)); }
+            // 整份换名：拔盘/断电不会留一份截断的分类配置
+            try { Core.WriteAllTextAtomic(FileOf(), sb.ToString(), new UTF8Encoding(true)); }
             catch (Exception ex) { Core.Log("WARN", "方案树分类保存失败: " + ex.Message); }
         }
 

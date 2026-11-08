@@ -118,7 +118,7 @@ namespace Installer
                 if (!items.TryGetValue(n, out l)) continue;
                 foreach (string v in l) sb.AppendLine("mod=" + n + "\t" + v);
             }
-            try { File.WriteAllText(f, sb.ToString(), new UTF8Encoding(true)); }
+            try { Core.WriteAllTextAtomic(f, sb.ToString(), new UTF8Encoding(true)); }
             catch (Exception ex) { Core.Log("WARN", "我的分支保存失败: " + ex.Message); }
         }
 

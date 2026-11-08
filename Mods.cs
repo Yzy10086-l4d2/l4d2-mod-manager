@@ -288,7 +288,7 @@ namespace Installer
             }
             foreach (string m in p.Mods) sb.AppendLine("Mod=" + m);
             if (!string.IsNullOrEmpty(p.SelfTest)) sb.AppendLine("SelfTest=" + p.SelfTest);
-            File.WriteAllText(f, sb.ToString(), new UTF8Encoding(true));
+            Core.WriteAllTextAtomic(f, sb.ToString(), new UTF8Encoding(true));
         }
 
         // 把自检结果写回方案（kind = PASS / FAIL）

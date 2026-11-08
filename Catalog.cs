@@ -413,11 +413,9 @@ namespace Installer
                     foreach (ArcEntry e in kv.Value)
                         sb.Append(e.Inner).Append('\t').Append(sig[0]).Append('\t').Append(sig.Length > 1 ? sig[1] : "0").Append('\t').Append(e.Size).Append("\r\n");
                 }
-                // 先写临时文件再替换：写到一半被强退/断电不会留一个截断的缓存
-                string tmp = CachePath + ".tmp";
-                File.WriteAllText(tmp, sb.ToString(), new UTF8Encoding(false));
-                if (File.Exists(CachePath)) File.Delete(CachePath);
-                File.Move(tmp, CachePath);
+                // 先写临时文件再整体换名：写到一半被强退/断电不会留一个截断的缓存，
+                // 也不会出现「旧的删了新的还没到」的空窗（原来中间还有一步 Delete）
+                Core.WriteAllTextAtomic(CachePath, sb.ToString(), new UTF8Encoding(false));
             }
             catch { }
             Core.Log("INFO", "压缩包缓存落盘: " + sw.ElapsedMilliseconds + " ms，" + _arcCache.Count + " 包");
@@ -507,7 +505,7 @@ namespace Installer
                     string inner = string.Join("|", k, 1, n - 3);
                     sb.Append(rel).Append((char)9).Append(inner).Append((char)9).Append(size).Append('|').Append(ticks).Append((char)9).Append(kv.Value).Append(Environment.NewLine);
                 }
-                File.WriteAllText(ArcContentPath, sb.ToString(), new UTF8Encoding(false));
+                Core.WriteAllTextAtomic(ArcContentPath, sb.ToString(), new UTF8Encoding(false));
             }
             catch { }
         }
@@ -610,6 +608,11 @@ namespace Installer
                     foreach (string d in Core.Cfg.ModDirs) CollectDir(d, vpkFiles, arcs);
                 }
 
+                // 附加库目录允许和主库重叠（只挡了完全相同的路径），同一个文件会被收两遍、
+                // 列表里多出一条同名项。这里按完整路径去重，收两遍也只算一次。
+                vpkFiles = DedupPaths(vpkFiles, "vpk");
+                arcs = DedupPaths(arcs, "压缩包");
+
                 foreach (string f in vpkFiles) AddVpk(f);
 
                 int arcHit = 0, arcMiss = 0;
@@ -653,6 +656,22 @@ namespace Installer
             catch (Exception ex) { Core.Log("FAIL", "扫 MOD 出错: " + ex.Message); }
             ModIdentify.SaveCache();
             SaveArcCache();
+        }
+
+        /// <summary>按完整路径去重（不区分大小写）。附加库和主库重叠时，同一个文件只会留一条。</summary>
+        static List<string> DedupPaths(List<string> list, string what)
+        {
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            List<string> one = new List<string>(list.Count);
+            foreach (string p in list)
+            {
+                string k;
+                try { k = Path.GetFullPath(p); } catch { k = p; }
+                if (seen.Add(k)) one.Add(p);
+            }
+            if (one.Count != list.Count)
+                Core.Log("INFO", "扫库：" + what + " 去掉 " + (list.Count - one.Count) + " 个重复路径（附加库和主库重叠了）");
+            return one;
         }
 
         /// <summary>是不是程序自己的目录（扩展平台：安装包、日志、源码都在这儿）。</summary>
@@ -1675,7 +1694,7 @@ namespace Installer
                   .Append(g.Evidence).AppendLine();
             }
             string f = Path.Combine(Core.LogDir, "识别清单.tsv");
-            File.WriteAllText(f, sb.ToString(), new UTF8Encoding(true));
+            Core.WriteAllTextAtomic(f, sb.ToString(), new UTF8Encoding(true));
 
             // 明细：每个 vpk 单独一行，看套装里有没有部件被认错
             StringBuilder d = new StringBuilder();
@@ -1690,7 +1709,7 @@ namespace Installer
                      .Append(it.Subject).Append('\t')
                      .Append(it.SubjectKey ?? "").Append('\t')
                      .Append(it.RelPath).AppendLine();
-            File.WriteAllText(Path.Combine(Core.LogDir, "识别明细.tsv"), d.ToString(), new UTF8Encoding(true));
+            Core.WriteAllTextAtomic(Path.Combine(Core.LogDir, "识别明细.tsv"), d.ToString(), new UTF8Encoding(true));
             return f;
         }
     }

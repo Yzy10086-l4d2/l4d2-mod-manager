@@ -2420,6 +2420,14 @@ namespace Installer
                 foreach (object o in lb.Items)
                     if (string.Equals((string)o, p, StringComparison.OrdinalIgnoreCase))
                     { MessageBox.Show("已经在列表里了。"); return; }
+                // 和主库重叠（包含或被包含）只会让同一个文件被扫两遍，列表里多一条同名项。
+                // 扫库那边已经按完整路径去重，这里只是提醒一句，让人知道不是白加的。
+                if (Core.IsUnder(Core.ModRoot, p) || Core.IsUnder(p, Core.ModRoot))
+                {
+                    if (MessageBox.Show("这个文件夹和主库（" + Core.ModRoot + "）是包含关系，里面的文件主库已经扫过了。\r\n"
+                        + "再加一遍不会出现重复条目（扫库会去重），但也没什么用。还要加吗？",
+                        "和主库重叠", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+                }
                 // 和游戏 addons 重叠的不管：游戏目录已装 MOD 是单独认的，重复扫只会多出同名项
                 Core.Cfg.ModDirs.Add(p);
                 Dirty = true;
@@ -2804,6 +2812,53 @@ namespace Installer
                 if (string.IsNullOrEmpty(page) || page.IndexOf("three.min.js") < 0)
                 { bad++; Core.Log("FAIL", "DESK 首页没把 three.js 引进来"); }
                 else Core.Log("INFO", "DESK 首页 %OK%（" + page.Length + " 字节）".Replace("%OK%", "OK"));
+                if (page == null || page.IndexOf("window.__DESK_TOKEN") < 0)
+                { bad++; Core.Log("FAIL", "DESK 首页没注入令牌，页面上的写操作会一律 403"); }
+                else Core.Log("INFO", "DESK 首页已注入写操作令牌");
+
+                // 写操作令牌：本机别的网页也能往 127.0.0.1 发 POST，所以没令牌必须 403。
+                // 用一个不存在的 api 路径试，不会碰到任何真实数据。
+                Func<string, int> post = delegate(string tok)
+                {
+                    int code = -1; Exception err = null;
+                    Thread t = new Thread(delegate()
+                    {
+                        try
+                        {
+                            System.Net.HttpWebRequest req = (System.Net.HttpWebRequest)System.Net.WebRequest.Create(srv.Url + "api/__tokencheck");
+                            req.Method = "POST";
+                            req.ContentType = "application/json";
+                            if (tok != null) req.Headers["X-Desk-Token"] = tok;
+                            byte[] data = Encoding.UTF8.GetBytes("{}");
+                            req.ContentLength = data.Length;
+                            using (Stream st = req.GetRequestStream()) st.Write(data, 0, data.Length);
+                            using (System.Net.HttpWebResponse r = (System.Net.HttpWebResponse)req.GetResponse()) code = (int)r.StatusCode;
+                        }
+                        catch (System.Net.WebException wex)
+                        {
+                            System.Net.HttpWebResponse r = wex.Response as System.Net.HttpWebResponse;
+                            if (r != null) code = (int)r.StatusCode; else err = wex;
+                        }
+                        catch (Exception ex) { err = ex; }
+                    });
+                    t.IsBackground = true;
+                    t.Start();
+                    DateTime until = DateTime.Now.AddSeconds(10);
+                    while (t.IsAlive && DateTime.Now < until) { Application.DoEvents(); Thread.Sleep(10); }
+                    if (t.IsAlive) throw new Exception("请求超时：api");
+                    if (err != null) throw err;
+                    return code;
+                };
+
+                if (post(null) != 403) { bad++; Core.Log("FAIL", "DESK 写操作不带令牌也能过（本机网页就能装机）"); }
+                else Core.Log("INFO", "DESK 写操作无令牌被拒 403");
+                if (post("wrong-token") != 403) { bad++; Core.Log("FAIL", "DESK 写操作令牌错了也能过"); }
+                else Core.Log("INFO", "DESK 写操作错令牌被拒 403");
+                // 令牌对了就该进路由：这个假路径没有处理分支，会返回 404「no api」——
+                // 只要不是 403 就说明令牌这关过了（真接口走各自的 200）。
+                int okCode = post(srv.Token);
+                if (okCode == 403 || okCode < 0) { bad++; Core.Log("FAIL", "DESK 写操作带对令牌反倒被拒（" + okCode + "）"); }
+                else Core.Log("INFO", "DESK 写操作带对令牌放行（路由返回 " + okCode + "，不是 403）");
             }
             catch (Exception ex)
             {
@@ -2841,14 +2896,25 @@ namespace Installer
 
         private bool TestWritable(string dir)
         {
-            try
+            // 只测游戏根是不够的：装机要往 left4dead2\addons 和 bin 里写，
+            // 根目录能写、子目录被占用/只读的情况一样会让整次装机写一半。
+            foreach (string sub in new string[] { "", "left4dead2\\addons", "bin" })
             {
-                string f = Path.Combine(dir, "_write_test.tmp");
-                File.WriteAllText(f, "x");
-                File.Delete(f);
-                return true;
+                string d = sub.Length == 0 ? dir : Path.Combine(dir, sub);
+                if (!Directory.Exists(d)) continue;      // 没这个目录（还没装 MOD / 没装平台），不用测
+                try
+                {
+                    string f = Path.Combine(d, "_write_test.tmp");
+                    File.WriteAllText(f, "x");
+                    File.Delete(f);
+                }
+                catch (Exception ex)
+                {
+                    Core.Log("WARN", "写不进 " + d + "：" + ex.Message);
+                    return false;
+                }
             }
-            catch { return false; }
+            return true;
         }
 
         private static bool GameRunning()

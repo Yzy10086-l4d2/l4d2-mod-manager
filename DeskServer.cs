@@ -32,11 +32,17 @@ namespace Installer
         private Process bro;
         private volatile bool stop;
         private int port;
+        // 每次起服务换一个：只印在本次返回的页面里，页面上的 POST 都带着它。
+        // 以前端口随机 + 只绑回环就算安全 —— 本机任何一个网页都能往 127.0.0.1:端口 POST
+        // 一个 /api/install，把 MOD 装进游戏、还弹「现在启动游戏吗」。
+        private string token = "";
 
         private static string _html, _js;
         private static readonly object _lock = new object();
 
         public int Port { get { return port; } }
+        /// <summary>本次服务的写操作令牌（自检用；页面里也带一份）。</summary>
+        public string Token { get { return token; } }
         public string Url { get { return "http://127.0.0.1:" + port + "/"; } }
         public bool Running { get { return lis != null && !stop; } }
 
@@ -95,6 +101,7 @@ namespace Installer
             }
 
             port = FreePort();
+            token = Guid.NewGuid().ToString("N").Substring(0, 16);
             lis = new TcpListener(IPAddress.Loopback, port);
             lis.Start();
             stop = false;
@@ -257,14 +264,16 @@ namespace Installer
             if (q >= 0) path = path.Substring(0, q);
 
             int contentLen = 0;
+            Dictionary<string, string> hdr = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             for (int i = 1; i < lines.Length; i++)
             {
                 int colon = lines[i].IndexOf(':');
                 if (colon <= 0) continue;
-                if (lines[i].Substring(0, colon).Trim().Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
-                {
-                    int.TryParse(lines[i].Substring(colon + 1).Trim(), out contentLen);
-                }
+                string hn = lines[i].Substring(0, colon).Trim();
+                string hv = lines[i].Substring(colon + 1).Trim();
+                if (!hdr.ContainsKey(hn)) hdr[hn] = hv;
+                if (hn.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+                    int.TryParse(hv, out contentLen);
             }
 
             string body = "";
@@ -281,13 +290,45 @@ namespace Installer
                 body = Encoding.UTF8.GetString(buf, 0, got);
             }
 
-            if (path == "/" || path.Length == 0) { Text(ns, 200, "text/html; charset=utf-8", _html); return; }
+            if (path == "/" || path.Length == 0) { Text(ns, 200, "text/html; charset=utf-8", PageWithToken()); return; }
             if (path == "/three.min.js") { Text(ns, 200, "application/javascript; charset=utf-8", _js); return; }
             if (path == "/api/state") { Text(ns, 200, "application/json; charset=utf-8", StateJson()); return; }
             if (path == "/favicon.ico") { Text(ns, 204, "text/plain", ""); return; }
 
-            if (method == "POST") { Api(ns, path, body); return; }
+            if (method == "POST")
+            {
+                // 写操作必须带本次页面的令牌，且来路（有的话）必须是本服务自己。
+                // 只绑 127.0.0.1 挡不住「本机另一个网页」：它照样能 POST 过来。
+                string given, origin;
+                hdr.TryGetValue("X-Desk-Token", out given);
+                hdr.TryGetValue("Origin", out origin);
+                if (!string.Equals(given, token, StringComparison.Ordinal) || !OriginOk(origin))
+                {
+                    Core.Log("WARN", "桌面请求被拒：" + path + "（令牌不对或来路不对"
+                        + (string.IsNullOrEmpty(origin) ? "" : "，Origin=" + origin) + "）");
+                    Text(ns, 403, "text/plain; charset=utf-8", "forbidden");
+                    return;
+                }
+                Api(ns, path, body);
+                return;
+            }
             Text(ns, 404, "text/plain; charset=utf-8", "not found");
+        }
+
+        /// <summary>Origin 为空（非浏览器，如自检里的 WebClient）放行；有就必须是本服务自己。</summary>
+        private bool OriginOk(string origin)
+        {
+            if (string.IsNullOrEmpty(origin)) return true;
+            return string.Equals(origin, "http://127.0.0.1:" + port, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(origin, "http://localhost:" + port, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>页面里塞一份本次的令牌，页面上的 POST 会带回来。</summary>
+        private string PageWithToken()
+        {
+            string inject = "<script>window.__DESK_TOKEN=\"" + token + "\";</script>";
+            int at = _html.IndexOf("</head>", StringComparison.OrdinalIgnoreCase);
+            return at >= 0 ? _html.Insert(at, inject) : inject + _html;
         }
 
         private static string ReadHead(NetworkStream ns)

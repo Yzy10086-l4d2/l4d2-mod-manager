@@ -123,8 +123,22 @@ namespace Installer
             {
                 // 同名直接覆盖：旧的那套不另存副本
                 Directory.CreateDirectory(dir);
-                if (hasA) { File.Copy(a, Path.Combine(dir, AutoexecName), true); lines.Add("已存 autoexec.cfg（" + Core.Human(new FileInfo(a).Length) + "）"); }
-                if (hasS) { File.Copy(s, Path.Combine(dir, SkeetoName), true); lines.Add("已存 skeeto_setting.ini（" + Core.Human(new FileInfo(s).Length) + "）"); }
+                string dstA = Path.Combine(dir, AutoexecName);
+                string dstS = Path.Combine(dir, SkeetoName);
+                // 这次游戏里没有的那份，必须把存档里的旧副本也清掉：
+                // 否则用户已经把 autoexec 删了，存档里那份还躺着，下次 Apply 又给推回去。
+                if (!hasA && File.Exists(dstA))
+                {
+                    try { File.Delete(dstA); lines.Add("游戏里已没有 autoexec.cfg，存档里的旧副本已清掉"); }
+                    catch (Exception ex) { Core.Log("WARN", "旧的 autoexec 副本删不掉: " + ex.Message); }
+                }
+                if (!hasS && File.Exists(dstS))
+                {
+                    try { File.Delete(dstS); lines.Add("游戏里已没有 skeeto_setting.ini，存档里的旧副本已清掉"); }
+                    catch (Exception ex) { Core.Log("WARN", "旧的 skeeto 副本删不掉: " + ex.Message); }
+                }
+                if (hasA) { Core.CopyOne(a, dstA); lines.Add("已存 autoexec.cfg（" + Core.Human(new FileInfo(a).Length) + "）"); }
+                if (hasS) { Core.CopyOne(s, dstS); lines.Add("已存 skeeto_setting.ini（" + Core.Human(new FileInfo(s).Length) + "）"); }
 
                 StringBuilder meta = new StringBuilder();
                 meta.AppendLine("保存时间：" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
@@ -132,7 +146,7 @@ namespace Installer
                 meta.AppendLine("来源目录：" + gameRoot);
                 if (hasA) meta.AppendLine("autoexec.cfg：" + new FileInfo(a).Length + " 字节，" + File.ReadAllLines(a).Length + " 行");
                 if (hasS) meta.AppendLine("skeeto_setting.ini：" + new FileInfo(s).Length + " 字节，" + File.ReadAllLines(s).Length + " 行");
-                File.WriteAllText(Path.Combine(dir, InfoName), meta.ToString(), new UTF8Encoding(true));
+                Core.WriteAllTextAtomic(Path.Combine(dir, InfoName), meta.ToString(), new UTF8Encoding(true));
                 Core.Log("OK", "参数存档「" + name + "」已保存: " + ((hasA ? "autoexec " : "") + (hasS ? "skeeto " : "")).Trim());
                 return null;
             }

@@ -360,8 +360,11 @@ namespace Installer
                 {
                     // --uitsize=0x0 表示不强制尺寸，按窗口自己的初始大小截（用来核对默认值）
                     string[] wh = uiSize.Split('x');
-                    if (int.Parse(wh[0]) > 0 && int.Parse(wh[1]) > 0)
-                        f.ClientSize = new System.Drawing.Size(int.Parse(wh[0]), int.Parse(wh[1]));
+                    int uw, uh;
+                    if (wh.Length == 2 && int.TryParse(wh[0], out uw) && int.TryParse(wh[1], out uh) && uw > 0 && uh > 0)
+                        f.ClientSize = new System.Drawing.Size(uw, uh);
+                    else if (!string.Equals(uiSize.Trim(), "0x0", StringComparison.OrdinalIgnoreCase))
+                        Console.WriteLine("uitsize 参数看不懂: " + uiSize + "（要 1280x900 这种；0x0 表示不强制）");
                     f.StartPosition = System.Windows.Forms.FormStartPosition.Manual;
                     f.Location = new System.Drawing.Point(-4000, -4000);
                     f.Show();

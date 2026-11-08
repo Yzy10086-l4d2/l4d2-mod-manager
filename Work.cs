@@ -337,7 +337,9 @@ namespace Installer
             try
             {
                 string src = Path.Combine(Core.ModRoot, "autoexec.cfg");
-                if (!File.Exists(src)) { Core.Log("WARN", "U 盘上没有 autoexec.cfg，跳过"); return false; }
+                // 主库里没有这份 cfg 就是「这次不用搬」，不是失败。
+                // 以前返回 false，换过主库的人每次装机都被记成「部分完成」。
+                if (!File.Exists(src)) { Core.Log("INFO", "主库里没有 autoexec.cfg，这步跳过（不算失败）"); return true; }
                 string dir = Path.Combine(Path.Combine(gameRoot, "left4dead2"), "cfg");
                 if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
                 string dst = Path.Combine(dir, "autoexec.cfg");

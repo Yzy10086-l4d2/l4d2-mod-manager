@@ -1018,7 +1018,11 @@
   function api(path, body) {
     return fetch(path, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        // 服务每次启动换一个，由页面返回时注入；没有它服务端一律 403（挡本机其它网页）
+        'X-Desk-Token': window.__DESK_TOKEN || ''
+      },
       body: JSON.stringify(body || {})
     }).then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); });
   }
