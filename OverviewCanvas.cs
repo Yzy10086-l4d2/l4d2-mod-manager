@@ -29,6 +29,9 @@ namespace Installer
         private Point dragStart, dragPos;
         private int dropAt = -1;
         private bool dropAfter;
+
+        // 键盘走到哪一层：-1 = 左栏大类，>=0 = 右栏第几行（空格开/关，回车弹候选，← 退回大类）
+        private int rowFocus = -1;
         private readonly ToolTip tip;
 
         // 沿用原来那块画板的暖色：这是「看板」，不跟浅色/深色表单主题走
@@ -57,6 +60,8 @@ namespace Installer
                      | ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
             BackColor = BoardBot;
             TabStop = true;
+            AccessibleName = "套装总览";
+            AccessibleRole = AccessibleRole.List;
 
             tip = new ToolTip();
             tip.InitialDelay = 450;
@@ -251,13 +256,15 @@ namespace Installer
                 bool sel = i == selCat;
                 bool hot = i == hoverCat;
 
+                bool kbFocus = sel && Focused && rowFocus < 0;
                 using (GraphicsPath p = Round(r, 8f))
                 {
                     int a = sel ? 26 : (hot ? 12 : 6);
                     using (SolidBrush b = new SolidBrush(Color.FromArgb(a, 255, 240, 215)))
                         g.FillPath(b, p);
-                    Color bc = sel ? Color.FromArgb(200, Accent) : Color.FromArgb(hot ? 40 : 18, 255, 235, 205);
-                    using (Pen pen = new Pen(bc, sel ? 1.4f : 1f))
+                    Color bc = sel ? Color.FromArgb(kbFocus ? 255 : 200, Accent)
+                                   : Color.FromArgb(hot ? 40 : 18, 255, 235, 205);
+                    using (Pen pen = new Pen(bc, sel ? (kbFocus ? 2.2f : 1.4f) : 1f))
                         g.DrawPath(pen, p);
                 }
                 if (sel)
@@ -317,10 +324,11 @@ namespace Installer
                 }
             }
 
+            OvSlot foc = (rowFocus >= 0 && rowFocus < cat.Slots.Count) ? cat.Slots[rowFocus] : null;
             foreach (OvSlot s in cat.Slots)
             {
                 if (s.Y + s.H < OvLayout.DetailY - 2f || s.Y > OvLayout.DetailBottom) continue;
-                Row(g, s, s == hover);
+                Row(g, s, s == hover, s == foc);
             }
         }
 
@@ -357,9 +365,14 @@ namespace Installer
             }
         }
 
-        private void Row(Graphics g, OvSlot s, bool hot)
+        private void Row(Graphics g, OvSlot s, bool hot, bool foc)
         {
             RectangleF r = new RectangleF(OvLayout.DetailX, s.Y, OvLayout.DetailW, s.H);
+
+            if (foc)
+                using (GraphicsPath p = Round(new RectangleF(r.X - 1f, r.Y - 1f, r.Width + 2f, r.Height + 2f), 8f))
+                using (Pen pen = new Pen(Color.FromArgb(210, Ink1), 1.2f))
+                    g.DrawPath(pen, p);
 
             if (hot)
                 using (GraphicsPath p = Round(r, 7f))
@@ -485,7 +498,7 @@ namespace Installer
 
         private void Hint(Graphics g)
         {
-            string s = "右边开关＝这套装不装　·　点名字＝就地换一个　·　拖左边大类＝换顺序　·　灰点=原版，空心=库里还没有";
+            string s = "开关＝这套装不装　·　点名字＝换一个　·　拖或右键大类＝换顺序　·　←→ 进出明细，空格开关";
             using (SolidBrush b = new SolidBrush(Color.FromArgb(96, 200, 186, 162)))
                 g.DrawString(s, fSmall, b,
                     new RectangleF(OvLayout.SidePad, ClientSize.Height - 26f,
@@ -587,9 +600,18 @@ namespace Installer
             base.OnMouseDown(e);
             Focus();
             int ci = HitCat(e.Location);
+
+            // 右键大类：拖动之外的一条路 —— 键盘 / 触控板用户也能换顺序
+            if (e.Button == MouseButtons.Right)
+            {
+                if (ci >= 0) { selCat = ci; rowFocus = -1; Relayout(); ShowCatMenu(ci, e.Location); }
+                return;
+            }
+
             if (ci >= 0)
             {
                 if (ci != selCat) { selCat = ci; scrollDetail = 0f; hover = null; Relayout(); }
+                rowFocus = -1;
                 dragCat = ci;
                 dragging = false;
                 dragStart = e.Location;
@@ -600,8 +622,37 @@ namespace Installer
             OvSlot s = HitSlot(e.Location);
             if (s == null) return;
 
+            OvCat cat = OvLayout.CatAt(model, selCat);
+            rowFocus = cat == null ? -1 : cat.Slots.IndexOf(s);
+
             if (OnSwitch(s, e.Location)) Toggle(s, e.Location);
             else ShowPicker(s, e.Location);
+        }
+
+        /// <summary>右键大类：上移 / 下移。拖动那条路的键盘替代。</summary>
+        private void ShowCatMenu(int ci, Point at)
+        {
+            ContextMenuStrip menu = new ContextMenuStrip();
+            menu.ShowImageMargin = false;
+            menu.Font = Font;
+
+            ToolStripMenuItem up = new ToolStripMenuItem("上移这一类");
+            up.Enabled = ci > 0;
+            up.Click += delegate
+            {
+                if (ci > 0) { CatPrefs.MoveCatTo(model.Cats[ci].Title, model.Cats[ci - 1].Title, false); Rebuild(); }
+            };
+            ToolStripMenuItem down = new ToolStripMenuItem("下移这一类");
+            down.Enabled = ci < model.Cats.Count - 1;
+            down.Click += delegate
+            {
+                if (ci < model.Cats.Count - 1) { CatPrefs.MoveCatTo(model.Cats[ci].Title, model.Cats[ci + 1].Title, true); Rebuild(); }
+            };
+
+            menu.Items.Add(up);
+            menu.Items.Add(down);
+            menu.Closed += delegate { menu.Dispose(); };
+            menu.Show(this, at);
         }
 
         /// <summary>点的是不是行尾那个开关（整块 46×行高都算）。库里没候选的位置没有开关。</summary>
@@ -718,9 +769,32 @@ namespace Installer
         {
             base.OnKeyDown(e);
             if (model == null || model.Cats.Count == 0) return;
+            OvCat cat = OvLayout.CatAt(model, selCat);
+            int rows = cat == null ? 0 : cat.Slots.Count;
+
+            // 第二层：已经在右栏的行里走
+            if (rowFocus >= 0)
+            {
+                if (e.KeyCode == Keys.Up) { rowFocus = Math.Max(0, rowFocus - 1); RevealRow(); }
+                else if (e.KeyCode == Keys.Down) { rowFocus = Math.Min(rows - 1, rowFocus + 1); RevealRow(); }
+                else if (e.KeyCode == Keys.Space)
+                {
+                    if (rowFocus < rows) Toggle(cat.Slots[rowFocus], RowPoint(rowFocus));
+                }
+                else if (e.KeyCode == Keys.Enter)
+                {
+                    if (rowFocus < rows) ShowPicker(cat.Slots[rowFocus], RowPoint(rowFocus));
+                }
+                else if (e.KeyCode == Keys.Left || e.KeyCode == Keys.Escape) { rowFocus = -1; Invalidate(); }
+                return;
+            }
+
+            // 第一层：左栏大类
             bool moved = false;
             if (e.KeyCode == Keys.Up) { selCat = Math.Max(0, selCat - 1); scrollDetail = 0f; moved = true; }
             else if (e.KeyCode == Keys.Down) { selCat = Math.Min(model.Cats.Count - 1, selCat + 1); scrollDetail = 0f; moved = true; }
+            else if (e.KeyCode == Keys.Right) { if (rows > 0) { rowFocus = 0; RevealRow(); } }
+            else if (e.KeyCode == Keys.Escape) { mf.HideOverview(); return; }   // Esc 回方案树
             else if (e.KeyCode == Keys.PageUp || e.KeyCode == Keys.PageDown)
             {
                 scrollDetail += (e.KeyCode == Keys.PageUp ? -1 : 1) * (OvLayout.DetailBottom - OvLayout.DetailY) * 0.8f;
@@ -731,13 +805,34 @@ namespace Installer
             }
             else if (e.KeyCode == Keys.Home) { scrollDetail = 0f; moved = true; }
             else if (e.KeyCode == Keys.End) { scrollDetail = OvLayout.MaxScrollDetail(ClientSize); moved = true; }
-            else if (e.KeyCode == Keys.Enter)
-            {
-                OvCat c = OvLayout.CatAt(model, selCat);
-                if (c != null && c.Slots.Count > 0) mf.ShowSlotInTree(c.Slots[0].Slot);
-                return;
-            }
+            else if (e.KeyCode == Keys.Enter) { if (rows > 0) { rowFocus = 0; RevealRow(); } return; }
             if (moved) Relayout();
+        }
+
+        /// <summary>键盘走到某一行时，把它滚进视野。</summary>
+        private void RevealRow()
+        {
+            OvCat c = OvLayout.CatAt(model, selCat);
+            if (c == null || rowFocus < 0 || rowFocus >= c.Slots.Count) { Invalidate(); return; }
+            OvSlot s = c.Slots[rowFocus];
+            float top = OvLayout.DetailY + OvLayout.CapH;
+            if (s.Y < top) scrollDetail -= (top - s.Y);
+            else if (s.Y + s.H > OvLayout.DetailBottom) scrollDetail += (s.Y + s.H - OvLayout.DetailBottom);
+            if (scrollDetail < 0f) scrollDetail = 0f;
+            float mx = OvLayout.MaxScrollDetail(ClientSize);
+            if (scrollDetail > mx) scrollDetail = mx;
+            Relayout();
+        }
+
+        /// <summary>菜单弹在那一行下面用。</summary>
+        private Point RowPoint(int n)
+        {
+            OvCat c = OvLayout.CatAt(model, selCat);
+            if (c == null || n < 0 || n >= c.Slots.Count) return new Point((int)OvLayout.DetailX + 24, 60);
+            OvSlot s = c.Slots[n];
+            int y = (int)(s.Y + s.H);
+            if (y > ClientSize.Height - 40) y = (int)Math.Max(0, s.Y - 8);
+            return new Point((int)OvLayout.DetailX + 24, y);
         }
 
         private string TipFor(OvSlot s)
@@ -845,6 +940,15 @@ namespace Installer
         internal string Dump()
         {
             return model == null ? "" : model.Dump();
+        }
+
+        /// <summary>自检用：键盘走到哪一层（-1 = 大类，>=0 = 明细第几行）。</summary>
+        internal int RowFocus { get { return rowFocus; } }
+
+        /// <summary>自检用：喂一个按键，走和真键盘同一条路。</summary>
+        internal void TestKey(Keys k)
+        {
+            OnKeyDown(new KeyEventArgs(k));
         }
     }
 }

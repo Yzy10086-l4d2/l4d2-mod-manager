@@ -58,9 +58,9 @@ namespace Installer
             AccentDown = C(135, 26, 21),
             DangerHover = C(255, 244, 243),
             DangerDown = C(250, 235, 234),
-            Warn = C(169, 97, 0),
+            Warn = C(155, 88, 0),          // 对 RowOff 底色 5.1:1（原来 169,97,0 只有 4.44，差一点）
             Ok = C(46, 125, 50),
-            Info = C(2, 119, 189),
+            Info = C(0, 108, 172),         // 对 RowGame 底色 5.2:1（原来 2,119,189 只有 4.41）
             RowOn = C(238, 247, 238),
             RowOff = C(253, 246, 231),
             RowGame = C(240, 246, 252),

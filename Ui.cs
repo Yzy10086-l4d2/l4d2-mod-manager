@@ -332,6 +332,7 @@ namespace Installer
             };
 
             btnLaunchEdit = new FlatButton(); btnLaunchEdit.Text = "…"; btnLaunchEdit.Font = Theme.UIBold;
+            btnLaunchEdit.AccessibleName = "放大编辑启动项";
             btnLaunchEdit.SetBounds(358, 196, 26, 24);
             btnLaunchEdit.Click += delegate { EditLaunch(); };
             tips.SetToolTip(btnLaunchEdit, "放大编辑启动项（可换行、可恢复默认、可把 0/1 换成 0 或 1）。双击输入框也能打开。");
@@ -373,7 +374,7 @@ namespace Installer
             // ---- 左栏下：日志 ----
             Section gl = new Section();
             gl.Caption = "日志"; gl.SetBounds(Theme.M, 438, leftW, CH - 438 - 116); Controls.Add(gl);
-            FlatButton btnLog = new FlatButton(); btnLog.Text = "打开日志"; btnLog.SetBounds(leftW - 12 - 68, 1, 68, 20); btnLog.Font = Theme.UISmall; btnLog.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", Core.LogDir); } catch { } }; gl.Controls.Add(btnLog);
+            FlatButton btnLog = new FlatButton(); btnLog.Text = "打开日志"; btnLog.SetBounds(leftW - 12 - 68, 1, 68, 24); btnLog.Font = Theme.UISmall; btnLog.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", Core.LogDir); } catch { } }; gl.Controls.Add(btnLog);
             txtLog = new TextBox();
             txtLog.SetBounds(12, 30, leftW - 24, Math.Max(60, CH - 438 - 116 - 34));   // 日志框撑满卡片
             txtLog.Multiline = true; txtLog.ScrollBars = ScrollBars.Both; txtLog.WordWrap = false; txtLog.ReadOnly = true;

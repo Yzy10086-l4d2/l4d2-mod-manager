@@ -146,6 +146,19 @@ namespace Installer
                             + " → 命中 " + (got == null ? "无" : got.Name));
             if (want != null && want != got) { Core.Log("FAIL", "OVSELF 点一行命中的不是那个位置"); bad++; }
 
+            // 键盘：→ 进明细、↓ 走一行、← 退回大类
+            map.SelectCatForShot(cats.Length > 0 ? cats[0] : "");
+            map.TestKey(Keys.Right);
+            int f1 = map.RowFocus;
+            map.TestKey(Keys.Down);
+            int f2 = map.RowFocus;
+            map.TestKey(Keys.Left);
+            int f3 = map.RowFocus;
+            Core.Log("INFO", "OVSELF 键盘：→ 后 " + f1 + "，↓ 后 " + f2 + "，← 后 " + f3);
+            if (f1 != 0) { Core.Log("FAIL", "OVSELF 按 → 没进明细第一行"); bad++; }
+            if (f2 != 1) { Core.Log("FAIL", "OVSELF 按 ↓ 没往下走一行"); bad++; }
+            if (f3 != -1) { Core.Log("FAIL", "OVSELF 按 ← 没退回大类"); bad++; }
+
             // 点一行真的会跳回方案树，并且选中那个位置（看板不收起来的话，树会被盖在下面）
             if (want != null)
             {
