@@ -92,6 +92,7 @@ namespace Installer
 
         [ThreadStatic] private static byte[] _copyBuf;
         private static bool _swapFallbackTold;   // 「本卷不支持 File.Replace」只提示一次
+        private static DateTime _lastFlush;
         private static StreamWriter _logWriter;
         private static readonly object _logGate = new object();
 
@@ -106,6 +107,8 @@ namespace Installer
             LogDir = Path.Combine(PkgDir, "_装机记录");
             if (!Directory.Exists(LogDir)) Directory.CreateDirectory(LogDir);
             LogFile = Path.Combine(LogDir, "log-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".txt");
+            // 日志改成攒批落了，正常退出时也要把最后几行写下去（以前只有致命异常那条路会关日志）
+            try { AppDomain.CurrentDomain.ProcessExit += delegate { CloseLog(); }; } catch { }
             PruneLogs();
             MigrateLegacyConfig();
             LoadConfig();
@@ -203,7 +206,14 @@ namespace Installer
                         _logWriter = new StreamWriter(new FileStream(LogFile, FileMode.Append, FileAccess.Write, FileShare.ReadWrite), new UTF8Encoding(false));
                     }
                     _logWriter.WriteLine(line);
-                    _logWriter.Flush();
+                    // U 盘上每行 flush 一次就是一次设备写，装机时会攒出几百次小 IO。
+                    // 普通行 500ms 落一次；WARN/FAIL 立刻落 —— 真出事时最需要看的就是那几行。
+                    if (level == "FAIL" || level == "WARN"
+                        || (DateTime.UtcNow - _lastFlush).TotalMilliseconds > 500)
+                    {
+                        _logWriter.Flush();
+                        _lastFlush = DateTime.UtcNow;
+                    }
                 }
             }
             catch { }

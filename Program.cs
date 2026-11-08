@@ -152,6 +152,14 @@ namespace Installer
                 else if (a.StartsWith("--game=", StringComparison.OrdinalIgnoreCase)) gameRoot = a.Substring(7).Trim('"');
             }
 
+            // 自检全程不许写配置：以前 --addonself 把 Mode 改成本地模式后没写回去，
+            // 跑一次自检用户的工作模式就变了（库从 223 个 MOD 变成 49 个）。
+            // 必须在下面这些分支 return **之前** 置位 —— 它们一样会跑扫描、开界面，一样会改到配置；
+            // 以前这行写在所有自检分支后面，等于对它们全部无效。
+            Core.SelfTesting = selfTest || uiTest || copyTest || tweakSelf || launchSelf || dupSelf
+                            || addonSelf || safeSelf || dumpId || dumpTree || ovDump || recogSelf
+                            || mapShot || mapSelf || scanRace;
+
             // 单实例只约束界面模式：已经开着就把那个窗口叫到前面来
             bool created;
             Mutex only = new Mutex(true, "L4D2Setup_SingleInstance", out created);
@@ -264,6 +272,7 @@ namespace Installer
             if (selfTest) return Work.SelfTest(gameRoot);
             if (copyTest)
             {
+                int bad = 0;      // 任何一个用例不对就让退出码非 0，CI/脚本才判得出来
                 Core.ScanMods();
                 System.Collections.Generic.List<ModItem> pick = new System.Collections.Generic.List<ModItem>();
                 foreach (ModItem m in Core.ModList) { if (!m.IsArchive && m.Size > 1000000 && m.Size < 60000000) { pick.Add(m); if (pick.Count >= 4) break; } }
@@ -271,6 +280,7 @@ namespace Installer
                 ModItem arcOne = null;
                 foreach (ModItem m in Core.ModList) if (m.IsArchive && m.Size > 0 && m.Size < 80000000) { arcOne = m; break; }
                 if (arcOne != null) pick.Add(arcOne);
+                if (pick.Count == 0) { Console.WriteLine("copytest: 库里找不到可测的文件，跳过"); bad++; }
 
                 // 7z 用例：Rar.exe 不认 7z，解包要换图形版 WinRAR.exe，这里真解一次核对字节数
                 string z7line;
@@ -288,6 +298,7 @@ namespace Installer
                     try { if (System.IO.File.Exists(zDst)) zGot = new System.IO.FileInfo(zDst).Length; } catch { }
                     z7line = "7z 解包: " + seven.Inner + " | 期望 " + seven.Size + " | 实得 " + zGot
                            + (zOk && zGot == seven.Size ? "  [OK]\r\n" : "  [FAIL " + (zWhy ?? "字节数不对") + "]\r\n");
+                    if (!(zOk && zGot == seven.Size)) bad++;
                     try { if (System.IO.File.Exists(zDst)) System.IO.File.Delete(zDst); } catch { }
                 }
                 string tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "copytest");
@@ -297,6 +308,7 @@ namespace Installer
                 System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
                 Work.CopyMods(tmp, pick, null, out c1, out s1, out a1, out f1);
                 sw.Stop();
+                if (f1.Count > 0) bad++;
                 System.IO.File.WriteAllText(System.IO.Path.Combine(Core.LogDir, "copytest.txt"),
                     "第一遍: 新装 " + c1 + " 跳过 " + s1 + " 失败 " + f1.Count + " 用时 " + Math.Round(sw.Elapsed.TotalSeconds, 2) + " 秒\r\n" +
                     "落盘 " + System.IO.Directory.GetFiles(System.IO.Path.Combine(tmp, "left4dead2\\addons")).Length + " 个\r\n" +
@@ -319,6 +331,7 @@ namespace Installer
                 System.IO.File.AppendAllText(System.IO.Path.Combine(Core.LogDir, "copytest.txt"),
                     "第三遍（覆盖模式）: 重写 " + c3 + " 跳过 " + s3 + " 失败 " + f3.Count + " 用时 " + Math.Round(sw3.Elapsed.TotalSeconds, 2) + " 秒" +
                     (c3 == pick.Count && s3 == 0 ? "  [OK 全部重写]\r\n" : "  [FAIL 应该全部重写]\r\n"));
+                if (!(c3 == pick.Count && s3 == 0)) bad++;
 
                 // 停止语义：在开始前请求停止，复制任务应当一个文件都不开写。
                 string tmpStop = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "copytest-stop");
@@ -332,13 +345,12 @@ namespace Installer
                 System.IO.File.AppendAllText(System.IO.Path.Combine(Core.LogDir, "copytest.txt"),
                     "停止测试: 新装 " + cs + " 跳过 " + ss + " 失败 " + fs1.Count + " 落盘 " + stopFiles + " 个"
                     + (cs == 0 && stopFiles == 0 ? "  [OK 停止后没有开写]\r\n" : "  [FAIL 停止后仍然复制了文件]\r\n"));
+                if (!(cs == 0 && stopFiles == 0)) bad++;
                 System.IO.Directory.Delete(tmpStop, true);
                 System.IO.Directory.Delete(tmp, true);
-                return 0;
+                Console.WriteLine("copytest failures = " + bad + (bad == 0 ? "" : "（明细见 copytest.txt）"));
+                return bad == 0 ? 0 : 1;
             }
-            // 自检全程不许写配置：以前 --addonself 把 Mode 改成本地模式后没写回去，
-            // 跑一次自检用户的工作模式就变了（库从 223 个 MOD 变成 49 个）
-            if (uiTest || selfTest || addonSelf || safeSelf || copyTest || ovDump) Core.SelfTesting = true;
 
             if (uiTest)
             {

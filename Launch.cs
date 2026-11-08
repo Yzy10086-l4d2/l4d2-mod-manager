@@ -81,6 +81,7 @@ namespace Installer
             chk(CountSwitches(Default) == 8, "开关数 8（实际 " + CountSwitches(Default) + "）");
             chk(Clean(Default) == Default, "默认值本身是干净的");
             chk(CountSwitches("") == 0, "空串开关数 0");
+            bad += Work.SelfTestLaunchVdf();        // localconfig.vdf 改写：只碰临时文件
             return bad;
         }
     }

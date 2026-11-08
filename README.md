@@ -168,11 +168,11 @@ U盘根\
 
 ```
 --selftest       安装流程自检
---copytest       文件复制
+--copytest       文件复制（有失败项时退出码非 0）
 --safeself       写/删底线（原子落地、压缩包不误删、路径不越界；在数据卷上跑）
 --addonself      addonlist 读写 / 开关 / 删除
 --dupself        重复判定
---launchself     启动项写入
+--launchself     启动项写入（含 localconfig.vdf 改写，只碰临时文件）
 --tweakself      参数套用
 --recogself      内容识别
 --dumpid         打印识别结果

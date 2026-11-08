@@ -197,7 +197,8 @@ namespace Installer
         {
             string ps1 = Path.Combine(Core.PkgDir, "Skeeto\\Skeeto\\Skeeto\\Maintain.ps1");
             string dir = Path.Combine(Core.PkgDir, "Skeeto\\Skeeto");
-            bool already = File.Exists(Path.Combine(gameRoot, "skeeto.dll"));
+            string dll = Path.Combine(gameRoot, "skeeto.dll");
+            bool already = File.Exists(dll);
             if (already && !Overwrite)
             {
                 Core.Log("OK", "Skeeto 已经装过（skeeto.dll 在），跳过。想重装就在「安装选项」里选「覆盖重装」。");
@@ -205,12 +206,23 @@ namespace Installer
                     Core.Log("WARN", "bin\\wininet.dll 不见了 —— 勾「覆盖重装」能把平台文件补回来");
                 return true;
             }
-            bool ok = false;
+
+            // 覆盖模式下 skeeto.dll 本来就在，光看「文件在不在」永远算成功：
+            // 安装器一次都没写成，也会被记成「又完整装了一遍」。装之前先记一份基线。
+            long baseLen = 0;
+            DateTime baseTime = DateTime.MinValue;
+            if (already)
+            {
+                try { FileInfo bf = new FileInfo(dll); baseLen = bf.Length; baseTime = bf.LastWriteTimeUtc; }
+                catch { }
+            }
+
+            bool wrote = false;
             if (File.Exists(ps1))
             {
                 foreach (string mode in new string[] { "Migrate", "Apply" })
                 {
-                    if (ok) break;
+                    if (wrote) break;
                     Core.Log("INFO", "调用 Skeeto 官方安装器（" + mode + "）…");
                     string output = RunCapture("powershell.exe",
                         "-NoLogo -NoProfile -ExecutionPolicy Bypass -File \"" + ps1 + "\" -Mode " + mode +
@@ -221,21 +233,67 @@ namespace Installer
                         string s2 = line.Trim();
                         if (s2.Length > 0) Core.Log("INFO", "  | " + s2);
                     }
-                    if (File.Exists(Path.Combine(gameRoot, "skeeto.dll"))) ok = true;
-            if (already) Core.Log("INFO", "覆盖模式：Skeeto 又完整装了一遍");
-                    else Core.Log("WARN", mode + " 跑完但 skeeto.dll 还是没有");
+                    wrote = SkeetoWritten(dll, already, baseLen, baseTime);
+                    if (wrote)
+                        Core.Log("OK", mode + " 跑完，skeeto.dll "
+                            + (already ? "已重写（" + Core.Human(baseLen) + " → " + Core.Human(new FileInfo(dll).Length) + "）" : "到位"));
+                    else
+                        Core.Log("WARN", mode + " 跑完但 skeeto.dll "
+                            + (File.Exists(dll) ? "和装之前一模一样，也和包里那份对不上" : "还是没有"));
                 }
             }
-            if (!ok)
+            if (!wrote)
             {
                 Core.Log("WARN", "改用整包复制 Skeeto");
                 try { CopyTree(dir, gameRoot, null); } catch (Exception ex) { Core.Log("FAIL", "Skeeto 复制失败: " + ex.Message); }
+                wrote = SkeetoWritten(dll, already, baseLen, baseTime);
             }
-            bool has = File.Exists(Path.Combine(gameRoot, "skeeto.dll"));
-            Core.Log(has ? "OK" : "FAIL", has ? "skeeto.dll 到位" : "没看到 skeeto.dll");
+
+            if (!File.Exists(dll))
+            {
+                Core.Log("FAIL", "没看到 skeeto.dll");
+                return false;
+            }
+            if (already && !wrote)
+            {
+                // 装之前就在、装完还是那份 —— 这次覆盖重装等于没做，不能报成功
+                Core.Log("FAIL", "Skeeto 没装成功：skeeto.dll 还是装之前那份（" + Core.Human(baseLen) + "）");
+                return false;
+            }
+            Core.Log("OK", already ? "skeeto.dll 与包里那份一致（这次没有重写）" : "skeeto.dll 到位");
             if (File.Exists(Path.Combine(gameRoot, "bin\\wininet.dll"))) Core.Log("OK", "bin\\wininet.dll（代理）到位");
             else Core.Log("WARN", "没看到 bin\\wininet.dll，Skeeto 可能不会加载");
-            return has;
+            return true;
+        }
+
+        /// <summary>
+        /// skeeto.dll 这次是不是真的到位：本来没有 → 在就行；
+        /// 本来就有（覆盖重装）→ 要么大小/时间变了，要么内容已经和包里那份一致。
+        /// 只判「文件在不在」的话，安装器一次没写成也会被算成功（v2.51 就是这么误报的）。
+        /// </summary>
+        static bool SkeetoWritten(string dll, bool already, long baseLen, DateTime baseTime)
+        {
+            try
+            {
+                FileInfo f = new FileInfo(dll);
+                if (!f.Exists) return false;
+                if (!already) return true;
+                if (f.Length != baseLen || f.LastWriteTimeUtc != baseTime) return true;
+                return SkeetoPayloadMatches(dll);
+            }
+            catch { return false; }
+        }
+
+        static bool SkeetoPayloadMatches(string dll)
+        {
+            try
+            {
+                string payload = Path.Combine(Path.Combine(Core.PkgDir, "Skeeto\\Skeeto"), "skeeto.dll");
+                if (!File.Exists(payload)) return false;
+                string a = Core.HashOf(dll), b = Core.HashOf(payload);
+                return a != null && b != null && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
         }
 
         // ---------- 素材包 ----------
@@ -357,8 +415,14 @@ namespace Installer
             List<string> cfgs = SteamLocalConfigs();
             try
             {
-                bool running = Process.GetProcessesByName("steam").Length > 0;
-                if (running) Core.Log("WARN", "Steam 正在运行，它退出时可能把配置写回去；最稳是退出 Steam 再写、然后重开");
+                if (Process.GetProcessesByName("steam").Length > 0)
+                {
+                    // Steam 退出时会把 localconfig.vdf 整个写回去：现在写等于白写，
+                    // 界面上还会显示「已写入」，用户以为成了。干脆不写，让他关掉再来。
+                    Core.Log("WARN", "Steam 正在运行，这次不写启动项（它退出时会把配置覆盖回去）");
+                    try { System.Windows.Forms.Clipboard.SetText(value); } catch { }
+                    return "Steam 正在运行，没写成功：退出 Steam 后再点一次（启动项已复制到剪贴板）";
+                }
             }
             catch { }
             if (cfgs.Count == 0)
@@ -424,8 +488,20 @@ namespace Installer
                 }
                 changed = true;
             }
-            if (changed) Core.WriteAllTextAtomic(path, text, new UTF8Encoding(false));
-            return changed;
+            if (!changed) return false;
+            // 改之前留一份原样（只留第一份，不覆盖已有备份）：写坏了还能手工换回去
+            string bak = path + ".bak";
+            try
+            {
+                if (!File.Exists(bak)) File.Copy(path, bak, false);
+            }
+            catch (Exception ex) { Core.Log("WARN", "localconfig.vdf 备份失败（继续写）: " + ex.Message); }
+            Core.WriteAllTextAtomic(path, text, new UTF8Encoding(false));
+            // 写成功 ≠ 写对了：读回来核一遍，别出现「日志说写好了，文件里其实没有」
+            string back = File.ReadAllText(path, Encoding.UTF8);
+            if (back.IndexOf(value, StringComparison.Ordinal) < 0)
+                throw new Exception("写完读回来找不到新启动项");
+            return true;
         }
 
         // ---------- 校验 ----------
@@ -558,6 +634,67 @@ namespace Installer
             if (t == DriveType.Removable || t == DriveType.CDRom) return Math.Min(2, Math.Max(1, cpu));
             if (t == DriveType.Network) return Math.Min(4, Math.Max(2, cpu));
             return Math.Min(3, Math.Max(2, cpu));
+        }
+
+        // ---------- 自测：localconfig.vdf 改写（play 时真 Steam 配置一个字节都不碰） ----------
+        /// <summary>
+        /// --launchself 的一部分。三种情况各造一个假 vdf：
+        ///   有 550 块 → 只换 LaunchOptions 的值，别的键和结构不许动
+        ///   有 apps 没 550 → 插一个 550 块进去
+        ///   连 apps 都没有 → 返回 false，文件原样不动
+        /// </summary>
+        public static int SelfTestLaunchVdf()
+        {
+            int bad = 0;
+            string dir = Path.Combine(Path.GetTempPath(), "l4d2-vdf-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+            Action<bool, string> chk = delegate(bool ok, string name)
+            {
+                if (ok) Core.Log("OK", "VDFSELF " + name);
+                else { bad++; Core.Log("FAIL", "VDFSELF " + name); }
+            };
+            try
+            {
+                Directory.CreateDirectory(dir);
+
+                // A. 已有 550 块 + 已有 LaunchOptions：只换值
+                string a = Path.Combine(dir, "a.vdf");
+                string aText = "\"UserLocalConfigStore\"\r\n{\r\n\t\"Software\"\r\n\t{\r\n\t\t\"Valve\"\r\n\t\t{\r\n"
+                             + "\t\t\t\"Steam\"\r\n\t\t\t{\r\n\t\t\t\t\"apps\"\r\n\t\t\t\t{\r\n"
+                             + "\t\t\t\t\t\"550\"\r\n\t\t\t\t\t{\r\n"
+                             + "\t\t\t\t\t\t\"LaunchOptions\"\t\t\"-old\"\r\n"
+                             + "\t\t\t\t\t\t\"LastPlayed\"\t\t\"123\"\r\n"
+                             + "\t\t\t\t\t}\r\n\t\t\t\t}\r\n\t\t\t}\r\n\t\t}\r\n\t}\r\n}\r\n";
+                File.WriteAllText(a, aText, new UTF8Encoding(false));
+                bool okA = PatchVdf(a, "-new -novid");
+                string backA = File.ReadAllText(a, Encoding.UTF8);
+                chk(okA, "有 550 块时返回 true");
+                chk(backA.Contains("\"-new -novid\""), "启动项已换成新值");
+                chk(!backA.Contains("\"-old\""), "旧启动项已被替换");
+                chk(backA.Contains("\"LastPlayed\"") && backA.Contains("\"UserLocalConfigStore\""), "其它键和结构没被动");
+                chk(File.Exists(a + ".bak"), "改写前留了 .bak");
+                chk(File.ReadAllText(a + ".bak", Encoding.UTF8) == aText, ".bak 是改写前的原样");
+
+                // B. 有 apps、没有 550：插一个 550 块
+                string b = Path.Combine(dir, "b.vdf");
+                File.WriteAllText(b, "\"root\"\r\n{\r\n\t\"apps\"\r\n\t{\r\n\t}\r\n}\r\n", new UTF8Encoding(false));
+                bool okB = PatchVdf(b, "-new");
+                chk(okB && File.ReadAllText(b, Encoding.UTF8).Contains("\"-new\""), "没有 550 时能插进去");
+
+                // C. 连 apps 都没有：不写、不改
+                string c = Path.Combine(dir, "c.vdf");
+                string cText = "\"root\"\r\n{\r\n}\r\n";
+                File.WriteAllText(c, cText, new UTF8Encoding(false));
+                bool okC = PatchVdf(c, "-new");
+                chk(!okC, "找不到 apps 时返回 false");
+                chk(File.ReadAllText(c, Encoding.UTF8) == cText, "找不到 apps 时文件一个字没动");
+            }
+            catch (Exception ex)
+            {
+                Core.Log("FAIL", "VDFSELF 自检本身出错: " + ex.Message);
+                bad++;
+            }
+            finally { try { Directory.Delete(dir, true); } catch { } }
+            return bad;
         }
 
         // ---------- MOD 库维护 ----------
