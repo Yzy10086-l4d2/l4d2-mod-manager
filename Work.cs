@@ -1307,6 +1307,41 @@ namespace Installer
                 if (files2 != files) { bad++; Console.WriteLine("[FAIL] 全关时文件数变了"); }
                 Console.WriteLine("ADDON 一个都不选：全关=" + f1 + "，用户自己的还开着=" + f2 + "，文件 " + files2 + " 个");
 
+                // 「已装 MOD 开关」窗口：只改开关不能重排顺序（顺序 = 覆盖优先级），真拖过才重排
+                string tmp2 = Path.Combine(Path.GetTempPath(), "l4d2-order-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+                try
+                {
+                    string a2 = Path.Combine(Path.Combine(tmp2, "left4dead2"), "addons");
+                    Directory.CreateDirectory(a2);
+                    foreach (string n in new string[] { "c.vpk", "a.vpk", "b.vpk" })
+                        File.WriteAllText(Path.Combine(a2, n), "x");
+                    File.WriteAllText(AddonList.FileOf(tmp2),
+                        "\"AddonList\"\n{\n\t\"b.vpk\"\t\t\"1\"\n\t\"c.vpk\"\t\t\"1\"\n\t\"a.vpk\"\t\t\"1\"\n"
+                        + "\t\"workshop\\999.vpk\"\t\t\"1\"\n}\n", Encoding.Default);
+
+                    List<string> got = AddonList.OrderOf(tmp2);
+                    bool ord = got.Count == 4 && got[0] == "b.vpk" && got[1] == "c.vpk" && got[2] == "a.vpk";
+                    if (!ord) { bad++; Console.WriteLine("[FAIL] 读不出 addonlist 的顺序: " + string.Join(",", got.ToArray())); }
+
+                    Dictionary<string, bool> ch = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+                    ch["b.vpk"] = true; ch["c.vpk"] = false; ch["a.vpk"] = true;
+                    AddonSwitchForm.WriteSwitches(tmp2, new List<string> { "b.vpk", "c.vpk", "a.vpk" }, ch, false);
+                    List<string> after = AddonList.OrderOf(tmp2);
+                    Dictionary<string, bool> st3 = AddonList.Read(tmp2);
+                    bool keepOrder = after.Count >= 3 && after[0] == "b.vpk" && after[1] == "c.vpk" && after[2] == "a.vpk";
+                    bool changed = st3.ContainsKey("c.vpk") && !st3["c.vpk"];
+                    if (!keepOrder) { bad++; Console.WriteLine("[FAIL] 只改开关却把顺序改了: " + string.Join(",", after.ToArray())); }
+                    if (!changed) { bad++; Console.WriteLine("[FAIL] 开关没写进 addonlist"); }
+
+                    AddonSwitchForm.WriteSwitches(tmp2, new List<string> { "a.vpk", "c.vpk", "b.vpk" }, ch, true);
+                    List<string> moved2 = AddonList.OrderOf(tmp2);
+                    bool reordered = moved2.Count >= 3 && moved2[0] == "a.vpk" && moved2[1] == "c.vpk" && moved2[2] == "b.vpk";
+                    if (!reordered) { bad++; Console.WriteLine("[FAIL] 拖过之后没按新顺序写: " + string.Join(",", moved2.ToArray())); }
+                    Console.WriteLine("ADDON 开关窗口：读顺序=" + ord + "，只改开关不动顺序=" + keepOrder
+                        + "，真拖过才重排=" + reordered);
+                }
+                finally { try { Directory.Delete(tmp2, true); } catch { } }
+
                 // 本地模式：从游戏 addons 删一项 → 文件真删掉、addonlist 里那条登记一起摘掉
                 string savedMode = Core.Cfg.Mode, savedLog = Core.LogDir, savedGame = Core.Cfg.GameRoot;
                 try

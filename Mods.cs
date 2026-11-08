@@ -72,6 +72,28 @@ namespace Installer
             Core.WriteAllTextAtomic(path, string.Join(nl, lines.ToArray()) + tail, Encoding.Default);
         }
 
+        /// <summary>
+        /// 文件里登记的名字，按它在文件里的先后顺序返回。
+        /// 顺序 = 覆盖优先级（后写的压前面的），界面上要照这个显示；
+        /// 以前界面按文件名排序显示、再整份写回去，一保存就把用户的优先级顺序打乱了。
+        /// </summary>
+        public static List<string> OrderOf(string gameRoot)
+        {
+            List<string> names = new List<string>();
+            string p = FileOf(gameRoot);
+            if (!File.Exists(p)) return names;
+            try
+            {
+                foreach (string raw in File.ReadAllLines(p, Encoding.Default))
+                {
+                    Match m = LineRe.Match(raw);
+                    if (m.Success) names.Add(m.Groups[1].Value);
+                }
+            }
+            catch (Exception ex) { Core.Log("WARN", "读 addonlist 顺序失败: " + ex.Message); }
+            return names;
+        }
+
         public static Dictionary<string, bool> Read(string gameRoot)
         {
             Dictionary<string, bool> d = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
@@ -649,6 +671,7 @@ namespace Installer
         private readonly string gameRoot;
         private ListView lv;
         private Label lbl;
+        private bool orderDirty;            // 用户在这个窗口里真的上移/下移过：只有这时才重排 addonlist
         private Dictionary<string, bool> state = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         public int Deleted;                 // 这个窗口里删掉（真删）的个数，关窗后主窗口据此决定要不要重扫
 
@@ -737,12 +760,32 @@ namespace Installer
             string addons = Path.Combine(Path.Combine(gameRoot, "left4dead2"), "addons");
             if (!Directory.Exists(addons)) { lv.EndUpdate(); lbl.Text = "游戏里没有 addons 目录"; return; }
             string[] files = Directory.GetFiles(addons, "*.vpk");
-            Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+
+            // 行的顺序就是 addonlist 里的顺序（= 覆盖优先级）。以前这里是按文件名排序，
+            // 而「写入并关闭」又照这个顺序整份写回去 —— 打开一次、点一次保存，
+            // 用户排好的优先级就被改成字母序了。现在先按文件里的顺序排，没登记的排在后面。
+            HashSet<string> onDisk = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string f in files) onDisk.Add(Path.GetFileName(f));
+            List<string> order = new List<string>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string n in AddonList.OrderOf(gameRoot))
+                if (onDisk.Contains(n) && seen.Add(n)) order.Add(n);
+            List<string> rest = new List<string>();
             foreach (string f in files)
             {
-                string name = Path.GetFileName(f);
-                bool on = false;
-                if (state.ContainsKey(name)) on = state[name];
+                string n = Path.GetFileName(f);
+                if (seen.Add(n)) rest.Add(n);
+            }
+            rest.Sort(StringComparer.OrdinalIgnoreCase);
+            order.AddRange(rest);
+
+            foreach (string name in order)
+            {
+                // 没登记 = 游戏默认就是启用（和主列表的判定一致；见 ModItem.AddonOn 的注释）。
+                // 以前这里默认 false，新丢进 addons 的 vpk 一打开这个窗口就成了「关闭」，
+                // 点一下「写入并关闭」就写成 0，等于把用户没碰过的 MOD 静默停用。
+                bool on;
+                if (!state.TryGetValue(name, out on)) on = true;
                 ListViewItem li = new ListViewItem(name);
                 li.SubItems.Add(on ? "启用" : "关闭");
                 li.Checked = on;
@@ -750,7 +793,7 @@ namespace Installer
                 lv.Items.Add(li);
             }
             lv.EndUpdate();
-            lbl.Text = "共 " + files.Length + " 个已装 MOD";
+            lbl.Text = "共 " + files.Length + " 个已装 MOD，顺序 = 覆盖优先级（下面的压上面的）";
         }
 
         private void MoveItem(int dir)
@@ -763,6 +806,7 @@ namespace Installer
             lv.Items.RemoveAt(i);
             lv.Items.Insert(j, it);
             it.Selected = true;
+            orderDirty = true;
             lv.Focus();
         }
 
@@ -803,6 +847,17 @@ namespace Installer
                 : "没有可清理的：关着的 MOD 本来就不在 addons 里。");
         }
 
+        /// <summary>
+        /// 把窗口里的开关写进 addonlist。
+        /// reorder=false 时只改 1/0、不动任何一行的位置 —— 绝大多数人只是来开关一个 MOD，
+        /// 不该顺带把整份优先级顺序重写一遍。真的上移/下移过（reorder=true）才按列表顺序重排。
+        /// </summary>
+        internal static void WriteSwitches(string gameRoot, List<string> order, Dictionary<string, bool> states, bool reorder)
+        {
+            if (reorder) AddonList.WriteOrdered(gameRoot, order, states);
+            else AddonList.Write(gameRoot, states);
+        }
+
         private bool ApplyQuiet()
         {
             Dictionary<string, bool> changes = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
@@ -810,10 +865,13 @@ namespace Installer
             foreach (ListViewItem li in lv.Items) { changes[(string)li.Tag] = li.Checked; order.Add((string)li.Tag); }
             try
             {
-                AddonList.WriteOrdered(gameRoot, order, changes);
+                bool reordered = orderDirty;
+                WriteSwitches(gameRoot, order, changes, reordered);
+                orderDirty = false;
                 int on = 0;
                 foreach (KeyValuePair<string, bool> kv in changes) if (kv.Value) on++;
-                Core.Log("OK", "addonlist 已更新：" + on + " 个启用 / " + (changes.Count - on) + " 个关闭");
+                Core.Log("OK", "addonlist 已更新：" + on + " 个启用 / " + (changes.Count - on) + " 个关闭"
+                    + (reordered ? "（顺序按窗口里的排列重写）" : "（顺序没动）"));
                 return true;
             }
             catch (Exception ex)
