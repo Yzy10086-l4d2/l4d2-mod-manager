@@ -353,7 +353,7 @@ namespace Installer
         {
             byte[] b = Encoding.UTF8.GetBytes(body ?? "");
             StringBuilder h = new StringBuilder();
-            h.Append("HTTP/1.1 ").Append(code).Append(' ').Append(code == 200 ? "OK" : (code == 204 ? "No Content" : "Not Found")).Append("\r\n");
+            h.Append("HTTP/1.1 ").Append(code).Append(' ').Append(Reason(code)).Append("\r\n");
             h.Append("Content-Type: ").Append(type).Append("\r\n");
             h.Append("Content-Length: ").Append(b.Length).Append("\r\n");
             h.Append("Cache-Control: no-store\r\n");
@@ -362,6 +362,20 @@ namespace Installer
             ns.Write(hb, 0, hb.Length);
             if (b.Length > 0) ns.Write(b, 0, b.Length);
             ns.Flush();
+        }
+
+        /// <summary>状态行里那句英文。以前除了 200/204 一律写 "Not Found"，403 也写着 Not Found。</summary>
+        private static string Reason(int code)
+        {
+            switch (code)
+            {
+                case 204: return "No Content";
+                case 400: return "Bad Request";
+                case 403: return "Forbidden";
+                case 404: return "Not Found";
+                case 500: return "Internal Server Error";
+                default: return "OK";
+            }
         }
 
         // ---------------------------------------------------------------- 接口
@@ -445,8 +459,18 @@ namespace Installer
                     d.TryGetValue("x", out sx);
                     d.TryGetValue("z", out sz);
                     float x, z;
-                    float.TryParse(sx, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out x);
-                    float.TryParse(sz, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out z);
+                    bool hx = float.TryParse(sx, System.Globalization.NumberStyles.Float,
+                                             System.Globalization.CultureInfo.InvariantCulture, out x);
+                    bool hz = float.TryParse(sz, System.Globalization.NumberStyles.Float,
+                                             System.Globalization.CultureInfo.InvariantCulture, out z);
+                    if (!hx || !hz || string.IsNullOrEmpty(ck))
+                    {
+                        // 解析不出来就直说。以前 x/z 解析失败会留着 0，卡片被挪到原点，
+                        // 前端收到的却是 {"ok":true} —— 位置丢了还看不出来。
+                        Core.Log("WARN", "桌面拖拽位置无效：" + (ck ?? "null") + " (" + (sx ?? "null") + ", " + (sz ?? "null") + ")");
+                        Text(ns, 400, "application/json; charset=utf-8", "{\"ok\":false}");
+                        return;
+                    }
                     // 走 UI 线程写：摆位表是普通 Dictionary，state 那边正在读，
                     // 两个线程同时改会出问题
                     mf.Invoke(new Action(delegate { DeskLayout.Put(ck, x, z); }));

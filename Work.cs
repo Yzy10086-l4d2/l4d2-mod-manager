@@ -1250,7 +1250,9 @@ namespace Installer
                 if (PutIntoLib(f, name, relDir, move, log)) { imported++; known.Add(name); }
             }
 
-            foreach (string pat in new string[] { "*.rar", "*.zip" })
+            // 7z 也要收：识别、装机、冲突检查都支持 7z 了，只有这里还只扫 rar/zip，
+            // 结果「批量导入」对着一个 7z 文件夹一个字都不收，也不说为什么。
+            foreach (string pat in new string[] { "*.rar", "*.zip", "*.7z" })
             {
                 foreach (string f in Directory.GetFiles(sourceDir, pat, SearchOption.AllDirectories))
                 {
@@ -1721,6 +1723,35 @@ namespace Installer
                     Core.Cfg.Mode = savedMode;
                     Core.Cfg.GameRoot = savedGame;
                     Core.LogDir = savedLog;
+                }
+
+                // 批量导入：*.7z 也要收 —— 识别、装机、冲突检查都支持 7z，只有「导入」原来只扫 rar/zip，
+                // 对着一个装着 7z 的文件夹点导入会一个都不收，还不说为什么。
+                string savedModRoot = Core.ModRoot;
+                try
+                {
+                    string lib = Path.Combine(tmp, "lib");
+                    string srcDir = Path.Combine(tmp, "待导入");
+                    Directory.CreateDirectory(lib);
+                    Directory.CreateDirectory(srcDir);
+                    // 内容不重要：导入只负责搬运，7z 读不读得了是别处的事
+                    File.WriteAllText(Path.Combine(srcDir, "ak47测试.7z"), "x");
+                    File.WriteAllText(Path.Combine(srcDir, "ak47测试.zip"), "x");
+                    Core.ModRoot = lib;
+                    int imp, skp;
+                    ImportVpks(srcDir, false, out imp, out skp);
+                    string box = Path.Combine(Path.Combine(lib, "addons各类物品储藏库"), "AK47");
+                    bool gotZip = File.Exists(Path.Combine(box, "ak47测试.zip"));
+                    bool got7z = File.Exists(Path.Combine(box, "ak47测试.7z"));
+                    if (!gotZip) { bad++; Console.WriteLine("[FAIL] 批量导入：zip 没被收进库"); }
+                    if (!got7z) { bad++; Console.WriteLine("[FAIL] 批量导入：7z 没被收进库（导入只扫 rar/zip）"); }
+                    Console.WriteLine("ADDON 批量导入：zip=" + gotZip + "，7z=" + got7z
+                        + "（入库 " + imp + " 个，跳过 " + skp + " 个）");
+                }
+                finally
+                {
+                    Core.ModRoot = savedModRoot;
+                    try { Core.ScanMods(); } catch { }   // 库根换回来了，把内存里的表重建回去
                 }
             }
             catch (Exception ex)

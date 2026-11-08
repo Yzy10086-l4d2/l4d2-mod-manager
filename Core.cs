@@ -117,6 +117,7 @@ namespace Installer
             // 日志改成攒批落了，正常退出时也要把最后几行写下去（以前只有致命异常那条路会关日志）
             try { AppDomain.CurrentDomain.ProcessExit += delegate { CloseLog(); }; } catch { }
             PruneLogs();
+            SweepTemps();
             MigrateLegacyConfig();
             LoadConfig();
             ApplyConfiguredLibraryRoot();
@@ -241,6 +242,31 @@ namespace Installer
                 if (fs.Length <= 40) return;
                 Array.Sort(fs, StringComparer.OrdinalIgnoreCase);
                 for (int i = 0; i < fs.Length - 40; i++) { try { File.Delete(fs[i]); } catch { } }
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// 清掉被打断时留下的临时文件。程序被强关 / 拔 U 盘时，正在写的 *.part
+        /// （识别缓存那种有好几 MB）会留在 _装机记录 里，越攒越多；一小时前的肯定没人再写了，删掉。
+        /// </summary>
+        private static void SweepTemps()
+        {
+            try
+            {
+                DateTime cutoff = DateTime.UtcNow.AddHours(-1);
+                int n = 0;
+                foreach (string f in Directory.GetFiles(LogDir, "*.part"))
+                {
+                    try
+                    {
+                        if (File.GetLastWriteTimeUtc(f) > cutoff) continue;   // 可能是别的实例正在写
+                        File.Delete(f);
+                        n++;
+                    }
+                    catch { }
+                }
+                if (n > 0) Log("INFO", "清掉上次中断留下的临时文件 " + n + " 个（*.part）");
             }
             catch { }
         }

@@ -342,6 +342,17 @@ namespace Installer
             Save();
         }
 
+        /// <summary>
+        /// 丢掉内存里的摆位，下次用到再从文件读一遍 —— **不写文件**。
+        /// 自检要临时改摆位、再把文件原样放回；如果收尾用 Clear()，那是「清空并落盘」，
+        /// 会把用户真摆好的位置一起抹掉。
+        /// </summary>
+        internal static void Reload()
+        {
+            map.Clear();
+            loaded = false;
+        }
+
         public static void Save()
         {
             try

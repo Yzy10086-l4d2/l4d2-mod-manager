@@ -2278,7 +2278,7 @@ namespace Installer
         internal void BulkImport()
         {
             FolderBrowserDialog d = new FolderBrowserDialog();
-            d.Description = "选一个放着 MOD 的文件夹（vpk / rar / zip 都认，会按类型自动建文件夹归类）";
+            d.Description = "选一个放着 MOD 的文件夹（vpk / rar / zip / 7z 都认，会按类型自动建文件夹归类）";
             if (d.ShowDialog() != DialogResult.OK) return;
             string src = d.SelectedPath;
             if (src.TrimEnd('\\').StartsWith(Core.ModRoot.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
@@ -2746,6 +2746,8 @@ namespace Installer
             if (json.IndexOf('\u0001') >= 0 || json.IndexOf('\0') >= 0) { bad++; Core.Log("FAIL", "DESK JSON 里混进了控制字符"); }
 
             // 3) 摆位：写进去能读回来，文件落盘，然后原样还原
+            //    收尾必须用 Reload（只丢内存里那份）—— 以前用 Clear()，那是「清空并落盘」，
+            //    自检跑一趟就把用户真摆好的卡片位置抹了。
             string layFile = DeskLayout.FileOf();
             byte[] before = null;
             try { if (File.Exists(layFile)) before = File.ReadAllBytes(layFile); } catch { }
@@ -2767,7 +2769,7 @@ namespace Installer
                     else File.WriteAllBytes(layFile, before);
                 }
                 catch { }
-                DeskLayout.Clear();
+                DeskLayout.Reload();
             }
 
             // 4) 本地服务：起一个不带窗口的，真的发一次 HTTP 请求
@@ -2817,19 +2819,19 @@ namespace Installer
                 else Core.Log("INFO", "DESK 首页已注入写操作令牌");
 
                 // 写操作令牌：本机别的网页也能往 127.0.0.1 发 POST，所以没令牌必须 403。
-                // 用一个不存在的 api 路径试，不会碰到任何真实数据。
-                Func<string, int> post = delegate(string tok)
+                // 默认打一个不存在的 api 路径，不会碰到任何真实数据。
+                Func<string, string, string, int> post = delegate(string apiPath, string tok, string payload)
                 {
                     int code = -1; Exception err = null;
                     Thread t = new Thread(delegate()
                     {
                         try
                         {
-                            System.Net.HttpWebRequest req = (System.Net.HttpWebRequest)System.Net.WebRequest.Create(srv.Url + "api/__tokencheck");
+                            System.Net.HttpWebRequest req = (System.Net.HttpWebRequest)System.Net.WebRequest.Create(srv.Url + apiPath);
                             req.Method = "POST";
                             req.ContentType = "application/json";
                             if (tok != null) req.Headers["X-Desk-Token"] = tok;
-                            byte[] data = Encoding.UTF8.GetBytes("{}");
+                            byte[] data = Encoding.UTF8.GetBytes(payload ?? "{}");
                             req.ContentLength = data.Length;
                             using (Stream st = req.GetRequestStream()) st.Write(data, 0, data.Length);
                             using (System.Net.HttpWebResponse r = (System.Net.HttpWebResponse)req.GetResponse()) code = (int)r.StatusCode;
@@ -2839,26 +2841,41 @@ namespace Installer
                             System.Net.HttpWebResponse r = wex.Response as System.Net.HttpWebResponse;
                             if (r != null) code = (int)r.StatusCode; else err = wex;
                         }
-                        catch (Exception ex) { err = ex; }
+                        catch (Exception ex) { code = -2; err = ex; }
                     });
                     t.IsBackground = true;
                     t.Start();
                     DateTime until = DateTime.Now.AddSeconds(10);
                     while (t.IsAlive && DateTime.Now < until) { Application.DoEvents(); Thread.Sleep(10); }
-                    if (t.IsAlive) throw new Exception("请求超时：api");
+                    if (t.IsAlive) throw new Exception("请求超时：" + apiPath);
                     if (err != null) throw err;
                     return code;
                 };
 
-                if (post(null) != 403) { bad++; Core.Log("FAIL", "DESK 写操作不带令牌也能过（本机网页就能装机）"); }
+                if (post("api/__tokencheck", null, "{}") != 403) { bad++; Core.Log("FAIL", "DESK 写操作不带令牌也能过（本机网页就能装机）"); }
                 else Core.Log("INFO", "DESK 写操作无令牌被拒 403");
-                if (post("wrong-token") != 403) { bad++; Core.Log("FAIL", "DESK 写操作令牌错了也能过"); }
+                if (post("api/__tokencheck", "wrong-token", "{}") != 403) { bad++; Core.Log("FAIL", "DESK 写操作令牌错了也能过"); }
                 else Core.Log("INFO", "DESK 写操作错令牌被拒 403");
                 // 令牌对了就该进路由：这个假路径没有处理分支，会返回 404「no api」——
                 // 只要不是 403 就说明令牌这关过了（真接口走各自的 200）。
-                int okCode = post(srv.Token);
+                int okCode = post("api/__tokencheck", srv.Token, "{}");
                 if (okCode == 403 || okCode < 0) { bad++; Core.Log("FAIL", "DESK 写操作带对令牌反倒被拒（" + okCode + "）"); }
                 else Core.Log("INFO", "DESK 写操作带对令牌放行（路由返回 " + okCode + "，不是 403）");
+
+                // 拖拽位置：坐标解析不出来时必须 400，且不能把卡片挪到原点（以前带着 0,0 走还回 ok:true）
+                int badMove = post("api/move", srv.Token, "{\"key\":\"desk|selftest\",\"x\":\"abc\",\"z\":\"1\"}");
+                PointF mv;
+                bool movedAnyway = DeskLayout.TryGet("desk|selftest", out mv);
+                if (badMove != 400) { bad++; Core.Log("FAIL", "DESK 拖拽坐标无效却返回 " + badMove + "（应该 400）"); }
+                else if (movedAnyway) { bad++; Core.Log("FAIL", "DESK 拖拽坐标无效，卡片却被挪到 (" + mv.X + "," + mv.Y + ")"); }
+                else Core.Log("INFO", "DESK 拖拽坐标无效 → 400 且摆位没动");
+                // 坐标正常就该真的写进去
+                int okMove = post("api/move", srv.Token, "{\"key\":\"desk|selftest\",\"x\":\"0.75\",\"z\":\"-0.25\"}");
+                PointF mv2;
+                bool wrote = DeskLayout.TryGet("desk|selftest", out mv2)
+                             && Math.Abs(mv2.X - 0.75f) < 0.001f && Math.Abs(mv2.Y + 0.25f) < 0.001f;
+                if (okMove != 200 || !wrote) { bad++; Core.Log("FAIL", "DESK 拖拽坐标正常却没存住（状态 " + okMove + "）"); }
+                else Core.Log("INFO", "DESK 拖拽坐标正常 → 200 且摆位已存 (0.75, -0.25)");
             }
             catch (Exception ex)
             {
@@ -2866,6 +2883,27 @@ namespace Installer
                 Core.Log("FAIL", "DESK 本地服务跑不通：" + ex.Message);
             }
             finally { srv.Dispose(); }
+
+            // 摆位文件还原：上面第 4 步的拖拽用例真的写过文件，这里把用户原来那份放回去，并核对一个字没变
+            try
+            {
+                if (before == null) { if (File.Exists(layFile)) File.Delete(layFile); }
+                else File.WriteAllBytes(layFile, before);
+                DeskLayout.Reload();
+                if (before == null)
+                {
+                    if (File.Exists(layFile)) { bad++; Core.Log("FAIL", "DESK 自检结束后凭空多出一个摆位文件"); }
+                }
+                else
+                {
+                    byte[] now = File.ReadAllBytes(layFile);
+                    bool same = now.Length == before.Length;
+                    for (int i = 0; same && i < before.Length; i++) if (now[i] != before[i]) same = false;
+                    if (!same) { bad++; Core.Log("FAIL", "DESK 自检把用户原来的摆位文件改了"); }
+                    else Core.Log("INFO", "DESK 自检结束，用户摆位文件原样还在（" + before.Length + " 字节）");
+                }
+            }
+            catch (Exception exl) { bad++; Core.Log("FAIL", "DESK 摆位还原核对出错：" + exl.Message); }
 
             // 5) 抽屉：收起时右栏顶到左边距，展开时让出 396 给左栏
             SetDrawer(true);
