@@ -2749,9 +2749,41 @@ namespace Installer
 
             gMod.Left = Dpi.S(rightX);
             gMod.Width = Dpi.S(rightW);
+            viewHost.Left = Dpi.S(12);
             viewHost.Width = Dpi.S(rightW - 24);
+            lblSel.Left = Dpi.S(12);
             lblSel.Width = Dpi.S(rightW - 24);
+            lblConflict.Left = Dpi.S(12);
             lblConflict.Width = Dpi.S(rightW - 24);
+
+            // 纵向也得每次重算。BuildUi 那次是按「当时的客户区」写死的绝对值，之后全靠 Anchor
+            // 记住「距底多远」来跟；可只要那次的基数就已经不对（高 DPI 下 BuildUi 把物理像素
+            // 当设计值用、或者窗口在建子控件之前被 MinimumSize / AutoScale 抬过一次），这个
+            // 「距离」就会是负数或偏大，于是右栏一直往下长，把底部那排按钮整块盖住 ——
+            // 用户看到的就是「下面的按钮全没了」。所以这里按设计坐标把每条高度重新算死。
+            int H = Dpi.Un(physH);
+            {
+                int modH = H - 56 - 116;                       // 到下方按钮行为止
+                gMod.Top = Dpi.S(56);
+                gMod.Height = Dpi.S(modH);
+                viewHost.Top = Dpi.S(118);
+                viewHost.Height = Dpi.S(Math.Max(80, modH - 118 - 74));
+                lblSel.Top = Dpi.S(modH - 64);
+                lblConflict.Top = Dpi.S(modH - 40);
+                gLog.Top = Dpi.S(438);
+                gLog.Height = Dpi.S(Math.Max(60, H - 438 - 116));
+                txtLog.Height = Dpi.S(Math.Max(60, H - 438 - 116 - 34));
+
+                // 底部动作区同理：Anchor 只在「距底多远」这一维上跟，自检里连着改几档尺寸时
+                // 会一路漂（窗口缩回 900 却还停在 200% 的位置），所以每次按设计值钉死。
+                btnInstall.Top = Dpi.S(H - 104);
+                btnSwitch.Top = Dpi.S(H - 104);
+                btnRestore.Top = Dpi.S(H - 104);
+                btnOpen.Top = Dpi.S(H - 104);
+                bar.Top = Dpi.S(H - 56);
+                btnCancel.Top = Dpi.S(H - 60);
+                lblStatus.Top = Dpi.S(H - 36);
+            }
 
             txtSearch.Width = Dpi.S(rightW - 126);
             btnClearSearch.Left = Dpi.S(rightW - 68);
@@ -2829,6 +2861,14 @@ namespace Installer
                 // 两栏：右栏整体落在窗口里，且不压到左栏
                 if (gMod.Left < m) { bad++; Core.Log("FAIL", tag + "右栏左边距算成负数"); }
                 if (gMod.Left + gMod.Width > W) { bad++; Core.Log("FAIL", tag + "右栏超出窗口"); }
+                // 右栏底边必须停在按钮行上面。这一条专门抓「窗口变矮 / 高 DPI 下右栏一路长到底，
+                // 把开始安装那排整块盖住」——盖住之后按钮看得见文字、点不中，或者干脆整排消失。
+                if (gMod.Top + gMod.Height > btnInstall.Top)
+                {
+                    bad++;
+                    Core.Log("FAIL", tag + "右栏底边 " + (gMod.Top + gMod.Height)
+                        + "px 压到按钮行 " + btnInstall.Top + "px（底部按钮会被整块盖住）");
+                }
                 if (viewHost.Width <= 0) { bad++; Core.Log("FAIL", tag + "台面宽度算成 0"); }
                 if (txtLog.Width <= 0) { bad++; Core.Log("FAIL", tag + "日志框宽度算成 0"); }
                 if (cboTweak.Width <= 0 || btnTweak.Left + Dpi.S(90) > Dpi.S(396)) { bad++; Core.Log("FAIL", tag + "参数配置那一行排歪了"); }
