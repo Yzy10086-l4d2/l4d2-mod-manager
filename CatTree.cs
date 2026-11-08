@@ -124,7 +124,7 @@ namespace Installer
                 {
                     s = new Slot();
                     s.Key = mapKey;
-                    s.Name = nm.Length > 0 ? nm : key;
+                    s.Name = nm.Length > 0 ? nm : Tag(key);   // 只有模型名时别把 w_rifle_ak47 直接摆到树上
                     s.Cat = cat;
                     s.Manual = hand.Length > 0;
                     s.Sub = sub0.Length > 0 ? sub0 : SubOf(cat, s.Name, key, hint, g.Sub);
@@ -237,18 +237,30 @@ namespace Installer
                 {
                     string k = GunKindOf(n, key);
                     if (k != "其他枪械") return k;
-                    if (hint != null && hint.Length > 0) return hint;   // 名字推不出来，才用「/」前面那个枪种
+                    // 「A/其他」这种残渣会把「其他」当成枪种词拆出来，别让它变成小分类名
+                    if (hint != null && hint.Length > 0 && hint != "其他" && hint != "枪械") return hint;
                     // 还是推不出来时，用识别出来的细分兜一层（人工改名之后常这样）
                     if (IsGunKindName(gsub)) return gsub.Trim();
                     return k;
                 }
-                case "人物": return CharKindOf(n);
+                case "人物":
+                {
+                    string c = CharKindOf(n);
+                    if (c != "其他人物") return c;
+                    // 名字可能是英文（人工改的位置名、英文包名）：先用别名表换成中文再判一次。
+                    // 否则 "Zoey" 会自己在「其他人物」占一行，而标准位置「佐伊」还空着、又补一行，
+                    // 树上就出现两个其实是同一个人的位置。
+                    string alias = Find(CharPairs, n);
+                    return alias == null ? c : CharKindOf(alias);
+                }
                 case "药品": return MedKindOf(n, key);
-                // 这三个大类和枪械平级，但名字识别用的还是枪械那套词表（斧 / 燃烧瓶 / 升级箱都在 GunKindOf 里）
+                // 这三个大类和枪械平级，而且各自只有一层（PosOrder 里 近战→近战、投掷物→投掷物…）。
+                // 所以不能把 GunKindOf 的结果直接当小分类：名字里碰巧带「冲锋」「rifle」的包，
+                // 会在「近战」大类底下冒出一个「冲锋枪」小分类，SubRank 还会把它排到该类第一位。
                 case "近战": case "投掷物": case "弹药升级":
                 {
                     string k = GunKindOf(n, key);
-                    return k == "其他枪械" ? cat : k;
+                    return k == cat ? k : cat;
                 }
                 case "特感":
                     // 普通感染者（尸潮小僵尸）不是特感，单独一层。其余特感一个就是一个位置
@@ -420,9 +432,25 @@ namespace Installer
             }
         }
 
-        private static string Tag(string key)
+        /// <summary>
+        /// 重名时缀在名字后面的短标签。传进来的是槽位键（「大类\u0001位置键」），
+        /// 先剥掉大类，再剥掉 c: / sub: / slot: 这些内部前缀 —— 否则标签会变成
+        /// 「枪械C:鸟狙」这种，中间那个 \u0001 还会在界面上显示成方块。
+        /// </summary>
+        internal static string Tag(string key)
         {
-            string k = key;
+            string k = key ?? "";
+            int sep = k.IndexOf('\u0001');
+            if (sep >= 0) k = k.Substring(sep + 1);
+            if (k.StartsWith("#empty:", StringComparison.Ordinal)) k = k.Substring(7);
+            else if (k.StartsWith("slot:", StringComparison.Ordinal))
+            {
+                k = k.Substring(5);
+                int sl = k.LastIndexOf('/');
+                if (sl >= 0) k = k.Substring(sl + 1);
+            }
+            else if (k.StartsWith("c:", StringComparison.Ordinal)) k = k.Substring(2);
+            else if (k.StartsWith("sub:", StringComparison.Ordinal)) k = k.Substring(4);
             if (k.StartsWith("w_", StringComparison.OrdinalIgnoreCase)) k = k.Substring(2);
             else if (k.StartsWith("v_", StringComparison.OrdinalIgnoreCase)) k = k.Substring(2);
             int us = k.LastIndexOf('_');
@@ -729,11 +757,22 @@ namespace Installer
                 int j = rel.LastIndexOf('\\', i - 1);
                 dir = j >= 0 ? rel.Substring(j + 1, i - j - 1) : rel.Substring(0, i);
             }
-            string text = dir + " " + (g.Name ?? "") + " " + (m == null ? "" : (m.Name ?? ""));
-            string hit = null;
-            if (vague == "幸存者" || vague == "人物") hit = Find(CharPairs, text);
-            if (hit == null) hit = Find(GunPairs, text);
-            if (hit == null && vague.Length == 0) hit = Find(CharPairs, text);   // A/B 拆不开时再试人物
+
+            bool charFirst = vague == "幸存者" || vague == "人物";
+            // 注释说「先看目录再看名字」，实现也得真的这样：以前是把目录名、组名、条目名
+            // 拼成一整串再去 Find，命中哪条全看 GunPairs 的表序 —— 「UZI/MAC-10」放在 MAC-10
+            // 目录里，照样会被表里靠前的 UZI 抢走。
+            string hit = charFirst ? Find(CharPairs, dir) : Find(GunPairs, dir);
+            // vague 为空 = 调用方不知道这是枪还是人（A/B 拆不开、名字认不出来）：
+            // 目录名里两种词表都得试一遍，否则「埃利斯」这种纯人名的目录会被跳过，
+            // 转头去包名里捞到一个枪名，整个人物包就被补到枪械位置上了。
+            if (hit == null && !charFirst && vague.Length == 0) hit = Find(CharPairs, dir);
+            if (hit == null)
+            {
+                string text = (g == null ? "" : (g.Name ?? "")) + " " + (m == null ? "" : (m.Name ?? ""));
+                hit = charFirst ? Find(CharPairs, text) : Find(GunPairs, text);
+                if (hit == null && vague.Length == 0) hit = Find(CharPairs, text);
+            }
             return hit ?? "";
         }
 
@@ -2193,9 +2232,48 @@ namespace Installer
             if (fb != -1) { bad++; Core.Log("FAIL", "BLANK 点空白后焦点仍在第 " + fb + " 行，应该清掉"); }
             else Core.Log("INFO", "BLANK 点空白后焦点已清空");
 
-            // 7) 收尾：把选中恢复成测试前的位置，别改动用户看到的界面状态
+            // 7) 大类与小分类的边界：近战 / 投掷物 / 弹药升级 各自只有一层。
+            //    名字里碰巧带「冲锋」「步枪」的包，不能在这几个大类底下冒出别的枪种小分类
+            //    （SubRank 还会把那个小分类排到该类第一位，看着像分类错乱）。
+            int subBad = 0;
+            string[] traps = { "消音冲锋枪", "AK-47", "步枪", "冲锋枪/消音冲锋枪", "rifle" };
+            foreach (string t in traps)
+            {
+                string sb = SlotIndex.SubOf("近战", t, "", "", "");
+                if (sb != "近战") { subBad++; Core.Log("FAIL", "SUB 近战大类下的「" + t + "」被分到「" + sb + "」"); }
+            }
+            if (SlotIndex.SubOf("投掷物", "榴弹发射器", "", "", "") != "投掷物")
+            { subBad++; Core.Log("FAIL", "SUB 投掷物大类下的「榴弹发射器」被分到了别的层"); }
+            if (SlotIndex.SubOf("弹药升级", "燃烧弹药包", "", "", "") != "弹药升级")
+            { subBad++; Core.Log("FAIL", "SUB 弹药升级大类下的「燃烧弹药包」被分到了别的层"); }
+            // 枪械这边不能反过来：AK-47 得老实落在「步枪」
+            if (SlotIndex.SubOf("枪械", "AK-47", "", "", "") != "步枪")
+            { subBad++; Core.Log("FAIL", "SUB 枪械大类下的「AK-47」没落在「步枪」"); }
+            // 人物：英文名也得落回一代 / 二代，不能因为没换成中文就掉进「其他人物」
+            if (SlotIndex.SubOf("人物", "Zoey", "", "", "") != "一代")
+            { subBad++; Core.Log("FAIL", "SUB 英文名「Zoey」没落到「一代」"); }
+            if (SlotIndex.SubOf("人物", "Coach", "", "", "") != "二代")
+            { subBad++; Core.Log("FAIL", "SUB 英文名「Coach」没落到「二代」"); }
+            if (SlotIndex.SubOf("人物", "幸存者", "", "", "") != "其他人物")
+            { subBad++; Core.Log("FAIL", "SUB 泛称「幸存者」应该留在「其他人物」"); }
+            bad += subBad;
+            if (subBad == 0) Core.Log("INFO", "SUB 单层大类的子分类都守在自己那一层，枪械的四层也没串");
+
+            // 8) 重名标签：槽位键是「大类\u0001位置键」，标签里不能漏出大类、控制字符和 c:/sub: 前缀
+            string tg = SlotIndex.Tag("枪械\u0001c:鸟狙");
+            string tg2 = SlotIndex.Tag("枪械\u0001w_sniper_scout");
+            string tg3 = SlotIndex.Tag("枪械\u0001sub:幸存者");
+            if (tg.IndexOf('\u0001') >= 0 || tg.IndexOf(':') >= 0 || tg.Length == 0
+                || tg2.IndexOf('\u0001') >= 0 || tg3.IndexOf('\u0001') >= 0)
+            {
+                bad++;
+                Core.Log("FAIL", "SUB 重名标签没洗干净：" + tg + " / " + tg2 + " / " + tg3);
+            }
+            else Core.Log("INFO", "SUB 重名标签 = " + tg + " / " + tg2 + " / " + tg3);
+
+            // 9) 收尾：把选中恢复成测试前的位置，别改动用户看到的界面状态
             if (orig.Length > 0 && orig != "#unmatched" && selKey != orig) SelectSlot(orig);
-            // 8) 我的分支的父子关系（自测会建两个临时分支，结束时删掉）
+            // 10) 我的分支的父子关系（自测会建两个临时分支，结束时删掉）
             bad += BranchSelfTest();
             Core.Log("INFO", "KEY 结束：不通过 " + bad + " 条");
             return bad;
