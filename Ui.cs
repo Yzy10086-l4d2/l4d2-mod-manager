@@ -211,8 +211,35 @@ namespace Installer
                     });
                 }
                 catch (Exception ex) { Core.Log("FAIL", "初始化失败: " + ex.Message); }
+
+                // 扫完再补「游戏里显示的名字」：老缓存里没有这一列，压缩包里的包还得解包才读得到。
+                // 放后台慢慢来，一次只读一个包，有人装机时自动让开。自检不跑，免得把套件拖成几分钟。
+                if (!Core.SelfTesting) StartTitleBackfill();
             });
             th.IsBackground = true;
+            th.Start();
+        }
+
+        /// <summary>
+        /// 后台补包内标题（addoninfo 里的 addonTitle）。补到的会写进识别缓存，
+        /// 下次启动直接命中，不用再解一遍包。失败无所谓 —— 没有标题就退回显示文件名。
+        /// </summary>
+        private void StartTitleBackfill()
+        {
+            System.Threading.Thread th = new System.Threading.Thread(delegate()
+            {
+                try
+                {
+                    int n = ModIdentify.FillMissingTitles(Core.ModList, delegate(int i, int total)
+                    {
+                        if (i == 1 || i % 25 == 0) Core.Log("INFO", "补包内标题 " + i + "/" + total);
+                    });
+                    if (n > 0) Core.Log("OK", "包内标题补齐 " + n + " 条（游戏里显示的名字，已写进识别缓存）");
+                }
+                catch (Exception ex) { Core.Log("WARN", "补包内标题失败: " + ex.Message); }
+            });
+            th.IsBackground = true;
+            th.Priority = System.Threading.ThreadPriority.BelowNormal;
             th.Start();
         }
 
@@ -1750,13 +1777,29 @@ namespace Installer
         /// <summary>搜名字、搜「替换了什么」、搜大类/位置 —— 分类就是筛选词，不再另有一套标签。</summary>
         internal bool MatchGroup(ModGroup g, string kw)
         {
+            return MatchGroupCore(g, kw);
+        }
+
+        /// <summary>
+        /// 抽成静态是为了自测能直接喂假数据：搜索这条路出错，用户只会觉得「明明有却搜不到」。
+        /// </summary>
+        internal static bool MatchGroupCore(ModGroup g, string kw)
+        {
+            if (g == null) return false;
+            if (string.IsNullOrEmpty(kw)) return true;
             if (g.Name.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0) return true;
             if (g.Subject.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0) return true;
             if (g.Where.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0) return true;
             string slot = SlotIndex.SlotNameOf(g);
             if (slot.Length > 0 && slot.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0) return true;
             foreach (ModItem p in g.Parts)
+            {
                 if (p.Name.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+                // 包内原名和作者也进搜索：标题常常是武器真名或英文原名，
+                // 搜「M4A1」得能找到那个叫「科技之光SD 替换M16」的包。
+                if (!string.IsNullOrEmpty(p.AddonTitle) && p.AddonTitle.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+                if (!string.IsNullOrEmpty(p.AddonAuthor) && p.AddonAuthor.IndexOf(kw, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            }
             return false;
         }
 
@@ -2167,6 +2210,35 @@ namespace Installer
             sb.AppendLine("大小  : " + Core.Human(g.Size));
             if (g.IsSet) sb.AppendLine("组成  : " + g.Parts.Count + " 个 vpk（双击这一行可以挑部件）");
             sb.AppendLine("改了什么: " + (g.Subject.Length == 0 ? "（认不出来）" : g.Subject + "  [" + g.SubjectLevel + "]"));
+            // 装进去之后游戏 addons 菜单显示的是包内 addonTitle，不是文件名。
+            // 两个名字对不上时用户只能靠猜，所以这里直接把「游戏里叫什么」写出来。
+            if (m != null)
+            {
+                string at = m.AddonTitle, aa = m.AddonAuthor;
+                bool infoFound = !string.IsNullOrEmpty(at);
+                // 压缩包里的 vpk，扫库时可能还没补到标题（正文在数据段，只有目录表读不出来）。
+                // 点开详情就为这一个包读一次：rar/zip 从头读到那一小段，7z 只能看到预载部分。
+                if (string.IsNullOrEmpty(at) && m.IsArchive && !string.IsNullOrEmpty(m.Container))
+                {
+                    Cursor = Cursors.WaitCursor;
+                    try
+                    {
+                        Vpk.AddonMeta am = m.FullPath.EndsWith(".7z", StringComparison.OrdinalIgnoreCase)
+                            ? Vpk.InfoFromTreeBuffer(ModIdentify.TreeOfArchive(m.FullPath, m.Inner))
+                            : Vpk.ReadAddonInfoFromArchive(m.FullPath, m.Inner);
+                        if (am != null) { at = am.Title; aa = am.Author; infoFound = am.Found; }
+                    }
+                    catch { }
+                    Cursor = Cursors.Default;
+                }
+                if (!string.IsNullOrEmpty(at))
+                    sb.AppendLine("游戏里显示: " + at
+                        + (string.IsNullOrEmpty(aa) ? "" : "（作者 " + aa + "）"));
+                else if (infoFound)
+                    sb.AppendLine("游戏里显示: 读不出来（包里的 addoninfo.txt 在分卷里）");
+                else
+                    sb.AppendLine("游戏里显示: 文件名（包里没有 addoninfo.txt）");
+            }
             sb.AppendLine();
             foreach (ModItem p in g.Parts)
             {
@@ -2174,6 +2246,10 @@ namespace Installer
                 if (p.IsArchive) sb.AppendLine("      在压缩包里：" + p.Container);
                 else sb.AppendLine("      路径：" + p.RelPath);
                 if (p.Subject.Length > 0) sb.AppendLine("      改了什么：" + p.Subject);
+                // 多件套里各件的标题常常不一样（主体/材质/音效各写各的），对齐一下就能看出装的是哪几份
+                if (!string.IsNullOrEmpty(p.AddonTitle) && m != null
+                    && !string.Equals(p.AddonTitle, m.AddonTitle, StringComparison.Ordinal))
+                    sb.AppendLine("      游戏里显示：" + p.AddonTitle);
             }
             if (!m.IsArchive)
             {

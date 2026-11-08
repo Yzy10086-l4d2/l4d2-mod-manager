@@ -1610,6 +1610,13 @@ namespace Installer
                         "并发扫描后条目数不变（" + Core.ModList.Count + " / " + baseline + "）");
                 else Console.WriteLine("SKIP  库是空的，并发扫描只验证了不炸");
 
+                // 只报数字不断言：压缩包里的包要等包变过或用户点详情才补上标题，
+                // 这里断言「必须 N 个」等于把库的内容写死在自测里。
+                int titled = 0;
+                foreach (ModItem mi in Core.ModList) if (!string.IsNullOrEmpty(mi.AddonTitle)) titled++;
+                Console.WriteLine("INFO  addoninfo：库内 " + Core.ModList.Count + " 个条目，其中 "
+                    + titled + " 个带包内标题");
+
                 // 7) 中途失败不留垃圾
                 SafeCheck(ref bad, Directory.GetFiles(dir, "*.part", SearchOption.TopDirectoryOnly).Length == 0, "没有残留 .part");
                 SafeCheck(ref bad, Directory.GetDirectories(dir, "~l4d2-*").Length == 0, "没有残留解包暂存目录");
@@ -1617,6 +1624,83 @@ namespace Installer
                 // 8) 路径校验
                 SafeCheck(ref bad, Core.IsUnder(dir, Path.Combine(dir, "left4dead2\\addons\\x.vpk")), "子路径判定在目录内");
                 SafeCheck(ref bad, !Core.IsUnder(dir, Path.Combine(dir, "..\\x.vpk")), ".. 往上跳判定在目录外");
+
+                // 9) 包内 addoninfo：游戏 addons 菜单显示的是这里的 addonTitle，和文件名常常不是一回事。
+                //    读取器要是认错了，详情里写的就是别的 MOD 的名字，比没有更糟。
+                string vp1 = Path.Combine(dir, "info-preload.vpk");
+                File.WriteAllBytes(vp1, BuildTinyVpk("\"AddonInfo\"\r\n{\r\n\tAddonTitle \"MWII RPK Macabre(AK47)\"\r\n\tAddonAuthor \"芬吸员\"\r\n}\r\n", true));
+                Vpk.AddonMeta i1 = Vpk.ReadAddonInfo(vp1);
+                SafeCheck(ref bad, i1.Found && i1.Readable && i1.Title == "MWII RPK Macabre(AK47)",
+                    "addoninfo：目录表预载里的标题读对了（实际「" + i1.Title + "」）");
+                SafeCheck(ref bad, i1.Author == "芬吸员", "addoninfo：作者读对了（实际「" + i1.Author + "」）");
+
+                string vp2 = Path.Combine(dir, "info-data.vpk");
+                File.WriteAllBytes(vp2, BuildTinyVpk("\"AddonInfo\"\r\n{\r\n\t\"addonTitle\"\t\t\"CSO 白虎  mp5 \"\r\n}\r\n", false));
+                SafeCheck(ref bad, Vpk.ReadAddonInfo(vp2).Title == "CSO 白虎  mp5",
+                    "addoninfo：数据段里带引号、带多余空格的标题读对了");
+
+                string vp3 = Path.Combine(dir, "info-odd.vpk");
+                File.WriteAllBytes(vp3, BuildTinyVpk("addontitle CODOL自由霰弹(pumpshot)\"\r\n", true));
+                SafeCheck(ref bad, Vpk.ReadAddonInfo(vp3).Title == "CODOL自由霰弹(pumpshot)",
+                    "addoninfo：漏写前引号的野格式也能读");
+
+                string vp4 = Path.Combine(dir, "info-none.vpk");
+                File.WriteAllBytes(vp4, BuildTinyVpk(null, false));
+                Vpk.AddonMeta i4 = Vpk.ReadAddonInfo(vp4);
+                SafeCheck(ref bad, !i4.Found && i4.Title.Length == 0, "addoninfo：包里没有就留空，不瞎编");
+
+                string vp5 = Path.Combine(dir, "info-broken.vpk");
+                File.WriteAllBytes(vp5, new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 });
+                SafeCheck(ref bad, Vpk.ReadAddonInfo(vp5).Title.Length == 0, "addoninfo：怪文件不崩、返回空");
+
+                SafeCheck(ref bad, ModIdentify.Analyze(vp1).Title == "MWII RPK Macabre(AK47)",
+                    "addoninfo：识别结果里带上了标题（详情和搜索都读它）");
+
+                // 压缩包里的 vpk 扫库时只拿得到目录表，走的是另一条路
+                byte[] tiny = BuildTinyVpk("\"AddonInfo\"\r\n{\r\n\tAddonTitle \"压缩包里的标题\"\r\n}\r\n", true);
+                int treeLen = (int)BitConverter.ToUInt32(tiny, 8);
+                byte[] onlyTree = new byte[treeLen];
+                Array.Copy(tiny, 12, onlyTree, 0, treeLen);
+                SafeCheck(ref bad, Vpk.InfoFromTreeBuffer(onlyTree).Title == "压缩包里的标题",
+                    "addoninfo：只有目录表也能读预载里的标题（压缩包条目走这条路）");
+
+                byte[] dataOne = BuildTinyVpk("\"AddonInfo\"\r\n{\r\n\tAddonTitle \"在数据段\"\r\n}\r\n", false);
+                int tl2 = (int)BitConverter.ToUInt32(dataOne, 8);
+                byte[] onlyTree2 = new byte[tl2];
+                Array.Copy(dataOne, 12, onlyTree2, 0, tl2);
+                Vpk.AddonMeta i6 = Vpk.InfoFromTreeBuffer(onlyTree2);
+                SafeCheck(ref bad, i6.Found && i6.Title.Length == 0,
+                    "addoninfo：正文在数据段时只有目录表读不到，但不瞎编（Found=" + i6.Found + "）");
+
+                // 压缩包里的 vpk：实测 addoninfo 大多在数据段，得顺着流读到那个位置
+                string zp = Path.Combine(dir, "arc.zip");
+                using (System.IO.Compression.ZipArchive za =
+                       System.IO.Compression.ZipFile.Open(zp, System.IO.Compression.ZipArchiveMode.Create))
+                {
+                    System.IO.Compression.ZipArchiveEntry ze = za.CreateEntry("inner.vpk");
+                    using (Stream zs = ze.Open())
+                    {
+                        byte[] zb = BuildTinyVpk("\"AddonInfo\"\r\n{\r\n\tAddonTitle \"压缩包数据段标题\"\r\n}\r\n", false);
+                        zs.Write(zb, 0, zb.Length);
+                    }
+                }
+                SafeCheck(ref bad, Vpk.ReadAddonInfoFromArchive(zp, "inner.vpk").Title == "压缩包数据段标题",
+                    "addoninfo：zip 里数据段的标题也能读（压缩包条目靠这条补）");
+
+                // 10) 搜索别名：标题/作者只在 addoninfo 里时，按那个词也得搜得到
+                ModGroup fg = new ModGroup();
+                fg.Key = "test|search";
+                fg.Name = "科技之光SD 替换M16";
+                ModItem fp = new ModItem();
+                fp.Key = "test|search|file";
+                fp.Name = "科技之光SD 替换M16.vpk";
+                fp.AddonTitle = "M4A1Tech科技之光";
+                fp.AddonAuthor = "安妮某栓栓";
+                fg.Parts.Add(fp);
+                SafeCheck(ref bad, MainForm.MatchGroupCore(fg, "M4A1"), "搜索：只在包内标题里的词也能搜到");
+                SafeCheck(ref bad, MainForm.MatchGroupCore(fg, "安妮"), "搜索：作者名也能搜");
+                SafeCheck(ref bad, MainForm.MatchGroupCore(fg, "科技之光"), "搜索：文件名照旧能搜");
+                SafeCheck(ref bad, !MainForm.MatchGroupCore(fg, "完全不相干的词"), "搜索：不相干的词不会误命中");
             }
             catch (Exception ex)
             {
@@ -1632,6 +1716,43 @@ namespace Installer
         {
             Console.WriteLine((ok ? "PASS  " : "FAIL  ") + what);
             if (!ok) bad++;
+        }
+
+        /// <summary>
+        /// 造一个最小可读的 vpk：目录表里只放一条 addoninfo.txt（info 为 null 时什么都不放）。
+        /// preload=true 时内容紧跟在目录表条目后面（V 社工具的常规写法），false 时放进数据段 ——
+        /// 库里两种包都有，读标题这两条路都得走通。
+        /// </summary>
+        private static byte[] BuildTinyVpk(string info, bool preload)
+        {
+            byte[] body = info == null ? new byte[0] : Encoding.UTF8.GetBytes(info);
+            List<byte> tree = new List<byte>();
+            if (info != null)
+            {
+                tree.AddRange(Encoding.UTF8.GetBytes("txt")); tree.Add(0);
+                tree.AddRange(Encoding.UTF8.GetBytes(" ")); tree.Add(0);      // 根目录：V 社工具写的是一个空格，不是空串
+                tree.AddRange(Encoding.UTF8.GetBytes("addoninfo")); tree.Add(0);
+                byte[] e = new byte[18];
+                BitConverter.GetBytes(0u).CopyTo(e, 0);                        // crc
+                BitConverter.GetBytes((ushort)(preload ? body.Length : 0)).CopyTo(e, 4);
+                BitConverter.GetBytes((ushort)0x7FFF).CopyTo(e, 6);            // 数据就在本文件
+                BitConverter.GetBytes(0u).CopyTo(e, 8);                        // 偏移：数据段从 0 起
+                BitConverter.GetBytes((uint)(preload ? 0 : body.Length)).CopyTo(e, 12);
+                BitConverter.GetBytes((ushort)0xFFFF).CopyTo(e, 16);
+                tree.AddRange(e);
+                if (preload) tree.AddRange(body);
+                tree.Add(0);                                                   // 文件名层结束
+                tree.Add(0);                                                   // 路径层结束
+            }
+            tree.Add(0);                                                       // 扩展名层结束（整棵树到头）
+
+            List<byte> all = new List<byte>();
+            all.AddRange(BitConverter.GetBytes(0x55AA1234u));
+            all.AddRange(BitConverter.GetBytes(1u));
+            all.AddRange(BitConverter.GetBytes((uint)tree.Count));
+            all.AddRange(tree);
+            if (info != null && !preload) all.AddRange(body);
+            return all.ToArray();
         }
 
         // ---------- 自测：换整套只翻开关，文件不动 ----------

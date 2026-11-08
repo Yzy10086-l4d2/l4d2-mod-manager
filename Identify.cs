@@ -22,6 +22,10 @@ namespace Installer
             public int Entries = 0;
             public string Assets = "";        // 归组证据：包内模型/材质完整路径，分号分隔
             public bool Ok = false;
+            // 包内 addoninfo.txt 的原文（游戏 addons 菜单显示的名字 / 作者）。
+            // 单独一个来源，不参与上面任何一条判定 —— 标题和真实内容对不上的包见得够多了。
+            public string Title = "";
+            public string Author = "";
         }
 
         // 特征串 -> 显示名。顺序即优先级：越具体的排在越前面。
@@ -390,8 +394,41 @@ namespace Installer
         {
             if (string.IsNullOrEmpty(vpkFile) || !File.Exists(vpkFile)) return new Result();
             Scan sc = new Scan();
-            try { Vpk.Walk(vpkFile, 200000, sc.Feed); } catch { return new Result(); }
-            return sc.Finish();
+            Result r;
+            try { Vpk.Walk(vpkFile, 200000, sc.Feed); r = sc.Finish(); }
+            catch { return new Result(); }
+            FillAddonInfo(r, vpkFile);
+            return r;
+        }
+
+        /// <summary>
+        /// 包内 addoninfo 的标题/作者。只是「游戏里叫什么」的参考，不参与任何识别判定：
+        /// 读不到（没有这个文件、在分卷里、包坏了）就留空，绝不能因此把包判成坏的。
+        /// </summary>
+        private static void FillAddonInfo(Result r, string vpkFile)
+        {
+            if (r == null) return;
+            try
+            {
+                Vpk.AddonMeta m = Vpk.ReadAddonInfo(vpkFile);
+                if (m == null) return;
+                r.Title = m.Title ?? "";
+                r.Author = m.Author ?? "";
+            }
+            catch { }
+        }
+
+        /// <summary>压缩包里的 vpk：目录表已经在手上，标题从里面再取一次，不额外解包。</summary>
+        private static void FillAddonInfoFromTree(Result r, byte[] tree)        {
+            if (r == null || tree == null) return;
+            try
+            {
+                Vpk.AddonMeta m = Vpk.InfoFromTreeBuffer(tree);
+                if (m == null) return;
+                r.Title = m.Title ?? "";
+                r.Author = m.Author ?? "";
+            }
+            catch { }
         }
 
         /// <summary>已经拿到的 vpk 目录表（压缩包里的包，只能这样读）。</summary>
@@ -595,7 +632,11 @@ namespace Installer
                 if (c.Length >= 2 && c[1] != stamp)
                     Core.Log("INFO", "识别缓存过期: " + relPath + "（旧章 " + c[1] + " → 新章 " + stamp + "）");
             }
-            Result r = AnalyzeBuffer(TreeOfArchive(container, inner));
+            byte[] tree = TreeOfArchive(container, inner);
+            Result r = AnalyzeBuffer(tree);
+            // 标题顺手从已经拿到的目录表里取，不额外解一次包。
+            // 正文在数据段的那种包这里取不到，等用户点详情时再读（见 Ui.ShowModInfo）。
+            FillAddonInfoFromTree(r, tree);
             try
             {
                 lock (CacheGate)
@@ -647,6 +688,8 @@ namespace Installer
             r.Entries = entries;
             r.Assets = UnpackAssets(c[8]);
             if (c.Length >= 10) r.AnimOnly = c[9] == "1";
+            // 老缓存行只有 10 列：没有标题就当空，AnalyzeCached 那边会补读一次并回写
+            if (c.Length >= 12) { r.Title = c[10]; r.Author = c[11]; }
             r.Ok = entries > 0;
             return r;
         }
@@ -655,7 +698,8 @@ namespace Installer
         {
             return relPath + "\t" + stamp + "\t" + r.Subject + "\t" + r.Level + "\t" + r.Key + "\t" + r.Kinds
                  + "\t" + (r.Only1P ? "1" : "0") + "\t" + r.Entries + "\t" + PackAssets(r.Assets)
-                 + "\t" + (r.AnimOnly ? "1" : "0");
+                 + "\t" + (r.AnimOnly ? "1" : "0")
+                 + "\t" + (r.Title ?? "") + "\t" + (r.Author ?? "");
         }
 
         private static void LoadCache()
@@ -925,7 +969,22 @@ namespace Installer
                 if (c.Length >= 9 && c[1] == stamp)
                 {
                     Result r2 = ReadResult(c);
-                    if (r2 != null) return r2;
+                    if (r2 != null)
+                    {
+                        // 老缓存行只有 10 列（标题这两个字段是后加的）：补读一次并立刻回写，
+                        // 下次启动就直接命中，不会每次启动都把整库重读一遍。
+                        // 包里确实没有 addoninfo 的也写成空串，所以同样不会反复补。
+                        if (c.Length < 12)
+                        {
+                            FillAddonInfo(r2, fullPath);
+                            try
+                            {
+                                lock (CacheGate) { cache[relPath] = CacheLine(relPath, stamp, r2); cacheDirty = true; }
+                            }
+                            catch { }
+                        }
+                        return r2;
+                    }
                 }
                 if (c.Length >= 2 && c[1] != stamp)
                     Core.Log("INFO", "识别缓存过期: " + relPath + "（旧章 " + c[1] + " → 新章 " + stamp + "）");
@@ -1000,6 +1059,64 @@ namespace Installer
                 + (NewEntries > 0 && NewEntries <= 5 ? "：" + string.Join("；", NewPaths.ToArray()) : ""));
             NewEntries = 0;
             NewPaths.Clear();
+        }
+
+        /// <summary>
+        /// 把库里还没读到包内标题的条目补一遍。
+        /// 为什么要单独走一趟：标题字段是后加的，老缓存里根本没有这一列；压缩包里的包还得解包才读得到，
+        /// 让识别重做一遍等于把整个库重算，代价太大。这里只补标题，识别结论一个字都不动。
+        /// 跑在后台线程，每个包之间歇一下 —— 用户可能正一边装一边让它补。
+        /// </summary>
+        public static int FillMissingTitles(List<ModItem> items, Action<int, int> progress)
+        {
+            if (items == null) return 0;
+            int total = 0;
+            foreach (ModItem m in items) if (m != null && string.IsNullOrEmpty(m.AddonTitle)) total++;
+            if (total == 0) return 0;
+
+            LoadCache();
+            int done = 0, idx = 0;
+            foreach (ModItem m in items)
+            {
+                if (m == null || !string.IsNullOrEmpty(m.AddonTitle)) continue;
+                idx++;
+                if (progress != null) { try { progress(idx, total); } catch { } }
+                // 有人在装机/还原/清重就先让开：这些操作也在读同一个 U 盘，抢起来两边都慢
+                while (OpGuard.Current != null)
+                {
+                    try { System.Threading.Thread.Sleep(300); } catch { break; }
+                }
+                try
+                {
+                    Vpk.AddonMeta meta = m.IsArchive
+                        ? Vpk.ReadAddonInfoFromArchive(m.FullPath, m.Inner)
+                        : Vpk.ReadAddonInfo(m.FullPath);
+                    if (meta == null) continue;
+                    m.AddonTitle = meta.Title ?? "";
+                    m.AddonAuthor = meta.Author ?? "";
+                    if (m.AddonTitle.Length == 0) continue;   // 包里确实没有：不留标记，下次重扫再说
+                    done++;
+
+                    // 顺手补进识别缓存，下次启动直接命中，不用再解一遍包
+                    string stamp = Stamp(m.FullPath);
+                    string old;
+                    if (cache.TryGetValue(m.RelPath, out old))
+                    {
+                        string[] c = old.Split('\t');
+                        Result r = ReadResult(c);
+                        if (r != null && c.Length >= 2 && c[1] == stamp)
+                        {
+                            r.Title = m.AddonTitle;
+                            r.Author = m.AddonAuthor;
+                            lock (CacheGate) { cache[m.RelPath] = CacheLine(m.RelPath, stamp, r); cacheDirty = true; }
+                        }
+                    }
+                }
+                catch { }
+                try { System.Threading.Thread.Sleep(40); } catch { }
+            }
+            if (done > 0) SaveCache();
+            return done;
         }
     }
 }

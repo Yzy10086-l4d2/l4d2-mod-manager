@@ -36,6 +36,11 @@ namespace Installer
         public bool Installed;            // 游戏 addons 里有同名同大小的另一份（U 盘模式合并后不再重复列）
         public bool AddonOn = true;       // addonlist.txt 里这条是 "1"（开着）；未登记的按游戏默认算「开」
         public string AssetPaths = "";    // 包内模型/材质路径（分号分隔），只用于同套部件归组
+        // 包内 addoninfo.txt 的原文：Title 是游戏 addons 菜单里显示的名字，和文件名常常不是一回事。
+        // 只拿来当搜索别名和「游戏里叫什么」的参考，不参与命名/归类 —— 实测不少包的标题
+        // 写的是被拆出去的公共材质包、粒子包甚至 debug demo 的名字。
+        public string AddonTitle = "";
+        public string AddonAuthor = "";
 
         public bool IsArchive { get { return Container != null && Container.Length > 0; } }
     }

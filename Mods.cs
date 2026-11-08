@@ -663,6 +663,312 @@ namespace Installer
             if (len > 512) len = 512;        // 坏文件保护
             return Encoding.UTF8.GetString(t, start, len);
         }
+
+        // ---------- 包内的「身份证」：addoninfo.txt ----------
+        // 游戏 addons 菜单显示的是这里的 addonTitle，不是文件名。库里绝大多数包两者都不一样。
+        public class AddonMeta
+        {
+            public bool Found;              // 包里确实有根目录的 addoninfo.txt
+            public bool Readable;           // 内容读出来了（在分卷里 / 坏包时为 false）
+            public string Title = "";
+            public string Author = "";
+        }
+
+        /// <summary>
+        /// 读 vpk 根目录的 addoninfo.txt，只取 addonTitle / addonauthor。
+        /// 只读文件头 + 目录表 + 这一个条目，不碰正片，几十 KB 的 I/O。
+        /// 读不到就返回空字段 —— 调用方一律按「没有标题」处理，不能因此判成坏包。
+        /// </summary>
+        public static AddonMeta ReadAddonInfo(string file)
+        {
+            AddonMeta meta = new AddonMeta();
+            try
+            {
+                using (FileStream fs = new FileStream(file, FileMode.Open, FileAccess.Read,
+                           FileShare.Read | FileShare.Write, 64 * 1024, FileOptions.RandomAccess))
+                using (BinaryReader br = new BinaryReader(fs))
+                {
+                    if (fs.Length < 12) return meta;
+                    uint sig = br.ReadUInt32();
+                    if (sig != 0x55AA1234) return meta;
+                    uint ver = br.ReadUInt32();
+                    int treeSize = (int)br.ReadUInt32();
+                    if (ver == 2) br.ReadBytes(16);
+                    if (treeSize <= 0) return meta;
+                    long avail = fs.Length - fs.Position;
+                    if (treeSize > avail) treeSize = (int)avail;
+                    if (treeSize > 32 * 1024 * 1024) treeSize = 32 * 1024 * 1024;
+                    byte[] t = br.ReadBytes(treeSize);
+                    if (t == null || t.Length == 0) return meta;
+                    long dataBase = fs.Position;
+
+                    int ps, pl;
+                    uint dof, dln;
+                    bool inFile;
+                    if (!FindAddonInfo(t, out ps, out pl, out dof, out dln, out inFile)) return meta;
+                    meta.Found = true;
+
+                    byte[] raw = null;
+                    if (pl > 0)
+                    {
+                        raw = new byte[pl];
+                        Array.Copy(t, ps, raw, 0, pl);
+                    }
+                    else if (inFile && dln > 0 && dln < 1024 * 1024)
+                    {
+                        raw = new byte[dln];
+                        fs.Seek(dataBase + dof, SeekOrigin.Begin);
+                        if (!ReadFull(fs, raw, raw.Length)) raw = null;
+                    }
+                    if (raw == null) return meta;          // 数据在分卷里：不追，算没有标题
+                    meta.Readable = true;
+                    FillMeta(meta, raw);
+                }
+            }
+            catch { }
+            return meta;
+        }
+
+        /// <summary>
+        /// 只有目录表（压缩包里的 vpk 是这样读的）时用这个。
+        /// preload 里的正文能直接取；正文在数据段的话，手上没有包体，只能报「找到了但读不出」。
+        /// </summary>
+        public static AddonMeta InfoFromTreeBuffer(byte[] tree)
+        {
+            AddonMeta meta = new AddonMeta();
+            if (tree == null || tree.Length == 0) return meta;
+            try
+            {
+                int ps, pl;
+                uint dof, dln;
+                bool inFile;
+                if (!FindAddonInfo(tree, out ps, out pl, out dof, out dln, out inFile)) return meta;
+                meta.Found = true;
+                if (pl <= 0) return meta;
+                byte[] raw = new byte[pl];
+                Array.Copy(tree, ps, raw, 0, pl);
+                meta.Readable = true;
+                FillMeta(meta, raw);
+            }
+            catch { }
+            return meta;
+        }
+
+        private static void FillMeta(AddonMeta meta, byte[] raw)
+        {
+            string text = DecodeText(raw);
+            meta.Title = CleanField(InfoField(text, "addontitle"));
+            meta.Author = CleanField(InfoField(text, "addonauthor"));
+        }
+
+        /// <summary>
+        /// 在目录表里找根目录那份 addoninfo.txt，把数据位置告诉调用方。
+        /// 只认根目录：有的包把 addoninfo.txt 塞在 for_modders/ 下当参考，那份游戏根本不读
+        /// （标题写的还是别的包名，正是「不能轻信标题」的活例子）。
+        /// </summary>
+        private static bool FindAddonInfo(byte[] t, out int preStart, out int preLen, out uint dataOff, out uint dataLen, out bool inThisFile)
+        {
+            preStart = 0; preLen = 0; dataOff = 0; dataLen = 0; inThisFile = false;
+            int i = 0;
+            while (i < t.Length)
+            {
+                string ext = ReadStr(t, ref i);
+                if (ext.Length == 0) break;
+                while (i < t.Length)
+                {
+                    string path = ReadStr(t, ref i);
+                    if (path.Length == 0) break;
+                    while (i < t.Length)
+                    {
+                        string name = ReadStr(t, ref i);
+                        if (name.Length == 0) break;
+                        if (i + 18 > t.Length) return false;
+                        ushort pre = BitConverter.ToUInt16(t, i + 4);
+                        ushort ai = BitConverter.ToUInt16(t, i + 6);
+                        uint off = BitConverter.ToUInt32(t, i + 8);
+                        uint len = BitConverter.ToUInt32(t, i + 12);
+                        i += 18;
+                        if (pre > t.Length - i) return false;
+                        int ps = i;
+                        i += pre;
+
+                        if (!string.Equals(ext, "txt", StringComparison.OrdinalIgnoreCase)
+                            || !string.Equals(name, "addoninfo", StringComparison.OrdinalIgnoreCase)
+                            || path.Trim().Length != 0) continue;
+
+                        preStart = ps; preLen = pre;
+                        dataOff = off; dataLen = len;
+                        inThisFile = ai == 0x7FFF;
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private static bool ReadFull(Stream s, byte[] buf, int n)
+        {
+            int got = 0;
+            while (got < n)
+            {
+                int r = s.Read(buf, got, n - got);
+                if (r <= 0) return false;
+                got += r;
+            }
+            return true;
+        }
+
+        /// <summary>顺序流（Rar.exe 的 stdout、zip 条目流）不能 seek，只能读掉。</summary>
+        private static bool Skip(Stream s, long n)
+        {
+            if (n <= 0) return true;
+            try { if (s.CanSeek) { s.Seek(n, SeekOrigin.Current); return true; } }
+            catch { }
+            byte[] buf = new byte[64 * 1024];
+            long left = n;
+            while (left > 0)
+            {
+                int want = (int)Math.Min(buf.Length, left);
+                int r = s.Read(buf, 0, want);
+                if (r <= 0) return false;
+                left -= r;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 从「vpk 文件开头」的流里读 addoninfo。压缩包里的包只能这样读：
+        /// 拿到整包不现实（几 GB），所以读到 addoninfo 那一小段就收工。
+        /// </summary>
+        public static AddonMeta ReadAddonInfoFromStream(Stream s)
+        {
+            AddonMeta meta = new AddonMeta();
+            try
+            {
+                byte[] hdr = new byte[12];
+                if (!ReadFull(s, hdr, 12)) return meta;
+                uint sig = BitConverter.ToUInt32(hdr, 0);
+                if (sig != 0x55AA1234) return meta;
+                uint ver = BitConverter.ToUInt32(hdr, 4);
+                int treeSize = (int)BitConverter.ToUInt32(hdr, 8);
+                if (ver == 2 && !ReadFull(s, new byte[16], 16)) return meta;
+                if (treeSize <= 0 || treeSize > 32 * 1024 * 1024) return meta;
+
+                byte[] t = new byte[treeSize];
+                if (!ReadFull(s, t, treeSize)) return meta;
+
+                int ps, pl;
+                uint dof, dln;
+                bool inFile;
+                if (!FindAddonInfo(t, out ps, out pl, out dof, out dln, out inFile)) return meta;
+                meta.Found = true;
+
+                byte[] raw = null;
+                if (pl > 0)
+                {
+                    raw = new byte[pl];
+                    Array.Copy(t, ps, raw, 0, pl);
+                }
+                else if (inFile && dln > 0 && dln < 1024 * 1024)
+                {
+                    // 目录表之后就是数据段，跳过前面 off 个字节
+                    if (!Skip(s, dof)) return meta;
+                    raw = new byte[dln];
+                    if (!ReadFull(s, raw, raw.Length)) raw = null;
+                }
+                if (raw == null) return meta;
+                meta.Readable = true;
+                FillMeta(meta, raw);
+            }
+            catch { }
+            return meta;
+        }
+
+        /// <summary>
+        /// 压缩包里的 vpk 的 addoninfo。zip 直接开条目流；rar 从 Rar.exe 的 stdout 里读到就走，不等整个包解完。
+        /// 7z 这里不碰：解到临时文件那条路（TreeOf7z）会连临时目录一起删，留给「点详情」时再读。
+        /// </summary>
+        public static AddonMeta ReadAddonInfoFromArchive(string container, string inner)
+        {
+            AddonMeta meta = new AddonMeta();
+            try
+            {
+                if (string.IsNullOrEmpty(container) || string.IsNullOrEmpty(inner)) return meta;
+                if (container.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                {
+                    using (System.IO.Compression.ZipArchive za = System.IO.Compression.ZipFile.OpenRead(container))
+                    {
+                        System.IO.Compression.ZipArchiveEntry hit = null;
+                        string want = inner.Replace('\\', '/');
+                        foreach (System.IO.Compression.ZipArchiveEntry e in za.Entries)
+                            if (string.Equals(e.FullName.Replace('\\', '/'), want, StringComparison.OrdinalIgnoreCase)) { hit = e; break; }
+                        if (hit == null) return meta;
+                        using (Stream st = hit.Open()) return ReadAddonInfoFromStream(st);
+                    }
+                }
+                if (container.EndsWith(".7z", StringComparison.OrdinalIgnoreCase)) return meta;
+                string rar = Catalog.RarExe();
+                if (string.IsNullOrEmpty(rar)) return meta;
+                ProcessStartInfo psi = new ProcessStartInfo(rar, "p -inul -y \"" + container + "\" \"" + inner + "\"");
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.RedirectStandardOutput = true;
+                psi.RedirectStandardError = true;
+                using (Process p = Process.Start(psi))
+                {
+                    AddonMeta got = null;
+                    System.Threading.Thread rd = new System.Threading.Thread(delegate()
+                    { try { got = ReadAddonInfoFromStream(p.StandardOutput.BaseStream); } catch { } });
+                    rd.IsBackground = true;
+                    rd.Start();
+                    // 杀软锁包 / 盘停顿：等不到就放弃，绝不能拖着后台线程不放
+                    if (!rd.Join(20000)) { try { p.Kill(); } catch { } return meta; }
+                    try { p.Kill(); } catch { }
+                    return got ?? meta;
+                }
+            }
+            catch { }
+            return meta;
+        }
+
+        // 作者写 addoninfo 的手法五花八门：带引号、不带引号、大小写随意，甚至只写结尾一个引号。
+        // 所以引号一律当可选的，值取到行尾或下一个引号为止。
+        private static string InfoField(string text, string key)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            Match m = Regex.Match(text, "^\\s*\"?" + key + "\"?\\s+\"?([^\"\\r\\n]*)",
+                RegexOptions.IgnoreCase | RegexOptions.Multiline);
+            return m.Success ? m.Groups[1].Value : "";
+        }
+
+        // UTF-8 优先（V 社工具写的都是 UTF-8），解不动再按 GBK —— 国内作者手搓的包不少是 GBK。
+        // Encoding.UTF8 默认不抛异常、会悄悄替换成 U+FFFD，所以这里用严格模式判一次。
+        private static string DecodeText(byte[] b)
+        {
+            if (b.Length >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF)
+                return Encoding.UTF8.GetString(b, 3, b.Length - 3);
+            try { return new UTF8Encoding(false, true).GetString(b); }
+            catch
+            {
+                try { return Encoding.GetEncoding(936).GetString(b); }
+                catch { return Encoding.UTF8.GetString(b); }
+            }
+        }
+
+        // 标题里混进 tab/换行会把缓存行拆坏（tab 分隔），控制字符也不能留
+        private static string CleanField(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            StringBuilder sb = new StringBuilder(s.Length);
+            foreach (char ch in s)
+            {
+                if (ch == '\t' || ch == '\r' || ch == '\n') sb.Append(' ');
+                else if (!char.IsControl(ch)) sb.Append(ch);
+            }
+            string r = sb.ToString().Trim().Trim('"').Trim();
+            if (r.Length > 120) r = r.Substring(0, 120);
+            return r;
+        }
     }
 
     // ---------- 「已装 MOD 开关」窗口 ----------

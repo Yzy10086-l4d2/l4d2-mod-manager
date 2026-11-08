@@ -643,6 +643,8 @@ namespace Installer
                         it.Only1P = ir.Only1P;
                         it.AnimOnly = ir.AnimOnly;
                         it.AssetPaths = ir.Assets;
+                        it.AddonTitle = ir.Title;
+                        it.AddonAuthor = ir.Author;
                         RefineBySubject(it);
                         Add(it);
                     }
@@ -792,6 +794,8 @@ namespace Installer
                 it.Only1P = ir.Only1P;
                 it.AnimOnly = ir.AnimOnly;
                 it.AssetPaths = ir.Assets;
+                it.AddonTitle = ir.Title;
+                it.AddonAuthor = ir.Author;
                 RefineBySubject(it);
                 Add(it);
                 n2++;
@@ -841,6 +845,8 @@ namespace Installer
             it.Only1P = ir.Only1P;
             it.AnimOnly = ir.AnimOnly;
             it.AssetPaths = ir.Assets;
+            it.AddonTitle = ir.Title;
+            it.AddonAuthor = ir.Author;
             RefineBySubject(it);
             Add(it);
         }
