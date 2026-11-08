@@ -2186,9 +2186,16 @@ namespace Installer
                 }
             }
 
-            // 6) 收尾：把选中恢复成测试前的位置，别改动用户看到的界面状态
+            // 6) 点树的空白处：焦点应当被清掉。以前这里什么都不做，上一行的焦点框一直挂着，
+            //    看着像「这行还选着」，按方向键又从那行接着走 —— 键盘用户点了空白完全没反应。
+            body.TestKey(Keys.Home);
+            int fb = body.TestClickBlank();
+            if (fb != -1) { bad++; Core.Log("FAIL", "BLANK 点空白后焦点仍在第 " + fb + " 行，应该清掉"); }
+            else Core.Log("INFO", "BLANK 点空白后焦点已清空");
+
+            // 7) 收尾：把选中恢复成测试前的位置，别改动用户看到的界面状态
             if (orig.Length > 0 && orig != "#unmatched" && selKey != orig) SelectSlot(orig);
-            // 7) 我的分支的父子关系（自测会建两个临时分支，结束时删掉）
+            // 8) 我的分支的父子关系（自测会建两个临时分支，结束时删掉）
             bad += BranchSelfTest();
             Core.Log("INFO", "KEY 结束：不通过 " + bad + " 条");
             return bad;
@@ -3376,19 +3383,23 @@ namespace Installer
         private static void Cols(ListView v)
         {
             if (v == null || v.Columns.Count < 3) return;
-            int w = Math.Max(120, v.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 8);
+            // 下面每一个数字都是 96dpi 下的设计值。WinForms 的 AutoScaleMode.Dpi 只缩放
+            // 控件尺寸和字体，ListView 的 Columns[].Width 不在其列 —— 不换算的话 125%/150%
+            // 下字变大了、四列还是原来的像素宽，「改了什么 / 大小 / 已装 / 开关」就会截字，
+            // 只有名字列因为吃剩余宽度反而变宽，看着尤其别扭。
+            int w = Math.Max(Dpi.S(120), v.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - Dpi.S(8));
             int kindW, sizeW, instW, swW;
-            if (w >= 440)
+            if (w >= Dpi.S(440))
             {
-                kindW = 100; sizeW = 74; instW = 84; swW = 62;
+                kindW = Dpi.S(100); sizeW = Dpi.S(74); instW = Dpi.S(84); swW = Dpi.S(62);
             }
             else
             {
                 // 最小窗口下先把信息量最低的“改了什么”收掉，保住名称、大小、已装、开关。
                 // 不横向滚动：这一栏本来就是窄窗口里最容易被裁掉的区域。
                 kindW = 0;
-                if (w >= 340) { sizeW = 64; instW = 70; swW = 54; }
-                else { sizeW = 56; instW = 60; swW = 46; }
+                if (w >= Dpi.S(340)) { sizeW = Dpi.S(64); instW = Dpi.S(70); swW = Dpi.S(54); }
+                else { sizeW = Dpi.S(56); instW = Dpi.S(60); swW = Dpi.S(46); }
             }
 
             // 本地模式：没有「库」可比，「已装」恒为真 —— 这一列纯属噪音，收成 0 宽、把宽度并给开关列。
@@ -3396,7 +3407,7 @@ namespace Installer
             bool local = Core.IsLocal && v.Columns.Count >= 5;
             if (local) { swW += instW; instW = 0; }
 
-            int nameW = Math.Max(90, w - kindW - sizeW - instW - swW);
+            int nameW = Math.Max(Dpi.S(90), w - kindW - sizeW - instW - swW);
             v.Columns[0].Width = nameW;
             v.Columns[1].Width = kindW;
             v.Columns[2].Width = sizeW;
@@ -3410,6 +3421,27 @@ namespace Installer
                 if (v.Columns[3].Text != t3) v.Columns[3].Text = t3;
                 if (v.Columns[4].Text != t4) v.Columns[4].Text = t4;
             }
+        }
+
+        /// <summary>
+        /// 自检用：给定客户区宽度算一遍列宽，返回 [改了什么, 大小, 已装, 开关] 四个定宽列。
+        /// 走的就是真实的 <see cref="Cols"/>，不另写一份算法 —— 否则测的和用的又是两套。
+        /// </summary>
+        internal static int[] ColsForTest(int clientWidth)
+        {
+            ListView v = new ListView();
+            try
+            {
+                v.Columns.Add("名称", 380);
+                v.Columns.Add("改了什么", 100);
+                v.Columns.Add("大小", 74);
+                v.Columns.Add("已装", 84);
+                v.Columns.Add("开关 ⇄", 62);
+                v.ClientSize = new Size(clientWidth, 400);
+                Cols(v);
+                return new int[] { v.Columns[1].Width, v.Columns[2].Width, v.Columns[3].Width, v.Columns[4].Width };
+            }
+            finally { v.Dispose(); }
         }
     }
 
@@ -4418,6 +4450,15 @@ namespace Installer
             {
                 // 空白处也能出菜单：建分支不该要求先滚到「我的分支」那几行
                 if (e.Button == MouseButtons.Right) owner.TreeMenuFor(null, PointToScreen(e.Location));
+                else if (e.Button == MouseButtons.Left)
+                {
+                    // 点空白 = 取消焦点。以前这里直接 return，上一行的焦点框一直挂着，
+                    // 看着像「这行还选着」，按方向键又从那行接着走，跟点空白前没区别。
+                    // 顺序要紧：Focus() 会触发 OnGotFocus，那里发现 focus<0 会把它找回到
+                    // 上次选中的槽位，先清后拿焦点就白清了。
+                    Focus();
+                    if (focus != -1) { int old = focus; focus = -1; InvalidateRow(old); }
+                }
                 return;
             }
             TreeRow r = rows[i];
@@ -4806,6 +4847,16 @@ namespace Installer
             return before + " → dragging=" + dragging + " pressArm=" + pressArm
                  + " preview=" + (previewRows == null ? "清空" : "残留")
                  + " cursor=" + Cursor;
+        }
+
+        /// <summary>
+        /// 自检用：模拟左键点在树的空白处（最后一行下面）。返回点完之后的焦点行号（-1 = 已清空）。
+        /// </summary>
+        internal int TestClickBlank()
+        {
+            int y = 4 + rows.Count * RowH + RowH / 2;
+            OnMouseDown(new MouseEventArgs(MouseButtons.Left, 1, 30, y, 0));
+            return focus;
         }
 
         private void ResetDrag()
