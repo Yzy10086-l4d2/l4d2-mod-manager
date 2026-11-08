@@ -34,6 +34,9 @@ namespace Installer
         private Label lblLoading;                // 启动读取期间的提示，读完第一屏就撤
         private CatTree treeView;                // 方案树：按「能替换的东西」看，一个位置只留一个 MOD
         private Label lblSel, lblStatus, lblConflict;
+        // 底栏总高（设计值）：按钮行 36 + 间距 12 + 状态栏 20 + 触底 8。
+        // 原来是 116，按钮下面空出 68px，「下巴」明显偏厚；收到 76 之后按钮行和状态栏只隔 12px。
+        private const int BottomBarH = 76;
         // 方案标记：当前下拉里那套方案包含哪些文件，用来在列表里一眼看出「这条属不属于方案」
         private Label lblScheme;
         private readonly HashSet<string> schemeKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -402,10 +405,10 @@ namespace Installer
 
             // ---- 左栏下：日志 ----
             Section gl = new Section();
-            gl.Caption = "日志"; gl.SetBounds(Theme.M, 438, leftW, CH - 438 - 116); Controls.Add(gl);
+            gl.Caption = "日志"; gl.SetBounds(Theme.M, 438, leftW, CH - 438 - BottomBarH); Controls.Add(gl);
             FlatButton btnLog = new FlatButton(); btnLog.Text = "打开日志"; btnLog.SetBounds(leftW - 12 - 68, 1, 68, 24); btnLog.Font = Theme.UISmall; btnLog.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", Core.LogDir); } catch { } }; gl.Controls.Add(btnLog);
             txtLog = new TextBox();
-            txtLog.SetBounds(12, 30, leftW - 24, Math.Max(60, CH - 438 - 116 - 34));   // 日志框撑满卡片
+            txtLog.SetBounds(12, 30, leftW - 24, Math.Max(60, CH - 438 - BottomBarH - 34));   // 日志框撑满卡片
             txtLog.Multiline = true; txtLog.ScrollBars = ScrollBars.Both; txtLog.WordWrap = false; txtLog.ReadOnly = true;
             txtLog.BorderStyle = BorderStyle.None;
             txtLog.BackColor = Theme.Surface;
@@ -416,7 +419,7 @@ namespace Installer
             // ---- 右栏：MOD 库 ----
             // 只有一屏：方案树。左边是「能替换的东西」的位置，右边是它的候选。
             // 不另开窗口，勾选、搜索、方案下拉始终在视线里，关窗口把进程留在后台这种事也不会再发生。
-            int modH = CH - 56 - 116;                        // 到下方按钮行为止，中间全给 MOD 库
+            int modH = CH - 56 - BottomBarH;                 // 到下方按钮行为止，中间全给 MOD 库
             Section gm = new Section();
             gm.Caption = "MOD 库（U 盘的 vpk + 压缩包）"; gm.SetBounds(rightX, 56, rightW, modH); Controls.Add(gm);
 
@@ -488,29 +491,30 @@ namespace Installer
             btnInstall = new FlatButton(); btnInstall.Text = "开始安装"; btnInstall.Primary = true;
             btnInstall.AccessibleName = "开始安装所选组件和 MOD";
             btnInstall.Font = new Font(Theme.UI, FontStyle.Bold);
-            btnInstall.SetBounds(W - Theme.M - 104 - 8 - 96 - 8 - 116 - 8 - 112, CH - 104, 112, Theme.HP);
+            btnInstall.SetBounds(W - Theme.M - 104 - 8 - 96 - 8 - 116 - 8 - 112, CH - BottomBarH, 112, Theme.HP);
             btnInstall.Click += delegate { DoInstall(); }; Controls.Add(btnInstall);
             btnSwitch = new FlatButton(); btnSwitch.Text = "管理已装 MOD";
-            btnSwitch.SetBounds(W - Theme.M - 104 - 8 - 96 - 8 - 116, CH - 104, 116, Theme.HP);
+            btnSwitch.SetBounds(W - Theme.M - 104 - 8 - 96 - 8 - 116, CH - BottomBarH, 116, Theme.HP);
             btnSwitch.Click += delegate { DoSwitch(); }; Controls.Add(btnSwitch);
             btnRestore = new FlatButton(); btnRestore.Text = "一键还原"; btnRestore.Danger = true;
-            btnRestore.SetBounds(W - Theme.M - 104 - 8 - 96, CH - 104, 96, Theme.HP);
+            btnRestore.SetBounds(W - Theme.M - 104 - 8 - 96, CH - BottomBarH, 96, Theme.HP);
             btnRestore.Click += delegate { DoRestore(); }; Controls.Add(btnRestore);
             tips.SetToolTip(btnRestore, "危险操作：移除本次安装的平台文件和 MOD。执行前会再次确认。");
             btnOpen = new FlatButton(); btnOpen.Text = "打开游戏目录";
-            btnOpen.SetBounds(W - Theme.M - 104, CH - 104, 104, Theme.HP);
+            btnOpen.SetBounds(W - Theme.M - 104, CH - BottomBarH, 104, Theme.HP);
             btnOpen.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", txtGame.Text); } catch { } }; Controls.Add(btnOpen);
 
-            bar = new ProgressBar(); bar.SetBounds(Theme.M, CH - 56, 440, 12); bar.Visible = false; Controls.Add(bar);
+            // 进度条和「停止剩余」跟按钮同排（左侧空着，正好用上），不再单独占一行 —— 底栏能矮一截
+            bar = new ProgressBar(); bar.SetBounds(Theme.M, CH - BottomBarH + 12, 440, 12); bar.Visible = false; Controls.Add(bar);
             btnCancel = new FlatButton();
             btnCancel.Text = "停止剩余";
-            btnCancel.SetBounds(Theme.M + 452, CH - 60, 92, 24);
+            btnCancel.SetBounds(Theme.M + 452, CH - BottomBarH + 6, 92, 24);
             btnCancel.Visible = false;
             btnCancel.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             btnCancel.Click += delegate { RequestStopInstall(); };
             tips.SetToolTip(btnCancel, "在当前步骤或文件结束后停止后续安装。已经写入的文件会保留，不会自动回滚。");
             Controls.Add(btnCancel);
-            lblStatus = new Label(); lblStatus.SetBounds(Theme.M, CH - 36, W - 2 * Theme.M, 20); lblStatus.Text = "就绪";
+            lblStatus = new Label(); lblStatus.SetBounds(Theme.M, CH - 28, W - 2 * Theme.M, 20); lblStatus.Text = "就绪";
             lblStatus.ForeColor = Theme.Ink2; lblStatus.BackColor = Color.Transparent; Controls.Add(lblStatus);
 
             // 随窗口缩放：左右拉伸的跟着走，底部按钮贴右下
@@ -2763,7 +2767,7 @@ namespace Installer
             // 用户看到的就是「下面的按钮全没了」。所以这里按设计坐标把每条高度重新算死。
             int H = Dpi.Un(physH);
             {
-                int modH = H - 56 - 116;                       // 到下方按钮行为止
+                int modH = H - 56 - BottomBarH;               // 到下方按钮行为止
                 gMod.Top = Dpi.S(56);
                 gMod.Height = Dpi.S(modH);
                 viewHost.Top = Dpi.S(118);
@@ -2771,18 +2775,18 @@ namespace Installer
                 lblSel.Top = Dpi.S(modH - 64);
                 lblConflict.Top = Dpi.S(modH - 40);
                 gLog.Top = Dpi.S(438);
-                gLog.Height = Dpi.S(Math.Max(60, H - 438 - 116));
-                txtLog.Height = Dpi.S(Math.Max(60, H - 438 - 116 - 34));
+                gLog.Height = Dpi.S(Math.Max(60, H - 438 - BottomBarH));
+                txtLog.Height = Dpi.S(Math.Max(60, H - 438 - BottomBarH - 34));
 
                 // 底部动作区同理：Anchor 只在「距底多远」这一维上跟，自检里连着改几档尺寸时
                 // 会一路漂（窗口缩回 900 却还停在 200% 的位置），所以每次按设计值钉死。
-                btnInstall.Top = Dpi.S(H - 104);
-                btnSwitch.Top = Dpi.S(H - 104);
-                btnRestore.Top = Dpi.S(H - 104);
-                btnOpen.Top = Dpi.S(H - 104);
-                bar.Top = Dpi.S(H - 56);
-                btnCancel.Top = Dpi.S(H - 60);
-                lblStatus.Top = Dpi.S(H - 36);
+                btnInstall.Top = Dpi.S(H - BottomBarH);
+                btnSwitch.Top = Dpi.S(H - BottomBarH);
+                btnRestore.Top = Dpi.S(H - BottomBarH);
+                btnOpen.Top = Dpi.S(H - BottomBarH);
+                bar.Top = Dpi.S(H - BottomBarH + 12);
+                btnCancel.Top = Dpi.S(H - BottomBarH + 6);
+                lblStatus.Top = Dpi.S(H - 28);
             }
 
             txtSearch.Width = Dpi.S(rightW - 126);
@@ -2818,7 +2822,14 @@ namespace Installer
             btnSwitch.Left = Dpi.S(W - Theme.M - 104 - 8 - 96 - 8 - 116);
             btnInstall.Left = Dpi.S(W - Theme.M - 104 - 8 - 96 - 8 - 116 - 8 - 112);
             lblStatus.Width = Dpi.S(W - 2 * Theme.M);
-            bar.Width = Dpi.S(Math.Max(200, (W - Theme.M - 104 - 8 - 96 - 8 - 116 - 8 - 112) - 8 - Theme.M));
+            // 进度条和「停止剩余」现在跟按钮同一行（左边），两个都得让开：进度条占完剩下的宽度，
+            // 停止按钮紧接在它右边。原来进度条一直拉到按钮左边，把停止按钮整个压在底下。
+            {
+                int barW = Math.Max(200,
+                    (W - Theme.M - 104 - 8 - 96 - 8 - 116 - 8 - 112) - Theme.M - 8 - 92 - 8);
+                bar.Width = Dpi.S(barW);
+                btnCancel.Left = Dpi.S(Theme.M + barW + 8);
+            }
 
             ResumeLayout(true);
         }
@@ -2851,6 +2862,11 @@ namespace Installer
                 for (int i = 1; i < bottom.Length; i++)
                     if (bottom[i].Left >= bottom[i - 1].Left) { bad++; Core.Log("FAIL", tag + "底部按钮顺序错：" + bottom[i].Text); }
                 if (btnInstall.Left < m + Dpi.S(200)) { bad++; Core.Log("FAIL", tag + "底部按钮把进度条挤没了"); }
+                // 进度条 / 停止按钮 / 主按钮 三者同一行，从左到右必须严格排开，谁都不许压谁
+                if (bar.Left + bar.Width > btnCancel.Left)
+                { bad++; Core.Log("FAIL", tag + "进度条压住了「停止剩余」"); }
+                if (btnCancel.Left + btnCancel.Width > btnInstall.Left)
+                { bad++; Core.Log("FAIL", tag + "「停止剩余」压住了「开始安装」"); }
 
                 // 顶部：设置 ← 抽屉 ← 台面 ← 自动找 ← 浏览（从左到右依次右移）
                 FlatButton[] top = new FlatButton[] { btnBrowse, btnFind, btnView, btnPanel, btnSettings };
