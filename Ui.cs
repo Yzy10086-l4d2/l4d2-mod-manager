@@ -15,6 +15,7 @@ namespace Installer
         private bool modeSync;             // 回填下拉时别触发重扫
         private FlatButton btnBrowse, btnFind, btnSettings, btnInstall, btnRestore, btnOpen, btnSwitch, btnCancel, btnClearSearch;
         private FlatButton btnView, btnPanel;     // 顶部：台面/方案树 切换、左栏抽屉
+        private FlatButton btnWorkshop;           // 顶部：从创意工坊导入
         private bool drawerOpen;                  // 左栏（装什么 / 安装选项 / 日志）是否展开
         private FlatButton btnLogToggle;          // 左栏「显示日志 / 收起日志」
         private bool logOpen;                     // 日志卡片展开（默认收起：排错才看，不该常驻）
@@ -283,9 +284,11 @@ namespace Installer
             const int settingsW = 60;
             const int viewW = 56;       // 台面 ⇄ 方案树
             const int panelW = 56;      // 左栏抽屉
+            const int wsW = 64;         // 工坊导入
             const int topGap = 8;
             int settingsX = W - Theme.M - settingsW;
-            int panelX = settingsX - topGap - panelW;
+            int wsX = settingsX - topGap - wsW;
+            int panelX = wsX - topGap - panelW;
             int viewX = panelX - topGap - viewW;
             int findX = viewX - topGap - findW;
             int browseX = findX - topGap - browseW;
@@ -300,6 +303,15 @@ namespace Installer
             Controls.Add(cboMode);
             btnBrowse = new FlatButton(); btnBrowse.Text = "浏览…"; btnBrowse.SetBounds(browseX, 16, browseW, Theme.H); btnBrowse.Click += delegate { BrowseGame(); }; Controls.Add(btnBrowse);
             btnFind = new FlatButton(); btnFind.Text = "自动找"; btnFind.SetBounds(findX, 16, findW, Theme.H); btnFind.Click += delegate { FindGame(); }; Controls.Add(btnFind);
+            // 工坊导入：入口放顶栏而不是藏在设置里 —— 这是「往库里加东西」的主路径之一
+            btnWorkshop = new FlatButton(); btnWorkshop.Text = "工坊";
+            btnWorkshop.SetBounds(wsX, 16, wsW, Theme.H);
+            btnWorkshop.AccessibleName = "从创意工坊导入";
+            btnWorkshop.Click += delegate { OpenWorkshop(); };
+            tips.SetToolTip(btnWorkshop, "从 Steam 创意工坊导入：粘贴物品或合集链接，直接下到 MOD 库里。\r\n"
+                + "L4D2 的物品都是单个 vpk，能直接下，不需要 Steam 登录。");
+            Controls.Add(btnWorkshop);
+
             btnSettings = new FlatButton(); btnSettings.Text = "设置";
             btnSettings.SetBounds(settingsX, 16, settingsW, Theme.H);
             btnSettings.AccessibleName = "打开设置";
@@ -1526,6 +1538,47 @@ namespace Installer
             }
             UpdateSel();
             UpdateModCaption();
+        }
+
+        /// <summary>诊断截图：把导入窗口填满假数据存一张 PNG，不发请求。</summary>
+        internal void WorkshopShot()
+        {
+            using (WorkshopForm f = new WorkshopForm(this))
+            {
+                f.FillSample();
+                f.Show();
+                Application.DoEvents();
+                Application.DoEvents();
+                try
+                {
+                    using (Bitmap b = new Bitmap(f.Width, f.Height))
+                    {
+                        f.DrawToBitmap(b, new Rectangle(0, 0, b.Width, b.Height));
+                        b.Save(System.IO.Path.Combine(Core.LogDir, "workshop.png"),
+                               System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    Core.Log("INFO", "WS 截图已保存 workshop.png（" + f.Width + "x" + f.Height + "）");
+                }
+                catch (Exception ex) { Core.Log("FAIL", "WS 截图失败: " + ex.Message); }
+                f.Close();
+            }
+        }
+
+        /// <summary>
+        /// 创意工坊导入。窗口关掉之后才重扫：下载期间库在变，边下边扫会读到半截文件
+        /// （下载是先写 .part 再改名，所以其实安全，但没有必要反复扫）。
+        /// </summary>
+        private void OpenWorkshop()
+        {
+            using (WorkshopForm f = new WorkshopForm(this))
+            {
+                f.ShowDialog(this);
+                if (f.DownloadedCount > 0)
+                {
+                    Core.Log("INFO", "工坊：新下载 " + f.DownloadedCount + " 个，重扫库");
+                    RescanMods();
+                }
+            }
         }
 
         /// <summary>手动重扫：库或游戏目录在别处被改过（别人手动丢过 vpk、装了一半），点一下重读。</summary>
@@ -2824,9 +2877,11 @@ namespace Installer
             const int settingsW = 60;
             const int viewW = 56;       // 台面 ⇄ 方案树
             const int panelW = 56;      // 左栏抽屉
+            const int wsW = 64;         // 工坊导入
             const int topGap = 8;
             int settingsX = W - Theme.M - settingsW;
-            int panelX = settingsX - topGap - panelW;
+            int wsX = settingsX - topGap - wsW;
+            int panelX = wsX - topGap - panelW;
             int viewX = panelX - topGap - viewW;
             int findX = viewX - topGap - findW;
             int browseX = findX - topGap - browseW;
@@ -2839,6 +2894,7 @@ namespace Installer
             btnSettings.Left = Dpi.S(settingsX);
             btnView.Left = Dpi.S(viewX);
             btnPanel.Left = Dpi.S(panelX);
+            if (btnWorkshop != null) btnWorkshop.Left = Dpi.S(wsX);
 
             // 底部（按钮整组贴右下）
             btnOpen.Left = Dpi.S(W - Theme.M - 104);
@@ -2893,7 +2949,7 @@ namespace Installer
                 { bad++; Core.Log("FAIL", tag + "「停止剩余」压住了「开始安装」"); }
 
                 // 顶部：设置 ← 抽屉 ← 台面 ← 自动找 ← 浏览（从左到右依次右移）
-                FlatButton[] top = new FlatButton[] { btnBrowse, btnFind, btnView, btnPanel, btnSettings };
+                FlatButton[] top = new FlatButton[] { btnBrowse, btnFind, btnView, btnPanel, btnWorkshop, btnSettings };
                 if (btnSettings.Left + Dpi.S(60) > W - m + 1) { bad++; Core.Log("FAIL", tag + "「设置」出窗"); }
                 for (int i = 1; i < top.Length; i++)
                     if (top[i].Left <= top[i - 1].Left + Dpi.S(56)) { bad++; Core.Log("FAIL", tag + "顶部按钮叠在一起：" + top[i].Text); }

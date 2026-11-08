@@ -608,6 +608,8 @@ namespace Installer
                 case "三方地图": return "地图";
                 case "医疗物品": return "医疗";
                 case "杂项功能": return "杂项";
+                // 工坊下载落的目录：下划线只是避免和用户的目录重名，界面上不该看见它
+                case "_创意工坊": return "创意工坊";
             }
             return n;
         }
