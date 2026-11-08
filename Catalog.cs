@@ -390,6 +390,7 @@ namespace Installer
         {
             if (!_arcCacheDirty) return;           // 没变化不重写
             _arcCacheDirty = false;
+            System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 StringBuilder sb = new StringBuilder();
@@ -399,9 +400,14 @@ namespace Installer
                     foreach (ArcEntry e in kv.Value)
                         sb.Append(e.Inner).Append('\t').Append(sig[0]).Append('\t').Append(sig.Length > 1 ? sig[1] : "0").Append('\t').Append(e.Size).Append("\r\n");
                 }
-                File.WriteAllText(CachePath, sb.ToString(), new UTF8Encoding(false));
+                // 先写临时文件再替换：写到一半被强退/断电不会留一个截断的缓存
+                string tmp = CachePath + ".tmp";
+                File.WriteAllText(tmp, sb.ToString(), new UTF8Encoding(false));
+                if (File.Exists(CachePath)) File.Delete(CachePath);
+                File.Move(tmp, CachePath);
             }
             catch { }
+            Core.Log("INFO", "压缩包缓存落盘: " + sw.ElapsedMilliseconds + " ms，" + _arcCache.Count + " 包");
         }
 
         static List<ArcEntry> ListArchiveCached(string arcPath, out bool hit)
@@ -1052,9 +1058,16 @@ namespace Installer
                 buckets[key].Add(it);
             }
             long tBuckets = swg.ElapsedMilliseconds;
+            Core.Log("INFO", "归组开始: " + Core.ModList.Count + " 个 vpk，" + buckets.Count + " 桶");
             foreach (KeyValuePair<string, List<ModItem>> kv in buckets)
+            {
+                System.Diagnostics.Stopwatch bsw = System.Diagnostics.Stopwatch.StartNew();
                 foreach (List<ModItem> c in Cluster(kv.Value, names[kv.Key]))
                     MakeGroup(c);
+                // 单桶超过 300ms 要点名：两两比对是 O(n²)，一个坏桶能拖住整次启动
+                if (bsw.ElapsedMilliseconds > 300)
+                    Core.Log("INFO", "归组慢桶: 「" + kv.Key + "」" + kv.Value.Count + " 项，" + bsw.ElapsedMilliseconds + " ms");
+            }
 
             long tCluster = swg.ElapsedMilliseconds;
             ApplyCatsCore();                       // 人工归过类的，先按人工的算

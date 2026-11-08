@@ -478,6 +478,7 @@ namespace Installer
             {
                 System.Diagnostics.Stopwatch swg = System.Diagnostics.Stopwatch.StartNew();
                 Catalog.ScanMods();
+                Log("INFO", "扫库阶段完成（含缓存落盘），开始归组");
                 Catalog.BuildGroups();
                 Log("INFO", "归组计时: 扫库后归组 " + swg.ElapsedMilliseconds + " ms");
             }

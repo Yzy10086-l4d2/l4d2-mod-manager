@@ -337,7 +337,9 @@ namespace Installer
             foreach (TreeNode s in selCat.Kids)
             {
                 if (s.X < 0f || s.X + s.W > ClientSize.Width + 0.5f)
-                    return catTitle + " / " + s.Title + " 横向出界";
+                    return catTitle + " / " + s.Title + " 横向出界（位置列 X " + s.X.ToString("0") + ".."
+                         + (s.X + s.W).ToString("0") + "，画布宽 " + ClientSize.Width + "，候选列止于 "
+                         + (TreeLayout.CandX + TreeLayout.CandW).ToString("0") + "）";
                 if (s.Y < TreeLayout.ViewTop - 1f)
                     return catTitle + " / " + s.Title + " 压到列标题上面";
                 if (fits && s.Y + s.H > TreeLayout.ViewBottom + 1f)

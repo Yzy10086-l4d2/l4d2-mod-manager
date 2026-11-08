@@ -10,7 +10,7 @@
 
 这个工具**没有安装程序**，一个 exe 就是全部。两种拿法：
 
-**① 直接下载（推荐）**：到 [Releases](https://github.com/Yzy10086-l4d2/l4d2-mod-manager/releases) 下最新的 `L4D2Setup.exe`，发布页附 SHA256，可以自己校验。
+**① 直接下载（推荐）**：到 [Releases](https://github.com/Yzy10086-l4d2/l4d2-mod-manager-dev/releases) 下最新的 `L4D2Setup.exe`，发布页附 SHA256，可以自己校验。
 
 **② 自己编译**：clone 仓库后双击 `build.bat`，调用系统自带的 `csc.exe` 编译，不需要 .NET SDK、不联网。产物落在 `build.bat` 旁边；在 U 盘布局里则自动放回盘根目录。
 

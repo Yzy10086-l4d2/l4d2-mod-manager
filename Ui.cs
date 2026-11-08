@@ -121,6 +121,35 @@ namespace Installer
         // 这个时候 UI 线程再去枚举（冲突检查、重扫）必撞「集合已修改」。
         private volatile bool scanning;
         private string pendingRoot;                 // 扫库期间用户选的新目录，扫完接着切
+        // 扫库心跳：扫库期间每 5 秒往日志报一声、状态栏刷新一次秒数。
+        // 「一直在加载」的时候，用户至少看得到程序还活着、进行到第几秒；
+        // 日志里最后一个阶段计时 + 心跳秒数也能直接指出卡在哪一步。
+        // 注意：Timer 必须活在 UI 线程（后台线程上建的 Timer 没有 Pump，永远不会响）。
+        private System.Windows.Forms.Timer scanWatch;
+        private int scanWatchSec;
+
+        private void StartScanWatch()
+        {
+            SafeInvoke(delegate
+            {
+                if (scanWatch == null)
+                {
+                    scanWatch = new System.Windows.Forms.Timer();
+                    scanWatch.Interval = 5000;
+                    scanWatch.Tick += delegate
+                    {
+                        if (!scanning) { scanWatch.Stop(); if (lblStatus.Text.StartsWith("正在扫库")) SetStatus("就绪"); return; }
+                        scanWatchSec += 5;
+                        Core.Log("INFO", "扫库心跳: " + scanWatchSec + " s");
+                        if (scanWatchSec == 30)
+                            Core.Log("WARN", "扫库超过 30 s 还没结束，明显不对劲；对照上面的阶段计时找卡点");
+                        lblStatus.Text = "正在扫库… " + scanWatchSec + " s";
+                    };
+                }
+                scanWatchSec = 0;
+                scanWatch.Start();
+            });
+        }
 
         /// <summary>初始化（扫库、找游戏）跑完了没有。自测截图要等它。</summary>
         internal bool Ready { get { return !initializing; } }
@@ -156,6 +185,7 @@ namespace Installer
                         Core.SaveConfig();
                     }
                     scanning = true;
+                    StartScanWatch();
                     Core.ScanMods();
                     Core.Log("INFO", "启动计时: 扫库 " + __sw.ElapsedMilliseconds + " ms（" + Core.ModList.Count + " 个）");
 
@@ -553,12 +583,25 @@ namespace Installer
             if (modeSync || cboMode == null || cboMode.SelectedIndex < 0) return;
             string want = cboMode.SelectedIndex == 1 ? "local" : "usb";
             if (string.Equals(want, Core.Cfg.Mode, StringComparison.OrdinalIgnoreCase)) return;
+            // 扫库没结束时切模式 = 两个扫库线程并发重建同一张表，
+            // 还会两路同时写识别缓存（实测能把 2.7MB 落盘拖到 42 秒，界面就一直「正在扫库」）。
+            // 这里直接把下拉弹回去，等扫完再切。
+            if (scanning)
+            {
+                modeSync = true;
+                cboMode.SelectedIndex = string.Equals(Core.Cfg.Mode, "local", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+                modeSync = false;
+                SetStatus("正在扫库，等扫完再切工作模式");
+                Core.Log("INFO", "扫库进行中切工作模式被拦下，先记着不动");
+                return;
+            }
             Core.Cfg.Mode = want;
             Core.SaveConfig();
             Core.Log("OK", "工作模式：" + (want == "local" ? "本地模式（游戏目录 addons 当库）" : "U 盘模式（U 盘库是主，游戏目录重复项合并）"));
             lblStatus.Text = want == "local" ? "正在按「本地模式」重扫游戏目录…" : "正在按「U 盘模式」重扫库…";
             btnInstall.Enabled = false;
             scanning = true;
+            StartScanWatch();
             System.Threading.Thread th = new System.Threading.Thread(delegate()
             {
                 try { Core.ScanMods(); }
@@ -1923,6 +1966,7 @@ namespace Installer
             SetStatus("正在按新游戏目录重扫…");
             bar.Style = ProgressBarStyle.Marquee;
             scanning = true;
+            StartScanWatch();
             Thread th = new Thread(delegate()
             {
                 string err = null;

@@ -113,6 +113,10 @@ namespace Installer
 
             if (map == null) { Core.Log("FAIL", "treeself 画布没建起来"); return 1; }
 
+            Core.Log("INFO", "TREESELF 尺寸: 画布 " + map.Width + "x" + map.Height
+                            + "，窗体客户区 " + ClientSize.Width + "x" + ClientSize.Height
+                            + "，可见 " + map.Visible);
+
             Core.Log("INFO", "TREESELF 大类 " + map.CatCount + " / 位置 " + map.SlotNodeCount
                             + "（方案树 " + treeView.SlotCount + "）");
             if (map.SlotNodeCount != treeView.SlotCount)

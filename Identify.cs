@@ -592,9 +592,17 @@ namespace Installer
                     Result r2 = ReadResult(c);
                     if (r2 != null) return r2;
                 }
+                if (c.Length >= 2 && c[1] != stamp)
+                    Core.Log("INFO", "识别缓存过期: " + relPath + "（旧章 " + c[1] + " → 新章 " + stamp + "）");
             }
             Result r = AnalyzeBuffer(TreeOfArchive(container, inner));
-            try { cache[relPath] = CacheLine(relPath, stamp, r); cacheDirty = true; }
+            try
+            {
+                lock (CacheGate)
+                {
+                    cache[relPath] = CacheLine(relPath, stamp, r); cacheDirty = true; NewEntries++; if (NewPaths.Count < 5) NewPaths.Add(relPath);
+                }
+            }
             catch { }
             return r;
         }
@@ -602,6 +610,8 @@ namespace Installer
         // ---------------- 缓存：按「相对路径 + 大小 + 修改时间」判断是否失效 ----------------
         private static Dictionary<string, string> cache = null;
         private static bool cacheDirty = false;   // 有新结论才落盘；没变化的启动不重写 8MB 缓存
+        internal static int NewEntries = 0;       // 本次运行新识别的条数：每次启动都很大 = 有东西反复弄脏缓存
+        internal static readonly List<string> NewPaths = new List<string>();   // 新识别的路径（前几条），用来抓「每次都重识别」的钉子户
 
         private static string CacheFile
         {
@@ -659,14 +669,9 @@ namespace Installer
                 {
                     string[] c = line.Split('\t');
                     if (c.Length < 9) continue;
-                    // 旧缓存里 7z 条目存的是「读不出」的空结论（那时 TreeOfArchive 直接 return null）。
-                    // 只丢掉「一个条目都没读到」的 7z 记录；读到过内容的照用，否则每轮启动都要重解一遍。
-                    if (c[0].IndexOf(".7z\\", StringComparison.OrdinalIgnoreCase) >= 0)
-                    {
-                        int en;
-                        int.TryParse(c[7], out en);
-                        if (en <= 0) continue;
-                    }
+                    // 「读不出」的空结论也照存照用（包括 7z）：否则像 mg42永别(1).7z 这种
+                    // 每次启动都重解一遍，还把缓存弄脏逼着整表重写。
+                    // 识别能力升级（比如哪天 7z 能读了）就把 CacheFile 的版本号 v17 +1，旧结论整体作废。
                     cache[c[0]] = line;
                 }
             }
@@ -922,25 +927,76 @@ namespace Installer
                     Result r2 = ReadResult(c);
                     if (r2 != null) return r2;
                 }
+                if (c.Length >= 2 && c[1] != stamp)
+                    Core.Log("INFO", "识别缓存过期: " + relPath + "（旧章 " + c[1] + " → 新章 " + stamp + "）");
             }
             Result r = Analyze(fullPath);
-            try { cache[relPath] = CacheLine(relPath, stamp, r); cacheDirty = true; }
+            try
+            {
+                lock (CacheGate)
+                {
+                    cache[relPath] = CacheLine(relPath, stamp, r); cacheDirty = true; NewEntries++; if (NewPaths.Count < 5) NewPaths.Add(relPath);
+                }
+            }
             catch { }
             return r;
         }
 
+        // 读写 cache 都走这把锁：扫库线程在写条目的时候，落盘线程可能正在枚举整表
+        internal static readonly object CacheGate = new object();
+        static int savingFlag = 0;                 // 0=没人在写 1=后台落盘中
+
+        /// <summary>
+        /// 把识别结论落盘。排在后台线程写，不挡扫库：U 盘慢的时候这一步 2.5 秒起步，
+        /// 赶上杀软扫描 / 两个扫库并发抢盘能到 15~42 秒 —— 以前就卡在扫库线程里，
+        /// 界面跟着「正在扫库」转圈到天荒地老。写法是先写临时文件再替换，断电/强退都不会留半截文件。
+        /// </summary>
         public static void SaveCache()
         {
             if (cache == null) return;
-            if (!cacheDirty) return;               // 没有新结论就不重写：省一次 8MB 落盘 + 杀软扫描
+            if (!cacheDirty) return;
+            if (System.Threading.Interlocked.CompareExchange(ref savingFlag, 1, 0) != 0) return;
+            System.Threading.Thread th = new System.Threading.Thread(delegate()
+            {
+                try
+                {
+                    for (int i = 0; i < 2 && cacheDirty; i++)   // 落盘期间又攒了新结论就再写一笔（最多补一次）
+                    {
+                        SaveCacheNow();
+                    }
+                }
+                finally { System.Threading.Interlocked.Exchange(ref savingFlag, 0); }
+            });
+            th.IsBackground = true;
+            th.Start();
+        }
+
+        static void SaveCacheNow()
+        {
             cacheDirty = false;
+            System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
+            string[] lines;
+            lock (CacheGate)
+            {
+                lines = new string[cache.Values.Count];
+                cache.Values.CopyTo(lines, 0);
+            }
             try
             {
                 StringBuilder sb = new StringBuilder();
-                foreach (string v in cache.Values) sb.AppendLine(v);
-                File.WriteAllText(CacheFile, sb.ToString(), Encoding.UTF8);
+                foreach (string v in lines) sb.AppendLine(v);
+                string tmp = CacheFile + ".tmp";
+                File.WriteAllText(tmp, sb.ToString(), Encoding.UTF8);
+                if (File.Exists(CacheFile)) File.Delete(CacheFile);
+                File.Move(tmp, CacheFile);
             }
             catch { }
+            // U 盘慢的时候这一步能吃掉十几秒，「一直在加载」多半有它一份；
+            // 计时落进日志，下次一眼看出是落盘慢还是识别慢。
+            Core.Log("INFO", "识别缓存落盘(后台): " + sw.ElapsedMilliseconds + " ms，" + lines.Length + " 条，其中新识别 " + NewEntries + " 条"
+                + (NewEntries > 0 && NewEntries <= 5 ? "：" + string.Join("；", NewPaths.ToArray()) : ""));
+            NewEntries = 0;
+            NewPaths.Clear();
         }
     }
 }
