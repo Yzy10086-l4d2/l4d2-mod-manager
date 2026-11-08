@@ -1095,7 +1095,9 @@ namespace Installer
             v.ShowItemToolTips = true;
             v.HideSelection = false;
             ImageList pad = new ImageList();
-            pad.ImageSize = new Size(1, 28);
+            // 这一行决定 ListView 的行高。字体是按 point 放大的，行高还写死 28 的话，
+            // 125% / 150% 下字会顶到上下一行的边界上（前面那一行字的下半截被裁掉）。
+            pad.ImageSize = new Size(1, Math.Max(16, Dpi.S(28)));
             pad.ColorDepth = ColorDepth.Depth32Bit;
             v.SmallImageList = pad;
             v.StateImageList = Dots();
@@ -1193,8 +1195,9 @@ namespace Installer
 
         private static ImageList Dots()
         {
+            int s = Math.Max(8, Dpi.S(14));
             ImageList il = new ImageList();
-            il.ImageSize = new Size(14, 14);
+            il.ImageSize = new Size(s, s);
             il.ColorDepth = ColorDepth.Depth32Bit;
             il.TransparentColor = Color.Transparent;
             il.Images.Add(Dot(false));
@@ -1204,16 +1207,19 @@ namespace Installer
 
         private static Bitmap Dot(bool on)
         {
-            Bitmap b = new Bitmap(14, 14);
+            // 圆点也要跟着缩放：图标不放大而文字放大，列表看着就是「字大点小」，很别扭
+            int s = Math.Max(8, Dpi.S(14));
+            float k = s / 14f;
+            Bitmap b = new Bitmap(s, s);
             using (Graphics g = Graphics.FromImage(b))
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.Clear(Color.Transparent);
-                using (Pen p = new Pen(on ? Theme.Mark : (Theme.IsDark ? Color.FromArgb(96, 103, 112) : Color.FromArgb(184, 192, 200)), 1.5f))
-                    g.DrawEllipse(p, 2.5f, 2.5f, 8f, 8f);
+                using (Pen p = new Pen(on ? Theme.Mark : (Theme.IsDark ? Color.FromArgb(96, 103, 112) : Color.FromArgb(184, 192, 200)), Math.Max(1f, 1.5f * k)))
+                    g.DrawEllipse(p, 2.5f * k, 2.5f * k, 8f * k, 8f * k);
                 if (on)
                     using (SolidBrush br = new SolidBrush(Theme.Mark))
-                        g.FillEllipse(br, 5f, 5f, 4f, 4f);
+                        g.FillEllipse(br, 5f * k, 5f * k, 4f * k, 4f * k);
             }
             return b;
         }
@@ -2301,6 +2307,22 @@ namespace Installer
                         else if (MyBranch.ParentOf(s2).Length > 0)
                         { bad++; Core.Log("FAIL", "BRANCH 子分支拖回顶层没生效，父还是「" + MyBranch.ParentOf(s2) + "」"); }
                         else Core.Log("INFO", "BRANCH 子分支拖回顶层生效（真实鼠标路径）");
+                    }
+
+                    // 拖到一半被系统收走鼠标（拖出窗口松手 / Alt+Tab）：必须自己收尾。
+                    // 原来没有这层兜底，dragging 会一直挂着 —— 光标停在十字、树跟着鼠标画预览，
+                    // 下一次点击还会拿上一次的落点去搬东西。
+                    Rebuild();
+                    int rl = body.RowIndexOfSlot("#mine:" + s1);
+                    if (rl < 0) { bad++; Core.Log("FAIL", "DRAGLOST 树里找不到分支行"); }
+                    else
+                    {
+                        string stL = body.SimulateLostCapture(rl);
+                        Core.Log("INFO", "DRAGLOST 失去捕获 " + stL);
+                        if (!stL.Contains("dragging=True")) { bad++; Core.Log("FAIL", "DRAGLOST 用例前提没成立：" + stL); }
+                        else if (!stL.Contains("→ dragging=False pressArm=False preview=清空"))
+                        { bad++; Core.Log("FAIL", "DRAGLOST 失去捕获后状态没清干净：" + stL); }
+                        else Core.Log("INFO", "DRAGLOST 失去捕获后拖动已取消、预览已撤");
                     }
 
                     // 大类拖动：挪到另一个大类后面，走和鼠标松手一样的 ApplyDrop，
@@ -3549,6 +3571,7 @@ namespace Installer
                 dragging = true;
                 dragY = e.Y;
                 dragOffset = offset;
+                Capture = true;            // 拖着滑块滑出窗口再松手，也得知道松手了
             }
             else
             {
@@ -3562,6 +3585,16 @@ namespace Installer
         {
             base.OnMouseUp(e);
             if (!dragging) return;
+            dragging = false;
+            if (Capture) Capture = false;
+            Invalidate();
+        }
+
+        /// <summary>滑块拖到窗口外松手时 MouseUp 收不到，靠捕获被收回这个时机复位。</summary>
+        protected override void OnMouseCaptureChanged(EventArgs e)
+        {
+            base.OnMouseCaptureChanged(e);
+            if (Capture || !dragging) return;
             dragging = false;
             Invalidate();
         }
@@ -4412,6 +4445,10 @@ namespace Installer
                     Core.Log("INFO", "DRAGIN 按下 行=" + i + " " + RowDesc(r) + " 键=" + e.Button);
                     Cursor = Cursors.SizeAll;
                     InvalidateRow(i);
+                    // 按下就把鼠标抓住：不然拖到控件外（左栏、窗口边缘之外）松手时，
+                    // MouseUp 根本发不到这里，dragging 会一直挂着 —— 光标卡在十字上、
+                    // 树还跟着鼠标画预览，下一次点击会拿上一次的落点去搬东西。
+                    Capture = true;
                 }
             }
             base.OnMouseDown(e);
@@ -4442,7 +4479,22 @@ namespace Installer
             if (pressArm) { Cursor = Cursors.Hand; InvalidateRow(pressRow); }   // 撤掉按下高亮
             pressArm = false;
             pressRow = -1;
+            if (Capture) Capture = false;
             base.OnMouseUp(e);
+        }
+
+        /// <summary>
+        /// 拖到窗口外松手、Alt+Tab、被别的窗口抢走焦点 —— 这几种情况下 MouseUp 不会送到这里，
+        /// 但系统会先收回鼠标捕获。趁这个时机把拖动状态清干净，别让它挂在那儿。
+        /// </summary>
+        protected override void OnMouseCaptureChanged(EventArgs e)
+        {
+            base.OnMouseCaptureChanged(e);
+            if (Capture) return;                       // 自己设的捕获，不是被收走
+            if (!dragging && !pressArm) return;
+            Core.Log("WARN", "拖动被中断（失去鼠标捕获），已取消本次拖拽");
+            ResetDrag();
+            owner.KeepFoot("拖动已取消：鼠标离开了窗口，或者窗口被切走了。要挪动请重新按住再拖");
         }
 
         /// <summary>
@@ -4737,6 +4789,25 @@ namespace Installer
             return true;
         }
 
+        /// <summary>
+        /// 自检用：模拟「拖到一半鼠标捕获被系统收走」（拖出窗口松手 / Alt+Tab / 弹窗抢焦点）。
+        /// 这几种情况 MouseUp 根本不会来，全靠 OnMouseCaptureChanged 兜底。
+        /// </summary>
+        internal string SimulateLostCapture(int row)
+        {
+            if (row < 0 || row >= rows.Count) return "行号越界 " + row;
+            int y = row * RowH + 4 + RowH / 2;
+            OnMouseDown(new MouseEventArgs(MouseButtons.Left, 1, 30, y, 0));
+            OnMouseMove(new MouseEventArgs(MouseButtons.Left, 1, 30, y + 8, 0));
+            if (!dragging) return "没进入拖动状态（前提不成立）";
+            string before = "dragging=" + dragging + " pressArm=" + pressArm;
+            Capture = false;                        // 真机上这是系统做的，自检里手动来一下
+            OnMouseCaptureChanged(EventArgs.Empty); // 没有消息循环，直接走一遍处理
+            return before + " → dragging=" + dragging + " pressArm=" + pressArm
+                 + " preview=" + (previewRows == null ? "清空" : "残留")
+                 + " cursor=" + Cursor;
+        }
+
         private void ResetDrag()
         {
             dragging = false;
@@ -4750,6 +4821,9 @@ namespace Installer
             pvIns = -1;
             pvB1 = -1;
             Cursor = Cursors.Hand;
+            // 状态先清完再放捕获：放捕获会触发 OnMouseCaptureChanged，
+            // 那时 dragging / pressArm 已经是 false，不会反过来又走一遍取消。
+            if (Capture) Capture = false;
             Invalidate();
         }
 
@@ -4964,7 +5038,7 @@ namespace Installer
                 if (t != null && CatTree.IsBranchSlot(t)) { to = i; break; }
             }
             if (from < 0 || to < 0) { Core.Log("WARN", "DRAG 旁边没有别的分支行，画不出落点"); return; }
-            body.TestDragVisual(s.Name, to, 3, new Point(120, to * 28 + 20));
+            body.TestDragVisual(s.Name, to, 3, new Point(120, to * Dpi.S(28) + Dpi.S(20)));
             Core.Log("INFO", "DRAG 预览：「" + s.Name + "」拖到第 " + to + " 行（成为子分支）");
         }
 
@@ -4986,7 +5060,7 @@ namespace Installer
                 else if (string.Equals(c, ontoCat, StringComparison.Ordinal)) to = i;
             }
             if (from < 0 || to < 0) { Core.Log("WARN", "DRAGCAT 没找到大类: " + catName + " / " + ontoCat); return; }
-            treeView.Body.TestCatDragVisual(catName, to, 2, new Point(120, to * 28 + 20));
+            treeView.Body.TestCatDragVisual(catName, to, 2, new Point(120, to * Dpi.S(28) + Dpi.S(20)));
             Core.Log("INFO", "DRAGCAT 预览：「" + catName + "」拖到「" + ontoCat + "」后面");
         }
 
@@ -5100,8 +5174,11 @@ namespace Installer
             Application.DoEvents();
 
             SlotTree body = treeView.Body;
-            Point start = body.PointToScreen(new Point(40, from * 28 + 4 + 14));
-            Point end = body.PointToScreen(new Point(40, to * 28 + 4 + (isCat ? 24 : 14)));
+            // 行高跟着 DPI 走（和 SlotTree.RowH 同一个值）；这里原来写死 28，
+            // 高缩放下算出来的屏幕坐标会落在相邻行上，自动化拖动就拖错东西了。
+            int rh = Math.Max(16, Dpi.S(28));
+            Point start = body.PointToScreen(new Point(40, from * rh + Dpi.S(18)));
+            Point end = body.PointToScreen(new Point(40, to * rh + (isCat ? Dpi.S(28) : Dpi.S(18))));
             Native.POINT cp;
             Native.GetCursorPos(out cp);
             Core.Log("INFO", "MOUSEDRAG 屏幕坐标 起点(" + start.X + "," + start.Y + ") 落点(" + end.X + "," + end.Y + ")"
