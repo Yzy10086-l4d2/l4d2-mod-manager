@@ -6,4 +6,4 @@ using System.Reflection;
 [assembly: AssemblyCompany("L4D2 扩展平台")]
 [assembly: AssemblyCopyright("")]
 [assembly: AssemblyVersion("2.50.0.0")]
-[assembly: AssemblyFileVersion("2.49.0.0")]
+[assembly: AssemblyFileVersion("2.50.0.0")]
