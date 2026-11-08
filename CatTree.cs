@@ -3197,10 +3197,17 @@ namespace Installer
         {
             Slot s = Current;
             if (s == null) return;
+            ChooseInSlot(s, g);
+            FillDetail();
+        }
+
+        /// <summary>给某个位置换候选（科技树 / 台面共用）：先清空这个位置，再勾这一个。</summary>
+        internal void ChooseInSlot(Slot s, ModGroup g)
+        {
+            if (s == null) return;
             foreach (ModGroup o in s.Items) mf.UncheckGroup(o);
             if (g != null) mf.CheckGroupDefault(g);
             mf.AfterTreePick();
-            FillDetail();
         }
 
         /// <summary>这个位置的候选里有没有组合装（模型+材质+颜色的套装）。</summary>

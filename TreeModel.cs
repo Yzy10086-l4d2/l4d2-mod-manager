@@ -21,6 +21,7 @@ namespace Installer
 
         // 布局产物（TreeLayout 写，TreeCanvas 读）
         public float X, Y, W, H;
+        public float CapH;                  // 这一行上面留的小分类标题高度（行高压缩时会跟着变）
 
         public bool HasKids { get { return Kids.Count > 0; } }
     }

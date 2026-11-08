@@ -16,11 +16,11 @@ namespace Installer
     {
         public static string Render(TreeNode root, Size size)
         {
-            // 白模自己也走一遍排版，等于顺手验了 TreeLayout
-            TreeLayout.Arrange(root, size);
-
             TreeNode selCat = root.Kids.Count > 0 ? root.Kids[0] : null;
             TreeNode selSlot = (selCat != null && selCat.Kids.Count > 0) ? selCat.Kids[0] : null;
+
+            // 白模自己也走一遍排版，等于顺手验了 TreeLayout
+            TreeLayout.Arrange(root, selCat, selSlot, size, 0f, 0f);
 
             using (Bitmap bmp = new Bitmap(size.Width, size.Height))
             using (Graphics g = Graphics.FromImage(bmp))

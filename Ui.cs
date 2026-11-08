@@ -235,11 +235,11 @@ namespace Installer
             tips.SetToolTip(btnSettings, "工作模式、动效、MOD 库目录，以及配置和日志位置。");
             Controls.Add(btnSettings);
 
-            // 台面 / 方案树：同一份数据的两种看法，按钮上写的是「点了会去哪种」
-            btnView = new FlatButton(); btnView.Text = "桌面";
+            // 科技树 / 方案树：同一份数据的两种看法，按钮上写的是「点了会去哪种」
+            btnView = new FlatButton(); btnView.Text = "科技树";
             btnView.SetBounds(viewX, 16, viewW, Theme.H);
             btnView.Click += delegate { ToggleView(); };
-            tips.SetToolTip(btnView, "打开第一人称的桌面：一张卡 = 一个大类/分支，摆在真桌子上，拖到哪儿就停在哪儿。\r\n每个位置（AK-47 这种）的候选、套装细调，回到左边的方案树。");
+            tips.SetToolTip(btnView, "科技树：从「MOD 库」往外长——大类 → 位置 → 候选，一条路径点亮，其余灰色待命。\r\n点候选就是换掉这个位置，点「留原版」就是清空。方向键也能走。\r\n再点一下回到方案树（搜索、批量勾选、看套装细目）。");
             Controls.Add(btnView);
 
             btnPanel = new FlatButton(); btnPanel.Text = "面板";
@@ -2547,11 +2547,11 @@ namespace Installer
             ResumeLayout(true);
         }
 
-        /// <summary>开桌面窗口。已经开着就别关掉重开 —— 把那个窗口拎到前面就好。</summary>
+        /// <summary>科技树 ⇄ 方案树。科技树是整窗口一块画板，不是另一个窗口。</summary>
         internal void ToggleView()
         {
-            if (Desk != null && Desk.Running) { Desk.Focus(); return; }
-            ShowDesk();
+            if (MapOpen) HideTreeMap();
+            else ShowTreeMap();
         }
 
         /// <summary>桌面上的「开始安装」按钮走这里。</summary>

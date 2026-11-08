@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Threading;
 using System.Windows.Forms;
@@ -13,6 +14,161 @@ namespace Installer
     public partial class MainForm
     {
         private DeskServer desk;
+        private TreeCanvas map;
+        private bool mapHooked;
+
+        /// <summary>科技树：整窗口一块画板，盖在左栏和方案树上面（顶栏和底栏留着）。</summary>
+        internal void ShowTreeMap()
+        {
+            EnsureTree();
+            DropLoading();
+            treeView.Rebuild();
+
+            if (map == null)
+            {
+                map = new TreeCanvas(this);
+                Controls.Add(map);
+            }
+            if (!mapHooked)
+            {
+                mapHooked = true;
+                Resize += delegate { if (MapOpen) FitMap(); };
+            }
+
+            FitMap();
+            map.Rebuild();
+            map.Visible = true;
+            map.BringToFront();
+            if (btnView != null) btnView.Text = "方案树";
+            map.Focus();
+            UpdateModCaption();
+        }
+
+        private void FitMap()
+        {
+            if (map == null) return;
+            const int top = 56;                    // 顶栏下面
+            int bottom = 104;                      // 底栏（开始安装那一排）上面
+            map.SetBounds(0, top, ClientSize.Width,
+                Math.Max(140, ClientSize.Height - top - bottom));
+        }
+
+        internal void HideTreeMap()
+        {
+            if (map != null) map.Visible = false;
+            if (btnView != null) btnView.Text = "科技树";
+            ShowTree();
+        }
+
+        internal bool MapOpen { get { return map != null && map.Visible; } }
+
+        /// <summary>给某个位置换候选（科技树点候选走这里）。</summary>
+        internal void ChooseInSlot(Slot s, ModGroup g)
+        {
+            if (treeView != null) treeView.ChooseInSlot(s, g);
+        }
+
+        /// <summary>截图自检：把科技树画布存成 PNG（只抓画布，不抓整窗 —— 屏幕上可能盖着别的窗口）。</summary>
+        internal void TreeMapShot()
+        {
+            EnsureTree();
+            ShowTreeMap();
+            Pump(700);
+            ShotCanvas("treemap");
+
+            if (map != null) map.SelectForShot("近战", null);
+            Pump(500);
+            ShotCanvas("treemap2");
+
+            if (map != null) map.SelectForShot("枪械", "AK-47");
+            Pump(500);
+            ShotCanvas("treemap3");
+        }
+
+        private static void Pump(int ms)
+        {
+            DateTime until = DateTime.Now.AddMilliseconds(ms);
+            while (DateTime.Now < until) { Application.DoEvents(); Thread.Sleep(15); }
+        }
+
+        private void ShotCanvas(string tag)
+        {
+            if (map == null) return;
+            using (Bitmap b = new Bitmap(Math.Max(2, map.Width), Math.Max(2, map.Height)))
+            {
+                map.DrawToBitmap(b, new Rectangle(0, 0, map.Width, map.Height));
+                b.Save(System.IO.Path.Combine(Core.LogDir, tag + ".png"),
+                       System.Drawing.Imaging.ImageFormat.Png);
+            }
+        }
+
+        /// <summary>科技树自检：数字对得上、每个大类都排得下、点候选真的换得到。返回失败条数。</summary>
+        internal int TreeMapSelfTest()
+        {
+            int bad = 0;
+            EnsureTree();
+            treeView.Rebuild();
+            ShowTreeMap();
+            Pump(300);
+
+            if (map == null) { Core.Log("FAIL", "treeself 画布没建起来"); return 1; }
+
+            Core.Log("INFO", "TREESELF 大类 " + map.CatCount + " / 位置 " + map.SlotNodeCount
+                            + "（方案树 " + treeView.SlotCount + "）");
+            if (map.SlotNodeCount != treeView.SlotCount)
+            {
+                Core.Log("FAIL", "TREESELF 位置数对不上：" + map.SlotNodeCount + " vs " + treeView.SlotCount);
+                bad++;
+            }
+
+            // 每个大类都排一遍：不许有节点跑出画布、压在列标题上，或行高压到字放不下
+            string[] cats = map.CatTitles;
+            int fit = 0;
+            foreach (string cat in cats)
+            {
+                string why = map.LayoutProblem(cat);
+                if (why != null) { Core.Log("FAIL", "TREESELF 排版 " + why); bad++; }
+                else fit++;
+            }
+            Core.Log("INFO", "TREESELF 排版检查：" + fit + "/" + cats.Length + " 个大类通过");
+
+            // 点一个候选：原来那件要下来，新的要上去，这个位置只剩一件
+            Slot probe = null;
+            foreach (Slot s in treeView.Slots)
+                if (s.Items.Count >= 2) { probe = s; break; }
+
+            if (probe == null) Core.Log("INFO", "TREESELF 没有两个以上候选的位置，跳过点选");
+            else
+            {
+                List<string> backup = new List<string>(checkedKeys);
+                int total0 = checkedKeys.Count;
+                ModGroup a0 = probe.Items[0], a1 = probe.Items[1];
+
+                // 先把这个位置归零，再点第 2 个候选 —— 直接点一个已经开着的候选是幂等的，验不出东西
+                treeView.ChooseInSlot(probe, null);
+                Pump(40);
+                map.SelectForShot(probe.Cat, probe.Name);
+                bool picked = map.TestPick(1);
+                int on0 = CountChecked(a0), on1 = CountChecked(a1);
+                Core.Log("INFO", "TREESELF 点第 2 个候选「" + a1.Name + "」：第 1 件 " + on0
+                                + " 件，第 2 件 " + on1 + " 件，点中了=" + picked);
+                if (!picked) { Core.Log("FAIL", "TREESELF 点了候选但没选上"); bad++; }
+                if (on1 == 0) { Core.Log("FAIL", "TREESELF 点了候选但它没被勾上"); bad++; }
+                if (on0 > 0) { Core.Log("FAIL", "TREESELF 换候选后原来那件还开着"); bad++; }
+
+                checkedKeys.Clear();
+                foreach (string k in backup) checkedKeys.Add(k);
+                AfterTreePick();
+                if (treeView != null) treeView.Sync();
+                Pump(60);
+                Core.Log("INFO", "TREESELF 还原勾选：" + checkedKeys.Count + " 件（原 " + total0 + "）");
+                if (checkedKeys.Count != total0) { Core.Log("FAIL", "TREESELF 还原后勾选数对不上"); bad++; }
+            }
+
+            HideTreeMap();
+            Console.WriteLine("treeself failures = " + bad);
+            return bad;
+        }
 
         /// <summary>方案树：按「能替换的东西」看这套方案，右边是候选 MOD。</summary>
         internal void ShowTree()
@@ -160,6 +316,7 @@ namespace Installer
         internal void SyncPicks()
         {
             if (treeView != null && treeView.Visible) treeView.Sync();
+            if (MapOpen) map.RefreshPicks();
             UpdateSel();
             UpdateSchemeLabel();
             UpdateModCaption();          // 台面标题上的「已选 N」也要跟着动

@@ -7,109 +7,200 @@ namespace Installer
     /// <summary>
     /// 科技树的排版：只算坐标，不画。窗口变宽变窄都从这里过，
     /// 画的人（TreeCanvas / 白模）拿到的永远是一组矩形。
+    ///
+    /// 只有「一条路径」是展开的：根 → 选中的大类 → 它的位置 → 选中位置的候选。
+    /// 其余大类仍然排好位（好切换），但画布不画它们的下级。
     /// </summary>
     internal static class TreeLayout
     {
-        // 三档窗口宽度。列宽是上限，窗口更宽就把多出来的空间分给「候选」那一列
-        public const float TopPad = 76f;      // 顶栏下面
-        public const float BottomPad = 60f;   // 底栏上面
-        public const float CatH = 40f, CatGap = 9f;
-        public const float SlotH = 24f, SlotGap = 6f, GroupCap = 20f;
-        public const float CandH = 44f, CandGap = 9f;
+        // 窗口宽度分档的基准（逻辑像素）
+        public const float SidePad = 36f;      // 左右留白
+        public const float TopPad = 62f;       // 顶上给列标题留的位置
+        public const float BottomPad = 44f;      // 底下那行操作提示的位置也要留出来
 
-        public static void Arrange(TreeNode root, Size view)
+        public const float CatH = 44f, CatGap = 10f;
+        public const float SlotH = 26f, SlotGap = 6f;
+        public const float GroupCap = 22f, GroupGap = 10f;
+        public const float CandH = 46f, CandGap = 9f;
+
+        // ---- Arrange 的输出：画布拿去算滚动、命中、悬浮提示 ----
+        public static bool HasRoot;                     // 太窄就不画根节点那一列
+        public static float RootX, RootW;
+        public static float CatX, CatW;
+        public static float SlotX, SlotW;
+        public static float CandX, CandW;
+        public static float ViewTop, ViewBottom;
+        public static float SlotContentH;               // 选中大类的位置列总高
+        public static float CandContentH;               // 选中位置的候选列总高
+
+        public static void Arrange(TreeNode root, TreeNode selCat, TreeNode selSlot,
+                                   Size view, float scrollSlot, float scrollCand)
         {
-            float availW = view.Width - 96f;                       // 左右各留 48
-            float[] w = { 132f, 196f, 306f, 452f };                // 根 / 大类 / 位置 / 候选
-            float[] gap = { 52f, 58f, 64f };
+            float availW = Math.Max(260f, view.Width - SidePad * 2f);
 
-            float need = 0f;
-            for (int i = 0; i < w.Length; i++) need += w[i];
-            for (int i = 0; i < gap.Length; i++) need += gap[i];
+            // 四列的自然宽度（根 / 大类 / 位置 / 候选）
+            float wRoot = 128f, wCat = 190f, wSlot = 300f, wCand = 440f;
+            float g1 = 46f, g2 = 52f, g3 = 58f;
+            const float need4 = 128f + 190f + 300f + 440f + 46f + 52f + 58f;   // 1214
+            const float need3 = 190f + 300f + 440f + 52f + 58f;                 // 1040
 
-            if (availW > need + 80f)
+            HasRoot = availW >= need4;
+            if (HasRoot)
             {
-                // 宽屏：多出来的空间全给候选列，长名字能少截几个字
-                w[3] += Math.Min(availW - need - 80f, 180f);
+                // 宽屏：多出来的全给候选列，长名字少截几个字
+                wCand += Math.Min(availW - need4 - 40f, 240f);
             }
-            else if (availW < need)
+            else
             {
-                float k = Math.Max(0.68f, availW / need);
-                for (int i = 0; i < w.Length; i++) w[i] *= k;
-                for (int i = 0; i < gap.Length; i++) gap[i] *= k;
+                float k = Math.Min(1f, availW / need3);
+                k = Math.Max(k, 0.72f);
+                wCat *= k; wSlot *= k; wCand *= k; g2 *= k; g3 *= k;
+                float total0 = wCat + wSlot + wCand + g2 + g3;
+                if (total0 > availW)
+                    wCand = Math.Max(210f, wCand - (total0 - availW));
             }
 
-            float x = 48f;
-            float[] colX = new float[4];
-            for (int i = 0; i < 4; i++)
+            float total = (HasRoot ? wRoot + g1 : 0f) + wCat + wSlot + wCand + g2 + g3;
+            float x = SidePad + Math.Max(0f, (availW - total) * 0.5f);
+
+            if (HasRoot)
             {
-                colX[i] = x;
-                x += w[i] + (i < 3 ? gap[i] : 0f);
+                root.X = x; root.W = wRoot; x += wRoot + g1;
             }
+            CatX = x; CatW = wCat; x += wCat + g2;
+            SlotX = x; SlotW = wSlot; x += wSlot + g3;
+            CandX = x; CandW = wCand;
 
             float top = TopPad;
             float bottom = view.Height - BottomPad;
+            if (bottom - top < 120f) bottom = top + 120f;
+            ViewTop = top; ViewBottom = bottom;
+            float viewH = bottom - top;
             float midY = (top + bottom) * 0.5f;
 
-            // 根
-            root.X = colX[0]; root.W = w[0]; root.H = 68f;
+            // ---- 根 ----
+            root.H = 78f;
             root.Y = midY - root.H * 0.5f;
 
-            // 大类：等距排，整体居中
+            // ---- 大类：也按窗口高度压行高（11 个 × 44px 在最小窗口里放不下），
+            // 压到 0.72 还不够就以选中的那个为中心，不能让它被切在窗口外 ----
             int n1 = root.Kids.Count;
-            float h1 = n1 * CatH + Math.Max(0, n1 - 1) * CatGap;
+            float natural1 = n1 * CatH + Math.Max(0, n1 - 1) * CatGap;
+            float k1 = natural1 > viewH ? Math.Max(0.72f, viewH / natural1) : 1f;
+            float ch = CatH * k1, cg = CatGap * k1;
+            float h1 = n1 * ch + Math.Max(0, n1 - 1) * cg;
+
             float y1 = midY - h1 * 0.5f;
+            if (h1 > viewH && n1 > 0)
+            {
+                int si = root.Kids.IndexOf(selCat);
+                if (si < 0) si = 0;
+                float want = top + si * (ch + cg) + ch * 0.5f;   // 选中那个在 top 坐标系下的位置
+                y1 = top + (midY - want);
+                if (y1 > top) y1 = top;
+                if (y1 + h1 < bottom) y1 = bottom - h1;
+            }
             if (y1 < top) y1 = top;
+
             for (int i = 0; i < n1; i++)
             {
                 TreeNode c = root.Kids[i];
-                c.X = colX[1]; c.W = w[1]; c.H = CatH;
-                c.Y = y1 + i * (CatH + CatGap);
+                c.X = CatX; c.W = CatW; c.H = ch;
+                c.Y = y1 + i * (ch + cg);
             }
 
-            // 位置：按小分类分组，组名占一行
-            float y2 = 0f;
-            for (int i = 0; i < n1; i++)
+            // ---- 位置：先按 0 起点排出自然高度，再决定这一列从哪儿开始 ----
+            // 19 个位置 + 6 个分组在 748px 里放不下，直接滚会让最后一个位置贴着窗口边被切掉。
+            // 所以先试着把行高压一点（最多压到 0.85），压完还放不下才真滚动。
+            foreach (TreeNode c in root.Kids)
             {
-                TreeNode c = root.Kids[i];
+                int n = c.Kids.Count;
+                if (n == 0) { continue; }
+
+                int groups = 0;
+                string lastSub = null;
+                for (int i = 0; i < n; i++)
+                {
+                    string sub = c.Kids[i].Sub;
+                    if (sub != lastSub && !string.IsNullOrEmpty(sub)) { groups++; lastSub = sub; }
+                }
+
+                float natural = n * SlotH + Math.Max(0, n - 1) * SlotGap
+                                + Math.Max(0, groups) * GroupCap
+                                + Math.Max(0, groups - 1) * GroupGap;
+                float k = natural > viewH ? Math.Max(0.80f, viewH / natural) : 1f;
+                float sh = SlotH * k, sg = SlotGap * k, gc = GroupCap * k, gg = GroupGap * k;
+
                 string prev = null;
                 float yy = 0f;
                 foreach (TreeNode s in c.Kids)
                 {
                     if (s.Sub != prev && !string.IsNullOrEmpty(s.Sub))
                     {
-                        if (prev != null) yy += GroupCap - SlotGap;   // 组间多留一点
-                        yy += GroupCap;
+                        if (prev != null) yy += gg;
+                        yy += gc;
                         prev = s.Sub;
                     }
-                    s.X = colX[2]; s.W = w[2]; s.H = SlotH;
-                    s.Y = yy;
-                    yy += SlotH + SlotGap;
+                    s.X = SlotX; s.W = SlotW; s.H = sh;
+                    s.CapH = gc;
+                    s.Y = yy;                       // 暂存成相对位移
+                    yy += sh + sg;
                 }
-                // 按列内总高居中
-                float h2 = yy - SlotGap;
-                float start = midY - h2 * 0.5f;
-                if (start < top) start = top;
+
+                float h2 = yy > 0 ? yy - sg : 0f;
+                float start = h2 > viewH ? top - scrollSlot : midY - h2 * 0.5f;
+                if (h2 <= viewH && start < top) start = top;
                 foreach (TreeNode s in c.Kids) s.Y = start + s.Y;
-                if (i == 0) y2 = start;
             }
 
-            // 候选：跟着父节点纵向排，超出一屏就整体上移
+            SlotContentH = 0f;
+            if (selCat != null && selCat.Kids.Count > 0)
+            {
+                float lo = float.MaxValue, hi = 0f;
+                foreach (TreeNode s in selCat.Kids)
+                {
+                    if (s.Y < lo) lo = s.Y;
+                    if (s.Y + s.H > hi) hi = s.Y + s.H;
+                }
+                // 第一行上面还有一个分组标题，它也算这列的一部分
+                float cap = selCat.Kids[0].CapH > 1f ? selCat.Kids[0].CapH : GroupCap;
+                SlotContentH = hi - (selCat.Kids[0].Y - cap);
+            }
+
+            // ---- 候选：跟着父节点居中；比一屏还高就从顶上排、自己滚 ----
             foreach (TreeNode c in root.Kids)
                 foreach (TreeNode s in c.Kids)
                 {
                     int n3 = s.Kids.Count;
-                    float h3 = n3 * CandH + Math.Max(0, n3 - 1) * CandGap;
-                    float y = s.Y + s.H * 0.5f - h3 * 0.5f;
-                    if (y < top) y = top;
-                    if (y + h3 > bottom) y = Math.Max(top, bottom - h3);
+                    if (n3 == 0) continue;
+                    float h3 = n3 * CandH + (n3 - 1) * CandGap;
+                    float y;
+                    if (h3 > viewH) y = top - scrollCand;
+                    else
+                    {
+                        y = s.Y + s.H * 0.5f - h3 * 0.5f;
+                        if (y < top) y = top;
+                        if (y + h3 > bottom) y = bottom - h3;
+                    }
                     for (int i = 0; i < n3; i++)
                     {
                         TreeNode k = s.Kids[i];
-                        k.X = colX[3]; k.W = w[3]; k.H = CandH;
+                        k.X = CandX; k.W = CandW; k.H = CandH;
                         k.Y = y + i * (CandH + CandGap);
                     }
                 }
+
+            CandContentH = 0f;
+            if (selSlot != null && selSlot.Kids.Count > 0)
+            {
+                float lo = float.MaxValue, hi = 0f;
+                foreach (TreeNode k in selSlot.Kids)
+                {
+                    if (k.Y < lo) lo = k.Y;
+                    if (k.Y + k.H > hi) hi = k.Y + k.H;
+                }
+                CandContentH = hi - lo;
+            }
         }
 
         /// <summary>父节点右缘 → 子节点左缘的三次贝塞尔控制点（画连线用）。</summary>
@@ -121,6 +212,14 @@ namespace Installer
             float mx = (a.X + b.X) * 0.5f;
             c1 = new PointF(mx, a.Y);
             c2 = new PointF(mx, b.Y);
+        }
+
+        /// <summary>位置列里，这一行上面要不要画一行小分类标题（连着的同一个分类只画一次）。</summary>
+        public static bool StartsGroup(List<TreeNode> slots, int i)
+        {
+            if (i <= 0 || i >= slots.Count) return true;
+            string a = slots[i - 1].Sub, b = slots[i].Sub;
+            return !string.Equals(a, b, StringComparison.Ordinal);
         }
     }
 }
