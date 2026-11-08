@@ -534,46 +534,77 @@ namespace Installer
             return "启动项已写入 " + okCount + " 个 Steam 账号配置（Steam 退出后重开生效）";
         }
 
+        /// <summary>VDF 字符串里的转义。值里带引号/反斜杠时不转义，整份配置就解不开了。</summary>
+        private static string VdfEscape(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        }
+
+        /// <summary>从 open（必须指向 '{'）找配对的 '}'；字符串里的括号不算。找不到返回 -1。</summary>
+        private static int MatchBrace(string text, int open)
+        {
+            if (open < 0 || open >= text.Length || text[open] != '{') return -1;
+            int depth = 0;
+            bool inStr = false;
+            for (int i = open; i < text.Length; i++)
+            {
+                char ch = text[i];
+                if (inStr)
+                {
+                    if (ch == '\\') { i++; continue; }   // 跳过 \" 这种转义
+                    if (ch == '"') inStr = false;
+                    continue;
+                }
+                if (ch == '"') { inStr = true; continue; }
+                if (ch == '{') depth++;
+                else if (ch == '}')
+                {
+                    depth--;
+                    if (depth == 0) return i;
+                }
+            }
+            return -1;
+        }
+
         private static bool PatchVdf(string path, string value)
         {
             string text = File.ReadAllText(path, Encoding.UTF8);
-            int idx = text.IndexOf("\"550\"", StringComparison.Ordinal);
+            // 只在 "apps" 块里找 550。以前是在整份文件里找第一个 "550"：
+            // RecentApps / apptickets 里也可能出现 550，认错了就把启动项写进无关的块。
+            int apps = text.IndexOf("\"apps\"", StringComparison.Ordinal);
+            if (apps < 0) return false;
+            int appsOpen = text.IndexOf('{', apps);
+            if (appsOpen < 0) return false;
+            int appsClose = MatchBrace(text, appsOpen);
+            if (appsClose < 0) return false;
+
+            string esc = VdfEscape(value);
             bool changed = false;
-            if (idx < 0)
+            int idx = text.IndexOf("\"550\"", appsOpen, StringComparison.Ordinal);
+            if (idx < 0 || idx > appsClose)
             {
-                int apps = text.IndexOf("\"apps\"", StringComparison.Ordinal);
-                if (apps < 0) return false;
-                int open = text.IndexOf('{', apps);
-                if (open < 0) return false;
-                string ins = "\r\n\t\t\t\t\t\"550\"\r\n\t\t\t\t\t{\r\n\t\t\t\t\t\t\"LaunchOptions\"\t\t\"" + value + "\"\r\n\t\t\t\t\t}";
-                text = text.Insert(open + 1, ins);
+                string ins = "\r\n\t\t\t\t\t\"550\"\r\n\t\t\t\t\t{\r\n\t\t\t\t\t\t\"LaunchOptions\"\t\t\"" + esc + "\"\r\n\t\t\t\t\t}";
+                text = text.Insert(appsOpen + 1, ins);
                 changed = true;
             }
             else
             {
                 int open = text.IndexOf('{', idx);
-                if (open < 0) return false;
-                int depth = 0, close = -1;
-                for (int i = open; i < text.Length; i++)
-                {
-                    if (text[i] == '{') depth++;
-                    else if (text[i] == '}')
-                    {
-                        depth--;
-                        if (depth == 0) { close = i; break; }
-                    }
-                }
+                if (open < 0 || open > appsClose) return false;
+                int close = MatchBrace(text, open);
                 if (close < 0) return false;
                 string block = text.Substring(open, close - open);
-                Match lo = Regex.Match(block, "\"LaunchOptions\"\\s*\"[^\"]*\"");
+                // 值里可能有 \" 转义：要按字符串规则吃完整段，不能停在第一个引号上
+                Match lo = Regex.Match(block, "\"LaunchOptions\"\\s*\"(?:[^\"\\\\]|\\\\.)*\"");
                 if (lo.Success)
                 {
-                    string nb = block.Substring(0, lo.Index) + "\"LaunchOptions\"\t\t\"" + value + "\"" + block.Substring(lo.Index + lo.Length);
+                    string nb = block.Substring(0, lo.Index) + "\"LaunchOptions\"\t\t\"" + esc + "\"" + block.Substring(lo.Index + lo.Length);
                     text = text.Substring(0, open) + nb + text.Substring(close);
                 }
                 else
                 {
-                    text = text.Insert(open + 1, "\r\n\t\t\t\t\t\t\"LaunchOptions\"\t\t\"" + value + "\"");
+                    text = text.Insert(open + 1, "\r\n\t\t\t\t\t\t\"LaunchOptions\"\t\t\"" + esc + "\"");
                 }
                 changed = true;
             }
@@ -586,9 +617,10 @@ namespace Installer
             }
             catch (Exception ex) { Core.Log("WARN", "localconfig.vdf 备份失败（继续写）: " + ex.Message); }
             Core.WriteAllTextAtomic(path, text, new UTF8Encoding(false));
-            // 写成功 ≠ 写对了：读回来核一遍，别出现「日志说写好了，文件里其实没有」
+            // 写成功 ≠ 写对了：读回来核一遍，别出现「日志说写好了，文件里其实没有」。
+            // 核对的是转义之后的串 —— 值里有引号时，文件里存的本来就不是原样。
             string back = File.ReadAllText(path, Encoding.UTF8);
-            if (back.IndexOf(value, StringComparison.Ordinal) < 0)
+            if (back.IndexOf(esc, StringComparison.Ordinal) < 0)
                 throw new Exception("写完读回来找不到新启动项");
             return true;
         }
@@ -776,6 +808,39 @@ namespace Installer
                 bool okC = PatchVdf(c, "-new");
                 chk(!okC, "找不到 apps 时返回 false");
                 chk(File.ReadAllText(c, Encoding.UTF8) == cText, "找不到 apps 时文件一个字没动");
+
+                // D. 值里有引号和反斜杠：写进去必须转义，否则整份 vdf 解不开
+                string d = Path.Combine(dir, "d.vdf");
+                File.WriteAllText(d, aText, new UTF8Encoding(false));
+                string tricky = "+exec \"D:\\l4d2 cfg\\auto.cfg\" -novid";
+                bool okD = PatchVdf(d, tricky);
+                string backD = File.ReadAllText(d, Encoding.UTF8);
+                chk(okD, "带引号的值能写");
+                chk(backD.Contains("+exec \\\"D:\\\\l4d2 cfg\\\\auto.cfg\\\""), "引号和反斜杠已转义（" + backD.Length + " 字节）");
+                chk(!backD.Contains("\"D:\\l4d2 cfg\\auto.cfg\""), "引号没有被裸写进配置");
+                chk(backD.Contains("\"LastPlayed\"") && backD.Contains("\t\"550\"") , "写带引号的值也没破坏结构");
+                // 再写一遍普通值：从「值里带转义」改回普通值，不能残留旧的那半截
+                bool okD2 = PatchVdf(d, "-again");
+                string backD2 = File.ReadAllText(d, Encoding.UTF8);
+                chk(okD2 && backD2.Contains("\"-again\"") && !backD2.Contains("auto.cfg"), "带转义的值能被整段替换掉");
+                chk(CountOf(backD2, "\"LaunchOptions\"") == 1, "替换后只剩一条 LaunchOptions");
+
+                // E. 550 在 apps 之外也出现过（RecentApps）：不能写进那个块
+                string e = Path.Combine(dir, "e.vdf");
+                string eText = "\"UserLocalConfigStore\"\r\n{\r\n\t\"Software\"\r\n\t{\r\n\t\t\"Valve\"\r\n\t\t{\r\n"
+                             + "\t\t\t\"Steam\"\r\n\t\t\t{\r\n\t\t\t\t\"RecentApps\"\r\n\t\t\t\t{\r\n"
+                             + "\t\t\t\t\t\"550\"\r\n\t\t\t\t\t{\r\n\t\t\t\t\t\t\"LastPlayed\"\t\t\"1\"\r\n\t\t\t\t\t}\r\n"
+                             + "\t\t\t\t}\r\n\t\t\t\t\"apps\"\r\n\t\t\t\t{\r\n\t\t\t\t}\r\n\t\t\t}\r\n\t\t}\r\n\t}\r\n}\r\n";
+                File.WriteAllText(e, eText, new UTF8Encoding(false));
+                bool okE = PatchVdf(e, "-scoped");
+                string backE = File.ReadAllText(e, Encoding.UTF8);
+                int recentAt = backE.IndexOf("\"RecentApps\"", StringComparison.Ordinal);
+                int loAt = backE.IndexOf("\"LaunchOptions\"", StringComparison.Ordinal);
+                int appsAt = backE.IndexOf("\"apps\"", StringComparison.Ordinal);
+                chk(okE, "550 只在 apps 外时也能写");
+                chk(loAt > appsAt, "启动项写在 apps 块里（不是写进 RecentApps）");
+                chk(recentAt >= 0, "RecentApps 那段还在");
+                chk(CountOf(backE, "\"LaunchOptions\"") == 1, "只插了一条 LaunchOptions");
             }
             catch (Exception ex)
             {
@@ -784,6 +849,15 @@ namespace Installer
             }
             finally { try { Directory.Delete(dir, true); } catch { } }
             return bad;
+        }
+
+        /// <summary>数一个子串出现几次（自测用；IndexOf 循环，不引入正则）。</summary>
+        private static int CountOf(string text, string needle)
+        {
+            if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(needle)) return 0;
+            int n = 0, i = 0;
+            while ((i = text.IndexOf(needle, i, StringComparison.Ordinal)) >= 0) { n++; i += needle.Length; }
+            return n;
         }
 
         // ---------- MOD 库维护 ----------
@@ -1015,6 +1089,9 @@ namespace Installer
             targets.Add("bin\\neko\\mqcore\\mqcam_state.ini");
 
             HashSet<string> uniq = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // 删掉的那些 vpk 名：还要从 addonlist 里摘掉登记。
+            // 不摘的话下次装回同名 MOD，会继承上次那条「0 = 关闭」，装上却玩不到。
+            List<string> goneAddons = new List<string>();
             int del = 0;
             foreach (string rel in targets)
             {
@@ -1027,6 +1104,8 @@ namespace Installer
                 try
                 {
                     if (File.Exists(full)) { File.Delete(full); del++; }
+                    if (key.StartsWith("left4dead2\\addons\\", StringComparison.OrdinalIgnoreCase))
+                        goneAddons.Add(Path.GetFileName(key));
                 }
                 catch (Exception ex) { Core.Log("WARN", "删除 " + key + " 失败: " + ex.Message); }
             }
@@ -1073,8 +1152,20 @@ namespace Installer
                 try
                 {
                     if (File.Exists(p)) { File.Delete(p); moved++; }
+                    goneAddons.Add(name);
                 }
                 catch (Exception ex) { failed++; Core.Log("WARN", "删除 " + name + " 失败: " + ex.Message); }
+            }
+            // 删掉的文件在 addonlist 里留了一条指向空气的开关：游戏读不到文件不会报错，
+            // 但同一名字下次装回来时，这条旧的 0 会把它默默关掉。既然文件是我们删的，登记一起摘。
+            if (goneAddons.Count > 0)
+            {
+                try
+                {
+                    int cleared = AddonList.Remove(gameRoot, goneAddons);
+                    if (cleared > 0) report.Add("addonlist 里指向这些文件的登记一并摘掉 " + cleared + " 条");
+                }
+                catch (Exception ex) { Core.Log("WARN", "还原时清理 addonlist 失败: " + ex.Message); }
             }
             if (added.Count > 0)
                 report.Add("本次铺的 MOD 已删除 " + moved + " 个"
@@ -1593,6 +1684,37 @@ namespace Installer
                     if (!moved) { bad++; Console.WriteLine("[FAIL] 本地模式删除没删掉文件: " + victim.Name + " " + err); }
                     if (!dropped) { bad++; Console.WriteLine("[FAIL] 删除后 addonlist 里还留着: " + victim.Name); }
                     Console.WriteLine("ADDON 本地模式删除：文件已删=" + moved + "，addonlist 摘掉=" + dropped);
+                }
+                finally
+                {
+                    Core.Cfg.Mode = savedMode;
+                    Core.Cfg.GameRoot = savedGame;
+                    Core.LogDir = savedLog;
+                }
+
+                // 彻底还原：删掉的 vpk 不能把 addonlist 里的登记留成「幽灵开关」
+                // （留着的 0 会在下次装回同名 MOD 时把它默默关掉，用户以为装了却没生效）
+                try
+                {
+                    Core.Cfg.Mode = "local";
+                    Core.Cfg.GameRoot = tmp;
+                    Core.LogDir = Path.Combine(tmp, "_装机记录");
+                    Directory.CreateDirectory(Core.LogDir);
+
+                    string ghost = "还原测试.vpk";
+                    File.WriteAllText(Path.Combine(addons, ghost), "x");
+                    Dictionary<string, bool> swOff = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+                    swOff[ghost] = false;                            // 先登记成「关闭」
+                    AddonList.Write(tmp, swOff);
+                    File.WriteAllText(Path.Combine(Core.LogDir, "最近一次.ini"), "Added=" + ghost + "\r\n", new UTF8Encoding(true));
+
+                    FullRestore(tmp);
+
+                    bool fileGone = !File.Exists(Path.Combine(addons, ghost));
+                    bool regGone = !AddonList.Read(tmp).ContainsKey(ghost);
+                    if (!fileGone) { bad++; Console.WriteLine("[FAIL] 彻底还原没删掉铺进去的 vpk: " + ghost); }
+                    if (!regGone) { bad++; Console.WriteLine("[FAIL] 彻底还原后 addonlist 里还留着幽灵登记: " + ghost); }
+                    Console.WriteLine("ADDON 彻底还原：文件已删=" + fileGone + "，addonlist 幽灵登记已清=" + regGone);
                 }
                 finally
                 {

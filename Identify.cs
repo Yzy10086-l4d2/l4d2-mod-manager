@@ -985,12 +985,15 @@ namespace Installer
             {
                 StringBuilder sb = new StringBuilder();
                 foreach (string v in lines) sb.AppendLine(v);
-                string tmp = CacheFile + ".tmp";
-                File.WriteAllText(tmp, sb.ToString(), Encoding.UTF8);
-                if (File.Exists(CacheFile)) File.Delete(CacheFile);
-                File.Move(tmp, CacheFile);
+                // 以前是「先写 .tmp，删掉旧缓存，再改名」：删完还没改名时被打断（拔 U 盘 / 关窗），
+                // 旧缓存已经没了、新的还没落地，整个库下次要重识别一遍。改成一次换名，旧的要么在、要么被整份替换。
+                Core.WriteAllTextAtomic(CacheFile, sb.ToString(), Encoding.UTF8);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // 缓存写不进去不该影响这次使用，但也不能一声不响：U 盘写满 / 只读时天天重识别，日志里要看得见
+                Core.Log("WARN", "识别缓存落盘失败（下次启动会重新识别）: " + ex.Message);
+            }
             // U 盘慢的时候这一步能吃掉十几秒，「一直在加载」多半有它一份；
             // 计时落进日志，下次一眼看出是落盘慢还是识别慢。
             Core.Log("INFO", "识别缓存落盘(后台): " + sw.ElapsedMilliseconds + " ms，" + lines.Length + " 条，其中新识别 " + NewEntries + " 条"

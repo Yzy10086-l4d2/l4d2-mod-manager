@@ -352,7 +352,8 @@ namespace Installer
                     sb.AppendLine(kv.Key + "\t"
                         + kv.Value.X.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + "\t"
                         + kv.Value.Y.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
-                File.WriteAllText(FileOf(), sb.ToString(), new UTF8Encoding(false));
+                // 摆好一个卡片就写一次，中断（拔 U 盘 / 关窗）留半份就会丢掉已摆好的位置，走原子写
+                Core.WriteAllTextAtomic(FileOf(), sb.ToString(), new UTF8Encoding(false));
             }
             catch (Exception ex) { Core.Log("WARN", "写桌面布局失败：" + ex.Message); }
         }
