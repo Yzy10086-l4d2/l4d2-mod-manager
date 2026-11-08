@@ -159,6 +159,16 @@ namespace Installer
             if (f2 != 1) { Core.Log("FAIL", "OVSELF 按 ↓ 没往下走一行"); bad++; }
             if (f3 != -1) { Core.Log("FAIL", "OVSELF 按 ← 没退回大类"); bad++; }
 
+            // 开关来回：关掉再打开，勾选数要回到原样（2026-11-09 用户报「关了打不开」）
+            map.SelectCatForShot(cats.Length > 0 ? cats[0] : "");
+            string rt = map.TestToggleRoundTrip();
+            Core.Log("INFO", "OVSELF 开关来回：" + (rt == null ? "没有可测的位置" : rt));
+            if (rt != null && rt != "关掉后 0，再打开后 1")
+            {
+                Core.Log("FAIL", "OVSELF 关掉再打开没回到原样：" + rt);
+                bad++;
+            }
+
             // 点一行真的会跳回方案树，并且选中那个位置（看板不收起来的话，树会被盖在下面）
             if (want != null)
             {

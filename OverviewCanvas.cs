@@ -32,6 +32,9 @@ namespace Installer
 
         // 键盘走到哪一层：-1 = 左栏大类，>=0 = 右栏第几行（空格开/关，回车弹候选，← 退回大类）
         private int rowFocus = -1;
+
+        // 每个位置上一次装的是哪个：关掉以后再打开，直接装回它，不再弹菜单
+        private readonly Dictionary<string, ModGroup> lastPick = new Dictionary<string, ModGroup>(StringComparer.OrdinalIgnoreCase);
         private readonly ToolTip tip;
 
         // 沿用原来那块画板的暖色：这是「看板」，不跟浅色/深色表单主题走
@@ -498,7 +501,7 @@ namespace Installer
 
         private void Hint(Graphics g)
         {
-            string s = "开关＝这套装不装　·　点名字＝换一个　·　拖或右键大类＝换顺序　·　←→ 进出明细，空格开关";
+            string s = "开关＝装 / 不装（装回上一次那个）　·　点名字＝换一个　·　拖或右键大类＝换顺序　·　←→ 进出明细，空格开关";
             using (SolidBrush b = new SolidBrush(Color.FromArgb(96, 200, 186, 162)))
                 g.DrawString(s, fSmall, b,
                     new RectangleF(OvLayout.SidePad, ClientSize.Height - 26f,
@@ -651,8 +654,21 @@ namespace Installer
 
             menu.Items.Add(up);
             menu.Items.Add(down);
-            menu.Closed += delegate { menu.Dispose(); };
+            DisposeLater(menu);
             menu.Show(this, at);
+        }
+
+        /// <summary>
+        /// 菜单关掉之后再回收。直接在 Closed 里 Dispose 会踩到 ToolStripManager：
+        /// 它还要拿这个下拉去收尾，控制已经释放就抛 ObjectDisposedException（2026-11-09 实际崩过一次）。
+        /// </summary>
+        private void DisposeLater(ContextMenuStrip menu)
+        {
+            menu.Closed += delegate
+            {
+                try { BeginInvoke((MethodInvoker)delegate { menu.Dispose(); }); }
+                catch { }
+            };
         }
 
         /// <summary>点的是不是行尾那个开关（整块 46×行高都算）。库里没候选的位置没有开关。</summary>
@@ -663,10 +679,22 @@ namespace Installer
                 && p.Y >= s.Y && p.Y <= s.Y + s.H;
         }
 
-        /// <summary>开关：开着就关掉（这套里不装），关着就弹候选让人挑一个。</summary>
+        /// <summary>
+        /// 开关：开着就关掉（这套里不装）；关着时直接装回上一次那个。
+        /// 只有「这个位置从来没装过、又有好几个候选」才弹菜单 —— 那时候确实得挑一个。
+        /// </summary>
         private void Toggle(OvSlot s, Point at)
         {
-            if (!s.HasMod) { ShowPicker(s, at); return; }
+            if (!s.HasMod)
+            {
+                ModGroup back;
+                if (lastPick.TryGetValue(s.Slot.Key, out back) && s.Slot.Items.Contains(back)) { Pick(s, back); return; }
+                if (s.Slot.Items.Count == 1) { Pick(s, s.Slot.Items[0]); return; }
+                ShowPicker(s, at);
+                return;
+            }
+
+            if (s.On.Count > 0) lastPick[s.Slot.Key] = s.On[0];
             foreach (ModGroup g in s.On) mf.UncheckGroup(g);
             foreach (ModGroup g in s.Extra) mf.UncheckGroup(g);
             mf.SyncPicks();
@@ -708,13 +736,14 @@ namespace Installer
 
             int y = (int)(s.Y + s.H);
             if (y > ClientSize.Height - 40) y = (int)Math.Max(0, s.Y - 8);
-            menu.Closed += delegate { menu.Dispose(); };
+            DisposeLater(menu);
             menu.Show(this, new Point((int)OvLayout.DetailX + 24, y));
         }
 
         /// <summary>选一个候选（null = 留原版）。成堆的位置（地图 / 分支）是开一个不关别的。</summary>
         private void Pick(OvSlot s, ModGroup g)
         {
+            if (g != null) lastPick[s.Slot.Key] = g;
             if (s.Slot.Pile)
             {
                 if (g == null) { foreach (ModGroup o in s.Slot.Items) mf.UncheckGroup(o); }
@@ -949,6 +978,35 @@ namespace Installer
         internal void TestKey(Keys k)
         {
             OnKeyDown(new KeyEventArgs(k));
+        }
+
+        /// <summary>
+        /// 自检用：关掉再打开同一个 MOD，勾选数要能回到原样（只挑单 vpk 的，恢复才精确）。
+        /// 返回 "关掉后 X，再打开后 Y"；没有可测的位置返回 null。
+        /// </summary>
+        internal string TestToggleRoundTrip()
+        {
+            OvCat c = OvLayout.CatAt(model, selCat);
+            if (c == null) return null;
+            foreach (OvSlot s in c.Slots)
+            {
+                if (!s.HasMod || s.Slot.Pile || s.On.Count == 0) continue;
+                ModGroup g = s.On[0];
+                if (g.Parts.Count != 1) continue;
+                string key = s.Slot.Key;
+
+                Toggle(s, Point.Empty);                       // 关掉
+                int off = mf.CountChecked(g);
+
+                OvSlot again = null;                          // 重建后按位置键找回同一行
+                OvCat c2 = OvLayout.CatAt(model, selCat);
+                if (c2 != null) foreach (OvSlot x in c2.Slots) if (x.Slot.Key == key) { again = x; break; }
+                if (again != null) Toggle(again, Point.Empty);  // 再打开（走"装回上一次那个"这条路）
+
+                int on = mf.CountChecked(g);
+                return "关掉后 " + off + "，再打开后 " + on;
+            }
+            return null;
         }
     }
 }
