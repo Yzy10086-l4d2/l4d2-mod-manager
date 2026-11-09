@@ -1570,6 +1570,9 @@ namespace Installer
         /// </summary>
         private void OpenWorkshop()
         {
+            // 分类下拉要用方案树的位置表；树还没建的话这里先补上，否则下拉只有「全部物品」
+            EnsureTree();
+            treeView.Rebuild();
             using (WorkshopForm f = new WorkshopForm(this))
             {
                 f.ShowDialog(this);

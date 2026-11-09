@@ -75,6 +75,106 @@ namespace Installer
             return ids;
         }
 
+        // ---------------------------------------------------------- 浏览 / 搜索
+
+        static readonly Regex RxAnchor = new Regex(@"<a\s[^>]*>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        static readonly Regex RxId = new Regex(@"[?&]id=(\d+)");
+        // 新版工坊页是 JS 渲染：结果在一段转义 JSON 里，形如 \"publishedfileid\":\"3832210318\"
+        static readonly Regex RxJsonId = new Regex(@"publishedfileid[\\""]*:[\\""]*(\d+)");
+
+        static string Get(string url)
+        {
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+            HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
+            req.Method = "GET";
+            req.UserAgent = Ua;
+            req.Timeout = 25000;
+            req.ReadWriteTimeout = 25000;
+            using (HttpWebResponse r = (HttpWebResponse)req.GetResponse())
+            using (StreamReader sr = new StreamReader(r.GetResponseStream(), Encoding.UTF8))
+                return sr.ReadToEnd();
+        }
+
+        /// <summary>
+        /// 按关键词浏览工坊。走的是公开网页（workshop/browse），不要 API key，
+        /// 因为 QueryFiles 那个接口要 key —— 为了看个列表不值得让用户去申请。
+        /// 一页 30 个，id 从结果卡片里取，别把整个页面的 ?id= 都抓来（侧栏推荐会混进去）。
+        /// </summary>
+        public static List<string> Search(string query, string sort, int page)
+        {
+            StringBuilder u = new StringBuilder();
+            u.Append("https://steamcommunity.com/workshop/browse/?appid=").Append(AppId);
+            u.Append("&section=readytouseitems");
+            if (!string.IsNullOrEmpty(sort)) u.Append("&browsesort=").Append(sort);
+            if (!string.IsNullOrEmpty(query)) u.Append("&searchtext=").Append(Uri.EscapeDataString(query));
+            if (page > 1) u.Append("&p=").Append(page);
+            return ParseBrowse(Get(u.ToString()));
+        }
+
+        internal static List<string> ParseBrowse(string html)
+        {
+            List<string> ids = new List<string>();
+            if (string.IsNullOrEmpty(html)) return ids;
+            HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+
+            // 新版页面是 JS 渲染，<a> 里根本没有链接；结果在一整段转义 JSON 里，
+            // publishedfileid 键值对按文档顺序出现，顺序就是页面上的排序。
+            foreach (Match m in RxJsonId.Matches(html))
+                if (seen.Add(m.Groups[1].Value)) ids.Add(m.Groups[1].Value);
+            if (ids.Count > 0) return ids;
+
+            // 老版页面兜底：结果卡片 <a class="workshopItem..."> 的链接在标签里。
+            foreach (Match a in RxAnchor.Matches(html))
+            {
+                string tag = a.Value;
+                if (tag.IndexOf("workshopItem", StringComparison.Ordinal) < 0) continue;
+                Match m = RxId.Match(tag);
+                if (!m.Success) continue;
+                if (seen.Add(m.Groups[1].Value)) ids.Add(m.Groups[1].Value);
+            }
+            return ids;
+        }
+
+        /// <summary>
+        /// 槽位 → 默认搜索词。槽位名本身带拉丁字母（AK-47 / UZI / AWP）就直接用；
+        /// 中文名（木喷 / 佐伊）退回模型键的尾段（pump / zoey），不准用户自己改。
+        /// </summary>
+        internal static string SearchWord(string slotName, string slotKey)
+        {
+            string n = (slotName ?? "").Trim();
+            bool latin = false;
+            foreach (char c in n)
+                if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) { latin = true; break; }
+            if (latin) return n;
+
+            string k = slotKey ?? "";
+            int bar = k.IndexOf('\u0001');
+            if (bar >= 0) k = k.Substring(bar + 1);
+            foreach (string p in new string[] { "slot:", "#empty:", "c:", "sub:" })
+                if (k.StartsWith(p, StringComparison.OrdinalIgnoreCase)) { k = k.Substring(p.Length); break; }
+            if (k.StartsWith("w_", StringComparison.OrdinalIgnoreCase) || k.StartsWith("v_", StringComparison.OrdinalIgnoreCase)) k = k.Substring(2);
+            int us = k.LastIndexOf('_');
+            if (us >= 0 && us < k.Length - 1) k = k.Substring(us + 1);
+            return k;
+        }
+
+        /// <summary>大类 → 搜索词。太泛的大类给空串（那就是浏览全部）。</summary>
+        internal static string CatWord(string cat)
+        {
+            switch (cat ?? "")
+            {
+                case "枪械": return "";
+                case "近战": return "melee";
+                case "投掷物": return "grenade";
+                case "弹药升级": return "ammo";
+                case "人物": return "survivor";
+                case "医疗": return "medkit";
+                case "地图": return "map";
+                case "喷漆": return "spray";
+                default: return "";
+            }
+        }
+
         // ---------------------------------------------------------- 网络
 
         static string Post(string path, string body)
@@ -537,6 +637,27 @@ namespace Installer
             { bad++; Core.Log("FAIL", "WS 把正常的 .vpk 物品误判成合集了"); }
             else Core.Log("INFO", "WS 合集识别：.vpk 物品 → 不是合集");
 
+            // 浏览页解析：新版是 JS 渲染，结果在转义 JSON 里（\"publishedfileid\":\"123\"）；
+            // 老版才是 <a class="workshopItem">。两条路都得能出 id，且按文档顺序、去重。
+            string newPage = "\\\"publishedfileid\\\":\\\"111\\\",\\\"title\\\":\\\"a\\\"}"
+                           + " \\\"publishedfileid\\\":\\\"222\\\" ... \\\"publishedfileid\\\":\\\"111\\\"";
+            List<string> nb = ParseBrowse(newPage);
+            if (nb.Count != 2 || nb[0] != "111" || nb[1] != "222")
+            { bad++; Core.Log("FAIL", "WS 新版浏览页解析得到 " + nb.Count + " 个: " + string.Join(",", nb.ToArray())); }
+            else Core.Log("INFO", "WS 新版浏览页（转义 JSON）解析 = 111,222（去重保序）");
+
+            string oldPage = "<a class=\"workshopItem\" href=\"https://steamcommunity.com/sharedfiles/filedetails/?id=333\">"
+                           + "<a class=\"workshopItemTitle\" href=\"...?id=444&searchtext=x\">";
+            List<string> ob = ParseBrowse(oldPage);
+            if (ob.Count != 2 || ob[0] != "333" || ob[1] != "444")
+            { bad++; Core.Log("FAIL", "WS 老版浏览页解析得到 " + string.Join(",", ob.ToArray())); }
+            else Core.Log("INFO", "WS 老版浏览页（workshopItem 链接）解析 = 333,444");
+
+            // 槽位 → 搜索词：拉丁名直接用，中文名退回模型键尾段
+            if (SearchWord("AK-47", "c:AK-47") != "AK-47" || SearchWord("木喷", "枪械\u0001w_shotgun_pump") != "pump")
+            { bad++; Core.Log("FAIL", "WS 槽位搜索词推错: " + SearchWord("AK-47", "c:AK-47") + " / " + SearchWord("木喷", "枪械\u0001w_shotgun_pump")); }
+            else Core.Log("INFO", "WS 槽位搜索词：AK-47 → AK-47，木喷 → pump");
+
             return bad;
         }
 
@@ -608,6 +729,36 @@ namespace Installer
             }
             return bad;
         }
+
+        /// <summary>
+        /// 联网搜索自检（--workshopsearch=词）：走真实的 browse 页。
+        /// 页面是 JS 渲染、结果在转义 JSON 里 —— 解析器改版后必须拿真页面验一遍才作数。
+        /// </summary>
+        internal static int SearchTest(string query)
+        {
+            int bad = 0;
+            List<string> ids = Search(query, "mostsubscribed", 1);
+            Core.Log("INFO", "WSS 搜「" + query + "」第 1 页 = " + ids.Count + " 个");
+            if (ids.Count < 5)
+            {
+                Core.Log("FAIL", "WSS 结果少于 5 个，浏览页解析多半断了");
+                return 1;
+            }
+            if (ids.Count > 30)
+            {
+                bad++;
+                Core.Log("FAIL", "WSS 一页不该超过 30 个（侧栏推荐混进来了？），实际 " + ids.Count);
+            }
+
+            // 前 3 个再查一次元数据：标题不为空、result==1
+            List<WsItem> meta = Fetch(ids.GetRange(0, Math.Min(3, ids.Count)));
+            foreach (WsItem it in meta)
+            {
+                if (string.IsNullOrEmpty(it.Title)) { bad++; Core.Log("FAIL", "WSS " + it.Id + " 没有标题"); }
+                else Core.Log("INFO", "WSS " + it.Id + "「" + (it.Title.Length <= 46 ? it.Title : it.Title.Substring(0, 46) + "…") + "」");
+            }
+            return bad;
+        }
     }
 
     /// <summary>
@@ -630,6 +781,25 @@ namespace Installer
         private volatile bool cancel;
         private DateTime lastUi = DateTime.MinValue;
 
+        // 浏览模式：选分类 → 搜工坊。和「粘贴链接」共用下面这张表和下载队列
+        private readonly ComboBox cboCat = new ComboBox();
+        private readonly TextBox txtQuery = new TextBox();
+        private readonly ComboBox cboSort = new ComboBox();
+        private readonly FlatButton btnSearch = new FlatButton();
+        private readonly FlatButton btnMore = new FlatButton();
+        private string lastQuery = "";
+        private int page = 1;
+        private int lastResultCount;
+
+        /// <summary>分类下拉的一项：显示名 + 默认搜索词。</summary>
+        private sealed class CatChoice
+        {
+            public string Label;
+            public string Query;
+            public string Sort;
+            public override string ToString() { return Label; }
+        }
+
         /// <summary>这次成功下载了几个（主窗口据此决定要不要重扫）。</summary>
         public int DownloadedCount { get; private set; }
 
@@ -648,14 +818,58 @@ namespace Installer
             MinimizeBox = false;
 
             Label tip = new Label();
-            tip.SetBounds(16, 12, 648, 36);
+            tip.SetBounds(16, 10, 648, 20);
             tip.Font = Theme.UISmall;
             tip.ForeColor = Theme.Ink2;
-            tip.Text = "粘贴创意工坊的物品或合集链接（...?id=123456），也可以直接贴数字，一行一个。\r\n"
-                     + "下到库里之后会自动归纳位置；本地模式下直接下进游戏 addons。";
+            tip.Text = "选分类直接浏览工坊，或粘贴物品 / 合集链接（...?id=123456）。下到库里后自动归纳位置。";
             Controls.Add(tip);
 
-            box.SetBounds(16, 52, 648, 72);
+            // 浏览行：分类来自本地方案树的位置表，选中就把默认搜索词填上（可自己改）
+            Label lc = new Label();
+            lc.Text = "分类";
+            lc.SetBounds(16, 40, 36, 20);
+            lc.Font = Theme.UISmall;
+            lc.ForeColor = Theme.Ink2;
+            Controls.Add(lc);
+
+            cboCat.SetBounds(56, 36, 176, 24);
+            cboCat.DropDownStyle = ComboBoxStyle.DropDownList;
+            Theme.Dress(cboCat);
+            cboCat.SelectedIndexChanged += delegate
+            {
+                CatChoice c = cboCat.SelectedItem as CatChoice;
+                if (c != null) txtQuery.Text = c.Query;
+            };
+            Controls.Add(cboCat);
+
+            txtQuery.SetBounds(240, 36, 224, 24);
+            Theme.Dress(txtQuery);
+            txtQuery.AccessibleName = "工坊搜索词";
+            txtQuery.KeyDown += delegate(object s, KeyEventArgs e)
+            {
+                if (e.KeyCode != Keys.Enter) return;
+                DoSearch(1);
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            };
+            Controls.Add(txtQuery);
+
+            btnSearch.Text = "搜索";
+            btnSearch.SetBounds(472, 32, 72, Theme.H);
+            btnSearch.Click += delegate { DoSearch(1); };
+            Controls.Add(btnSearch);
+
+            cboSort.SetBounds(552, 36, 112, 24);
+            cboSort.DropDownStyle = ComboBoxStyle.DropDownList;
+            Theme.Dress(cboSort);
+            cboSort.Items.Add(new CatChoice { Label = "最多订阅", Sort = "mostsubscribed" });
+            cboSort.Items.Add(new CatChoice { Label = "最高评价", Sort = "toprated" });
+            cboSort.Items.Add(new CatChoice { Label = "最新", Sort = "newestfirst" });
+            cboSort.Items.Add(new CatChoice { Label = "趋势", Sort = "trend" });
+            cboSort.SelectedIndex = 0;
+            Controls.Add(cboSort);
+
+            box.SetBounds(16, 76, 648, 60);
             box.Multiline = true;
             box.ScrollBars = ScrollBars.Vertical;
             box.AcceptsReturn = true;
@@ -664,13 +878,13 @@ namespace Installer
 
             btnParse.Text = "解析";
             btnParse.Primary = true;
-            btnParse.SetBounds(16, 132, 96, Theme.H);
+            btnParse.SetBounds(16, 144, 96, Theme.H);
             btnParse.Click += delegate { Parse(); };
             Controls.Add(btnParse);
 
             FlatButton btnPaste = new FlatButton();
             btnPaste.Text = "从剪贴板";
-            btnPaste.SetBounds(120, 132, 96, Theme.H);
+            btnPaste.SetBounds(120, 144, 96, Theme.H);
             btnPaste.Click += delegate
             {
                 try
@@ -688,7 +902,7 @@ namespace Installer
 
             FlatButton btnClear = new FlatButton();
             btnClear.Text = "清空";
-            btnClear.SetBounds(224, 132, 72, Theme.H);
+            btnClear.SetBounds(224, 144, 72, Theme.H);
             btnClear.Click += delegate
             {
                 if (busy) return;
@@ -700,7 +914,7 @@ namespace Installer
             };
             Controls.Add(btnClear);
 
-            lv.SetBounds(16, 176, 648, 240);
+            lv.SetBounds(16, 184, 648, 232);
             lv.View = View.Details;
             lv.FullRowSelect = true;
             lv.HeaderStyle = ColumnHeaderStyle.Nonclickable;
@@ -737,6 +951,12 @@ namespace Installer
             btnStart.Click += delegate { StartDownload(); };
             Controls.Add(btnStart);
 
+            btnMore.Text = "下一页";
+            btnMore.SetBounds(136, 472, 88, Theme.H);
+            btnMore.Enabled = false;
+            btnMore.Click += delegate { DoSearch(page + 1); };
+            Controls.Add(btnMore);
+
             btnClose.Text = "关闭";
             btnClose.SetBounds(564, 472, 100, Theme.H);
             btnClose.DialogResult = DialogResult.Cancel;
@@ -748,6 +968,9 @@ namespace Installer
             // 标题栏和表头/滚动条交给主题：这两个必须在句柄建好之后打招呼
             Load += delegate { Theme.ApplyChrome(this); Theme.DeepNative(this); };
             Shown += delegate { Theme.ApplyChrome(this); Theme.DeepNative(this); };
+
+            FillCats();
+            cboCat.SelectedIndex = 0;
         }
 
         private void Ui(Action a)
@@ -795,6 +1018,88 @@ namespace Installer
                     break;
                 }
             });
+        }
+
+        /// <summary>分类下拉 = 本地方案树的大类 + 位置。选中只负责填搜索词，不自动搜。</summary>
+        private void FillCats()
+        {
+            cboCat.Items.Clear();
+            cboCat.Items.Add(new CatChoice { Label = "全部物品", Query = "" });
+
+            List<Slot> slots = null;
+            try { if (owner.Tree != null) slots = owner.Tree.Slots; } catch { }
+            if (slots == null || slots.Count == 0) return;
+
+            HashSet<string> cats = new HashSet<string>(StringComparer.Ordinal);
+            foreach (Slot s in slots)
+            {
+                if (s == null || string.IsNullOrEmpty(s.Cat)) continue;
+                if (cats.Add(s.Cat))
+                    cboCat.Items.Add(new CatChoice { Label = "【" + s.Cat + "】", Query = Workshop.CatWord(s.Cat) });
+            }
+            foreach (Slot s in slots)
+            {
+                if (s == null || string.IsNullOrEmpty(s.Name)) continue;
+                cboCat.Items.Add(new CatChoice
+                {
+                    Label = s.Cat + " · " + s.Name,
+                    Query = Workshop.SearchWord(s.Name, s.Key)
+                });
+            }
+        }
+
+        /// <summary>按当前搜索词和排序翻一页。搜索结果是物品，不涉及合集展开。</summary>
+        private void DoSearch(int p)
+        {
+            if (busy) return;
+            string q = txtQuery.Text.Trim();
+            CatChoice sortChoice = cboSort.SelectedItem as CatChoice;
+            string sort = sortChoice == null ? "mostsubscribed" : sortChoice.Sort;
+
+            lastQuery = q;
+            page = p;
+            busy = true;
+            btnSearch.Enabled = false;
+            btnMore.Enabled = false;
+            btnStart.Enabled = false;
+            btnParse.Enabled = false;
+            lv.Items.Clear();
+            items.Clear();
+            SetStatus("正在搜索「" + (q.Length == 0 ? "全部" : q) + "」第 " + p + " 页…");
+
+            Thread t = new Thread(delegate()
+            {
+                List<WsItem> got = null;
+                string err = null;
+                int count = 0;
+                try
+                {
+                    List<string> ids = Workshop.Search(q, sort, p);
+                    count = ids.Count;
+                    got = ids.Count > 0 ? Workshop.Fetch(ids) : new List<WsItem>();
+                }
+                catch (Exception ex) { err = ex.Message; Core.Log("FAIL", "工坊搜索失败: " + ex); }
+
+                Ui(delegate
+                {
+                    busy = false;
+                    btnSearch.Enabled = true;
+                    btnParse.Enabled = true;
+                    if (err != null) { SetStatus("搜索失败：" + err); return; }
+                    items = got;
+                    lastResultCount = count;
+                    FillList();
+
+                    int can = 0;
+                    foreach (WsItem it in items) if (it.Url.Length > 0) can++;
+                    SetStatus("第 " + p + " 页：" + items.Count + " 个结果，可下载 " + can + " 个"
+                            + (count >= 30 ? "。还有下一页" : "。没有更多了"));
+                    btnMore.Enabled = count >= 30;
+                    btnStart.Enabled = can > 0;
+                });
+            });
+            t.IsBackground = true;
+            t.Start();
         }
 
         private void Parse()
@@ -855,8 +1160,21 @@ namespace Installer
         {
             if (busy) return;
             List<WsItem> todo = new List<WsItem>();
-            foreach (WsItem it in items)
-                if (!it.IsCollection && it.Url.Length > 0 && !it.Ok) todo.Add(it);
+            // 有选中行就只下选中的：浏览模式一页 30 个结果，通常只想要其中几个。
+            // 一个都没选才退化成「全部可下载的」（粘贴模式下的老行为）。
+            if (lv.SelectedItems.Count > 0)
+            {
+                foreach (ListViewItem li in lv.SelectedItems)
+                {
+                    WsItem it = li.Tag as WsItem;
+                    if (it != null && !it.IsCollection && it.Url.Length > 0 && !it.Ok) todo.Add(it);
+                }
+            }
+            else
+            {
+                foreach (WsItem it in items)
+                    if (!it.IsCollection && it.Url.Length > 0 && !it.Ok) todo.Add(it);
+            }
             if (todo.Count == 0)
             {
                 SetStatus("没有可下载的物品：要么都下完了，要么都没有直链。");
@@ -962,6 +1280,7 @@ namespace Installer
         {
             box.Text = "https://steamcommunity.com/sharedfiles/filedetails/?id=3816864462\r\n"
                      + "3833236101\r\n3832308538";
+            txtQuery.Text = "AK47";
 
             items = new List<WsItem>();
 

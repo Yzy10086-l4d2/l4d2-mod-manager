@@ -80,6 +80,7 @@ namespace Installer
             bool uiKeys = false;
             bool wsSelf = false;
             string wsNet = null;
+            string wsSearch = null;
             bool uiWorkshop = false;
             int deskServe = 0;
             bool deskSelf = false;
@@ -143,6 +144,7 @@ namespace Installer
                 else if (string.Equals(a, "--workshopself", StringComparison.OrdinalIgnoreCase)) wsSelf = true;
                 // 工坊联网端到端：查一次、下一次、校验后删除，不落库
                 else if (a.StartsWith("--workshopnet=", StringComparison.OrdinalIgnoreCase)) wsNet = a.Substring(14).Trim();
+                else if (a.StartsWith("--workshopsearch=", StringComparison.OrdinalIgnoreCase)) wsSearch = a.Substring(17).Trim();
                 // 诊断截图：打开工坊窗口、填假数据、存 workshop.png，不联网
                 else if (string.Equals(a, "--workshopui", StringComparison.OrdinalIgnoreCase)) { uiWorkshop = true; uiTest = true; }
                 else if (a.StartsWith("--deskserve=", StringComparison.OrdinalIgnoreCase)) { int.TryParse(a.Substring(12), out deskServe); uiTest = true; }
@@ -178,7 +180,7 @@ namespace Installer
             // 以前这行写在所有自检分支后面，等于对它们全部无效。
             Core.SelfTesting = selfTest || uiTest || copyTest || tweakSelf || launchSelf || dupSelf
                             || addonSelf || safeSelf || dumpId || dumpTree || ovDump || recogSelf
-                            || mapShot || mapSelf || scanRace || layoutSelf || wsSelf || wsNet != null;
+                            || mapShot || mapSelf || scanRace || layoutSelf || wsSelf || wsNet != null || wsSearch != null;
 
             // 单实例只约束界面模式：已经开着就把那个窗口叫到前面来
             bool created;
@@ -246,6 +248,12 @@ namespace Installer
                 int badn = Workshop.NetTest(wsNet);
                 Console.WriteLine("workshopnet failures = " + badn);
                 return badn == 0 ? 0 : 1;
+            }
+            if (wsSearch != null)
+            {
+                int bads = Workshop.SearchTest(wsSearch);
+                Console.WriteLine("workshopsearch failures = " + bads);
+                return bads == 0 ? 0 : 1;
             }
             if (dumpId)
             {
