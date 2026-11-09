@@ -1010,16 +1010,15 @@ namespace Installer
                 ListViewItem li = e.Item as ListViewItem;
                 ModGroup g = li == null ? null : (li.Tag as ModGroup);
                 if (g == null) return;
-
-                // 拖动期间的「拿走了」观感：这一行整行变灰。DoDragDrop 是阻塞调用，
-                // 一返回就说明松手了（无论落没落下），立刻还原 —— 落下的情况列表会重填，还原无害。
-                Color keepBack = li.BackColor, keepFore = li.ForeColor;
-                li.BackColor = Theme.TreeBg;
-                li.ForeColor = Theme.Ink3;
-                lv.Invalidate();
                 lv.DoDragDrop(g, DragDropEffects.Move);
-                try { li.BackColor = keepBack; li.ForeColor = keepFore; } catch { }
-                lv.Invalidate();
+            };
+            // 拖动期间光标换形状：能放 = 四向移动箭头，不能放 = 禁止圈。
+            // 系统默认的「拖动」光标太不明显，用户不知道已经开始拖了 —— GiveFeedback 在源头控制，
+            // 全程跟随（悬在树上时 DragOver 给的 Effect 会实时反映到这里）。
+            lv.GiveFeedback += delegate(object s, GiveFeedbackEventArgs e)
+            {
+                e.UseDefaultCursors = false;
+                Cursor.Current = (e.Effect & DragDropEffects.Move) != 0 ? Cursors.SizeAll : Cursors.No;
             };
             lv.AccessibleName = "当前替换位置的 MOD 候选";
             lv.KeyDown += delegate(object s, KeyEventArgs e)
