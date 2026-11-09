@@ -1723,7 +1723,7 @@ namespace Installer
         /// preload=true 时内容紧跟在目录表条目后面（V 社工具的常规写法），false 时放进数据段 ——
         /// 库里两种包都有，读标题这两条路都得走通。
         /// </summary>
-        private static byte[] BuildTinyVpk(string info, bool preload)
+        internal static byte[] BuildTinyVpk(string info, bool preload)
         {
             byte[] body = info == null ? new byte[0] : Encoding.UTF8.GetBytes(info);
             List<byte> tree = new List<byte>();

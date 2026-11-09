@@ -559,6 +559,44 @@ namespace Installer
             return s + ".vpk";
         }
 
+        /// <summary>
+        /// 下载完自动改名：读 vpk 自己的 addoninfo.txt，用**游戏里显示的那个名字**当文件名。
+        /// 工坊标题常带一堆【】标签、作者前缀和表情，游戏内名才是这个 MOD 真正的身份
+        /// （库里显示、方案树归类、搜索别名全都跟着它走）。
+        /// 读不出 addoninfo（没有 / 分卷包 / 坏包）就保留工坊标题名 —— 改名只是锦上添花，不许失败。
+        /// 撞名加 (2) (3)…序号，谁也不覆盖谁。
+        /// </summary>
+        /// <returns>改完的文件名；没改（读不到 / 名字没变 / 出错）返回 null。</returns>
+        public static string RenameToAddonTitle(string dest)
+        {
+            try
+            {
+                if (!string.Equals(Path.GetExtension(dest), ".vpk", StringComparison.OrdinalIgnoreCase)) return null;
+                Vpk.AddonMeta m = Vpk.ReadAddonInfo(dest);
+                string t = (m == null || m.Title == null) ? "" : m.Title.Trim();
+                if (t.Length == 0) return null;
+
+                string want = SafeFileName(t, Path.GetFileNameWithoutExtension(dest));
+                string cur = Path.GetFileName(dest);
+                if (string.Equals(want, cur, StringComparison.OrdinalIgnoreCase)) return null;
+
+                string dir = Path.GetDirectoryName(dest);
+                string cand = Path.Combine(dir, want);
+                if (File.Exists(cand))
+                {
+                    string stem = Path.GetFileNameWithoutExtension(want);
+                    for (int n = 2; n < 100; n++)
+                    {
+                        cand = Path.Combine(dir, stem + " (" + n + ").vpk");
+                        if (!File.Exists(cand)) break;
+                    }
+                }
+                File.Move(dest, cand);
+                return Path.GetFileName(cand);
+            }
+            catch { return null; }
+        }
+
         // ---------------------------------------------------------- 离线自检
 
         /// <summary>
@@ -658,6 +696,38 @@ namespace Installer
             { bad++; Core.Log("FAIL", "WS 槽位搜索词推错: " + SearchWord("AK-47", "c:AK-47") + " / " + SearchWord("木喷", "枪械\u0001w_shotgun_pump")); }
             else Core.Log("INFO", "WS 槽位搜索词：AK-47 → AK-47，木喷 → pump");
 
+            // 下载完自动改名：addoninfo 的游戏内名 > 工坊标题。读不出保留原名，撞名加序号不覆盖。
+            string rnDir = Path.Combine(Path.GetTempPath(), "ws-rename-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+            try
+            {
+                Directory.CreateDirectory(rnDir);
+                string v1 = Path.Combine(rnDir, "【工坊标题】一长串.vpk");
+                File.WriteAllBytes(v1, Work.BuildTinyVpk("\"AddonInfo\"\r\n{\r\n\tAddonTitle \"黑色AK103\"\r\n}\r\n", true));
+                string r1 = RenameToAddonTitle(v1);
+                if (r1 == "黑色AK103.vpk" && File.Exists(Path.Combine(rnDir, r1)) && !File.Exists(v1))
+                    Core.Log("INFO", "WS 改名：addoninfo 标题生效 → " + r1);
+                else { bad++; Core.Log("FAIL", "WS 改名：应为「黑色AK103.vpk」，实际「" + r1 + "」"); }
+
+                string r2 = RenameToAddonTitle(Path.Combine(rnDir, "黑色AK103.vpk"));
+                if (r2 == null) Core.Log("INFO", "WS 改名：名字已一致，不动");
+                else { bad++; Core.Log("FAIL", "WS 改名：名字一致却返回了「" + r2 + "」"); }
+
+                string v3 = Path.Combine(rnDir, "没有addoninfo.vpk");
+                File.WriteAllBytes(v3, Work.BuildTinyVpk(null, false));
+                string r3 = RenameToAddonTitle(v3);
+                if (r3 == null && File.Exists(v3)) Core.Log("INFO", "WS 改名：没有 addoninfo，保留原文件名");
+                else { bad++; Core.Log("FAIL", "WS 改名：没有 addoninfo 却动了文件（r3=" + r3 + "）"); }
+
+                string v4 = Path.Combine(rnDir, "另一个工坊名.vpk");
+                File.WriteAllBytes(v4, Work.BuildTinyVpk("\"AddonInfo\"\r\n{\r\n\tAddonTitle \"黑色AK103\"\r\n}\r\n", true));
+                string r4 = RenameToAddonTitle(v4);
+                if (r4 == "黑色AK103 (2).vpk" && File.Exists(Path.Combine(rnDir, "黑色AK103.vpk")))
+                    Core.Log("INFO", "WS 改名：撞名加序号 " + r4 + "，没覆盖别人");
+                else { bad++; Core.Log("FAIL", "WS 改名：撞名应得「黑色AK103 (2).vpk」，实际「" + r4 + "」"); }
+            }
+            catch (Exception ex) { bad++; Core.Log("FAIL", "WS 改名自检抛异常：" + ex.Message); }
+            finally { try { Directory.Delete(rnDir, true); } catch { } }
+
             return bad;
         }
 
@@ -692,6 +762,7 @@ namespace Installer
             Core.Log("INFO", "WSNET " + it.Id + "「" + it.Title + "」" + Core.Human(it.Size));
 
             string tmp = Path.Combine(Path.GetTempPath(), "ws_" + id + ".vpk");
+            string rn = null;
             try
             {
                 long last = -1;
@@ -716,6 +787,13 @@ namespace Installer
                     if (!vpk) { bad++; Core.Log("FAIL", "WSNET 下到的不是 vpk（魔数不是 55AA1234）"); }
                     else Core.Log("INFO", "WSNET vpk 魔数正确");
                 }
+
+                // 下载完自动改名（与对话框同一条路径）：addoninfo 游戏内名 > 工坊标题
+                rn = RenameToAddonTitle(tmp);
+                if (rn != null) Core.Log("INFO", "WSNET 已按游戏内名改名 → " + rn);
+                else Core.Log("INFO", "WSNET 没改名（addoninfo 没有标题或名字一致），保留「" + Path.GetFileName(tmp) + "」");
+                string gone = File.Exists(tmp) ? Path.GetFileName(tmp) : rn;
+                if (gone != null) Core.Log("INFO", "WSNET 最终文件名「" + gone + "」");
             }
             catch (Exception ex)
             {
@@ -726,6 +804,7 @@ namespace Installer
             {
                 try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
                 try { if (File.Exists(tmp + ".part")) File.Delete(tmp + ".part"); } catch { }
+                try { if (rn != null) File.Delete(Path.Combine(Path.GetDirectoryName(tmp), rn)); } catch { }
             }
             return bad;
         }
@@ -1208,7 +1287,10 @@ namespace Installer
                         {
                             it.Ok = true;
                             skip++;
-                            SetRowState(it, "已存在，跳过");
+                            // 之前下的还是工坊标题名？顺手改成游戏内名（读不出就原样保留）
+                            string rn0 = Workshop.RenameToAddonTitle(dest);
+                            SetRowState(it, "已存在，跳过" + (rn0 != null ? "，已改名 " + Clip(rn0, 16) : ""));
+                            if (rn0 != null) Core.Log("OK", "工坊：改名 " + Path.GetFileName(dest) + " → " + rn0);
                             continue;
                         }
                     }
@@ -1232,7 +1314,15 @@ namespace Installer
                         });
                         it.Ok = true;
                         ok++;
-                        SetRowState(it, "已下载 " + Core.Human(it.Size));
+                        // 自动改名：addoninfo 里的游戏内名 > 工坊标题。读不出就保留原名的
+                        string rn = Workshop.RenameToAddonTitle(dest);
+                        if (rn != null)
+                        {
+                            Core.Log("OK", "工坊：改名 " + Path.GetFileName(dest) + " → " + rn
+                                + "（游戏内名，工坊标题是「" + Clip(it.Title, 40) + "」）");
+                            dest = Path.Combine(dir, rn);
+                        }
+                        SetRowState(it, "已下载 " + Core.Human(it.Size) + (rn != null ? "，已改名 " + Clip(rn, 16) : ""));
                         Core.Log("OK", "工坊：已下载 " + it.Id + " → " + dest);
                     }
                     catch (Exception ex)
