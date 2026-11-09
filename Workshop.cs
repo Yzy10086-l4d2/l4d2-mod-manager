@@ -811,11 +811,10 @@ namespace Installer
             ClientSize = Dpi.Sz(680, 520);
             Font = Theme.UI;
             BackColor = Theme.Bg;
-            StartPosition = FormStartPosition.CenterParent;
+            StartPosition = FormStartPosition.CenterScreen;   // 独立窗口，不从主窗口取位置
             MaximizeBox = false;
             MinimizeBox = false;
-            ShowInTaskbar = false;
-            MinimizeBox = false;
+            ShowInTaskbar = true;                             // 独立窗口，任务栏里得有自己的格子
 
             Label tip = new Label();
             tip.SetBounds(16, 10, 648, 20);

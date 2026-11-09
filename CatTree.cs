@@ -1002,6 +1002,16 @@ namespace Installer
             };
             lv.ContextMenuStrip = mf.BuildTreeMenu(lv);
             lv.Resize += delegate { LayoutCols(); };
+            // 未归类页：按住一行往外拖 = 把这个 MOD 拖到左边的树上归位（拖到哪归到哪）。
+            // 只有未归类页给拖；其他页的行拖出去没有意义（本来就归好了）。说明行 Tag 为空，天然拖不动。
+            lv.ItemDrag += delegate(object s, ItemDragEventArgs e)
+            {
+                if (selKey != "#unmatched") return;
+                ListViewItem li = e.Item as ListViewItem;
+                ModGroup g = li == null ? null : (li.Tag as ModGroup);
+                if (g == null) return;
+                lv.DoDragDrop(g, DragDropEffects.Move);
+            };
             lv.AccessibleName = "当前替换位置的 MOD 候选";
             lv.KeyDown += delegate(object s, KeyEventArgs e)
             {
@@ -1803,6 +1813,46 @@ namespace Installer
             lblFoot.Text = "「" + g.Name + "」已放进分支「" + pick + "」· 点一行 = 开 / 关";
         }
 
+        /// <summary>
+        /// 未归类 MOD 拖到树上松手。落点三种：位置行 = 归到这个位置；
+        /// 大类 / 小分类标题 = 只归大类；分支行 = 放进我的分支。归完跳过去，让人立刻看到结果。
+        /// </summary>
+        internal void DropModOn(ModGroup g, TreeRow r)
+        {
+            if (g == null || r == null) return;
+
+            if (r.Slot != null)
+            {
+                Slot s = r.Slot;
+                if (IsBranchSlot(s))
+                {
+                    if (g.Main == null) { lblFoot.Text = "这个 MOD 没有主体 vpk，放不进分支"; return; }
+                    MyBranch.Put(s.Name, g.Main.Name);
+                    Rebuild();
+                    GoSlot(s.Key);
+                    lblFoot.Text = "「" + g.Name + "」已放进分支「" + s.Name + "」";
+                    Core.Log("OK", "拖拽归类: " + g.Name + " → 分支「" + s.Name + "」");
+                    return;
+                }
+                if (s.Pile) { lblFoot.Text = "「一堆」收的是叠装（地图 / 喷漆），拖不进去"; return; }
+                mf.ApplyCatAssign(g, s.Cat, s.Name);
+                Rebuild();
+                GoSlot(s.Key);
+                lblFoot.Text = "「" + g.Name + "」已归到「" + s.Cat + " · " + s.Name + "」";
+                return;
+            }
+
+            // 大类 / 小分类标题：只改分类，位置仍按识别结果。留在未归类页（那行已经消失），
+            // 滚到目标大类让用户看见它去哪了 —— GoSlot 没有大类键，别造一个 ScrollToSlot 不认的。
+            string cat = r.Cat;
+            if (string.IsNullOrEmpty(cat)) return;
+            mf.ApplyCatAssign(g, cat, "");
+            Rebuild();
+            for (int i = 0; i < body.RowCount; i++)
+                if (body.RowIsCat(i) && body.RowCat(i) == cat) { body.ScrollToRow(i); break; }
+            lblFoot.Text = "「" + g.Name + "」已归到「" + cat + "」（位置仍按识别结果）";
+        }
+
         /// <summary>右键菜单用：这个 MOD 是不是在当前打开的分支里。</summary>
         internal bool InOpenBranch(ModGroup g)
         {
@@ -2276,7 +2326,88 @@ namespace Installer
             if (orig.Length > 0 && orig != "#unmatched" && selKey != orig) SelectSlot(orig);
             // 10) 我的分支的父子关系（自测会建两个临时分支，结束时删掉）
             bad += BranchSelfTest();
+            // 11) 未归类 MOD 拖到树上归类
+            bad += DragAssignSelfTest();
             Core.Log("INFO", "KEY 结束：不通过 " + bad + " 条");
+            return bad;
+        }
+
+        /// <summary>
+        /// 自检：未归类 MOD 拖到树上归类。不发起真 OLE 拖放（那是鼠标层的活），直接走
+        /// SimulateExtDrop = 拖动判定 + 松手落点这整条逻辑链。对账三件事：
+        /// 说明行拒绝落点、落进位置后真的离开未归类列表、恢复自动后回得来（零残留）。
+        /// </summary>
+        internal int DragAssignSelfTest()
+        {
+            int bad = 0;
+            string orig = selKey;
+            ModGroup g = null;
+            try
+            {
+                SelectUnmatched();
+                if (unmatchedGroups.Count == 0)
+                {
+                    Core.Log("INFO", "DND 库里没有未归类的 MOD，拖拽归类用例跳过");
+                    return 0;
+                }
+                g = unmatchedGroups[0];
+
+                // 1) 说明行（「未归类」入口）不收落点。它可能被折叠着，先展开
+                SetFolded("未归类", false);
+                Rebuild();
+                int noteRow = -1;
+                for (int i = 0; i < body.RowCount; i++)
+                    if (body.RowIsNote(i)) { noteRow = i; break; }
+                if (noteRow < 0) Core.Log("WARN", "DND 树里没有说明行，拒绝用例跳过");
+                else
+                {
+                    string rj = body.SimulateExtDrop(noteRow, g);
+                    if (rj.StartsWith("ok")) { bad++; Core.Log("FAIL", "DND 说明行居然收了落点：" + rj); }
+                    else Core.Log("INFO", "DND 说明行拒绝落点（" + rj + "）");
+                }
+
+                // 2) 落到第一个普通位置行：必须真归类，且离开未归类列表
+                Rebuild();
+                int target = -1;
+                for (int i = 0; i < body.RowCount; i++)
+                {
+                    Slot s = body.RowSlot(i);
+                    if (s == null || CatTree.IsBranchSlot(s) || s.Pile) continue;
+                    target = i; break;
+                }
+                if (target < 0) { Core.Log("WARN", "DND 树里没有普通位置行，归类用例跳过"); return bad; }
+                Slot tgt = body.RowSlot(target);
+                string done = body.SimulateExtDrop(target, g);
+                if (!done.StartsWith("ok")) { bad++; Core.Log("FAIL", "DND 落到「" + tgt.Name + "」没执行：" + done); }
+                else
+                {
+                    SelectUnmatched();
+                    bool gone = true;
+                    foreach (ModGroup x in unmatchedGroups) if (x == g) { gone = false; break; }
+                    if (!gone) { bad++; Core.Log("FAIL", "DND 归类后「" + g.Name + "」还在未归类列表里"); }
+                    else Core.Log("INFO", "DND 「" + g.Name + "」→「" + tgt.Cat + " · " + tgt.Name + "」，已离开未归类");
+                }
+
+                // 3) 恢复自动：回得来（这条保证自检不污染用户数据）
+                CatPrefs.Reset(g);
+                Catalog.ApplyCats();
+                Rebuild();
+                SelectUnmatched();
+                bool back = false;
+                foreach (ModGroup x in unmatchedGroups) if (x == g) { back = true; break; }
+                if (!back) { bad++; Core.Log("FAIL", "DND 恢复自动后「" + g.Name + "」没回未归类"); }
+                else Core.Log("INFO", "DND 恢复自动后回到未归类（自检零残留）");
+            }
+            catch (Exception ex)
+            {
+                bad++;
+                Core.Log("FAIL", "DND 自检抛异常：" + ex.Message);
+                try { if (g != null) CatPrefs.Reset(g); } catch { }
+            }
+            finally
+            {
+                try { if (orig.Length > 0 && orig != "#unmatched") SelectSlot(orig); } catch { }
+            }
             return bad;
         }
 
@@ -3266,7 +3397,7 @@ namespace Installer
                 }
             }
             finally { lv.EndUpdate(); }
-            lblFoot.Text = "不影响装机，照常能勾。选中一行 →「指定位置…」；认不出的也可以右键 →「放进我的分支」。";
+            lblFoot.Text = "不影响装机，照常能勾。按住一行拖到左边的树上松手 = 归到那；或双击打开「设置 MOD 分类」细调。";
             if (btnCat != null) btnCat.Visible = true;
             LayoutSelf();
             LayoutCols();
@@ -3291,7 +3422,7 @@ namespace Installer
                 li.SubItems[1].Font = Theme.UIBold;
                 li.ToolTipText = PartsTip(g);
             }
-            else li.ToolTipText = "双击这行（或点右下角「指定位置…」），告诉程序它算哪一类、替换什么";
+            else li.ToolTipText = "按住这行拖到左边的树上松手 = 归到那；双击可打开「设置 MOD 分类」细调";
             lv.Items.Add(li);
         }
 
@@ -3823,6 +3954,14 @@ namespace Installer
         private Point dragPt;         // 跟随鼠标的小标签画在这儿
         private int lastMoveLog;      // DRAGIN 按住未起拖时的移动日志节流
 
+        // 从「未归类」列表 OLE 拖过来的 MOD（与上面自绘的行拖动是两套，不会同时发生）：
+        // 悬停时高亮落点行 + 跟随光标的小标签，悬在视口上下边自动滚树。
+        private bool extDrag;
+        private string extName = "";
+        private int extRow = -1;
+        private Point extPt;
+        private readonly Timer extScroll;
+
         public SlotTree(CatTree o)
         {
             owner = o;
@@ -3834,6 +3973,15 @@ namespace Installer
             AccessibleRole = AccessibleRole.List;
             AccessibleName = "MOD 方案树";
             AccessibleDescription = "用上下方向键移动，左右键展开或折叠，Enter 或空格选择";
+
+            // ---- 接收从未归类列表拖来的 MOD ----
+            AllowDrop = true;
+            DragEnter += ExtDragOver;
+            DragOver += ExtDragOver;
+            DragLeave += delegate { ExtDragEnd(); };
+            DragDrop += ExtDragDrop;
+            extScroll = new Timer { Interval = 130 };
+            extScroll.Tick += delegate { ExtAutoScroll(); };
         }
 
         public int RowCount { get { return rows.Count; } }
@@ -4137,6 +4285,49 @@ namespace Installer
                 }
                 DrawDragTag(g, W);
             }
+
+            // 未归类 MOD 拖进来：高亮落点行 + 跟随光标的小标签（与上面的行拖动互斥，不会同屏）
+            if (extDrag) DrawExtTag(g, W);
+        }
+
+        /// <summary>未归类 MOD 悬在树上：落点行描一圈，光标边上的标签写清「松手归到哪」。</summary>
+        private void DrawExtTag(Graphics g, int W)
+        {
+            bool ok = extRow >= 0 && extRow < rows.Count && ExtAccepts(rows[extRow]);
+            if (ok)
+            {
+                using (Pen pen = new Pen(Theme.Info, 2f))
+                    g.DrawRectangle(pen, 2, extRow * RowH + 4, Math.Max(1, W - 6), RowH - 1);
+            }
+
+            string to = " → 松手取消（这里放不了）";
+            if (ok)
+            {
+                TreeRow r = rows[extRow];
+                if (r.Slot != null)
+                    to = CatTree.IsBranchSlot(r.Slot) ? " → 放进分支「" + r.Slot.Name + "」"
+                       : " → 替换「" + r.Slot.Name + "」";
+                else if (r.IsSub) to = " → 归到「" + r.Cat + " / " + r.Sub + "」";
+                else to = " → 归到「" + r.Cat + "」";
+            }
+            string txt = "「" + (extName.Length > 0 ? extName : "?") + "」" + to;
+            Size sz = TextRenderer.MeasureText(txt, Theme.UISmall, new Size(2000, 40),
+                TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
+            int w = Math.Min(Math.Max(60, W - 12), sz.Width + 18), h = 22;
+            int x = Math.Max(2, Math.Min(Math.Max(2, W - w - 4), extPt.X + 14));
+            int y = Math.Max(2, Math.Min(Math.Max(2, Height - h - 2), extPt.Y + 10));
+            Rectangle box = new Rectangle(x, y, w, h);
+            using (GraphicsPath p = Theme.Round(box, 4))
+            using (SolidBrush b = new SolidBrush(Theme.Surface))
+            using (Pen pen = new Pen(ok ? Theme.Info : Theme.Accent, ok ? 1f : 2f))
+            {
+                g.FillPath(b, p);
+                g.DrawPath(pen, p);
+            }
+            TextRenderer.DrawText(g, txt, Theme.UISmall,
+                new Rectangle(box.X + 8, box.Y, box.Width - 12, box.Height), Theme.Ink,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding
+                | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
         }
 
         /// <summary>拖动时跟着鼠标的小标签：写着搬的是哪个分支、松手会落到哪儿。</summary>
@@ -4228,6 +4419,77 @@ namespace Installer
             int i = (y - 4) / RowH;
             return (i >= 0 && i < rows.Count) ? i : -1;
         }
+
+        // ------------------------------------------------------------
+        //  未归类 MOD 拖进树：拖到哪一行，就归到哪一行
+        // ------------------------------------------------------------
+
+        /// <summary>拖进来的 MOD 能落在哪一行：位置行（含分支）、大类 / 小分类标题。说明行和「未归类」桶不行。</summary>
+        private static bool ExtAccepts(TreeRow r)
+        {
+            if (r == null) return false;
+            if (r.IsCat) return !string.IsNullOrEmpty(r.Cat) && r.Cat != "未归类";
+            if (r.IsSub) return !string.IsNullOrEmpty(r.Cat);
+            return r.Slot != null;      // 位置行 / 我的分支 / ＋新建分支交给 DropModOn 分流
+        }
+
+        private void ExtDragOver(object s, DragEventArgs e)
+        {
+            ModGroup g = e.Data.GetData(typeof(ModGroup)) as ModGroup;
+            if (g == null) { if (extDrag) ExtDragEnd(); e.Effect = DragDropEffects.None; return; }
+
+            extName = g.Name;
+            extPt = PointToClient(new Point(e.X, e.Y));
+            int row = IndexAt(extPt.Y);
+            e.Effect = (row >= 0 && row < rows.Count && ExtAccepts(rows[row]))
+                ? DragDropEffects.Move : DragDropEffects.None;
+
+            if (!extDrag) extScroll.Start();
+            extDrag = true;
+            if (row != extRow) { extRow = row; Invalidate(); }
+        }
+
+        private void ExtDragEnd()
+        {
+            extDrag = false;
+            extRow = -1;
+            extScroll.Stop();
+            Invalidate();
+        }
+
+        /// <summary>光标悬在视口上 / 下边一个行高以内时自动滚树——不然折叠状态下够不着下面的位置。</summary>
+        private void ExtAutoScroll()
+        {
+            ScrollHost host = Parent as ScrollHost;
+            if (host == null || !extDrag) { extScroll.Stop(); return; }
+            int vh = host.ClientSize.Height;
+            if (vh <= 0) return;
+            // extPt 是树体坐标：视口上沿在树体坐标里是 offset，下沿是 offset + 视口高
+            if (extPt.Y - host.Offset < RowH) host.ScrollTo(host.Offset - RowH);
+            else if (host.Offset + vh - extPt.Y < RowH) host.ScrollTo(host.Offset + RowH);
+        }
+
+        private void ExtDragDrop(object s, DragEventArgs e)
+        {
+            ModGroup g = e.Data.GetData(typeof(ModGroup)) as ModGroup;
+            bool ok = g != null && extRow >= 0 && extRow < rows.Count && ExtAccepts(rows[extRow]);
+            TreeRow r = ok ? rows[extRow] : null;
+            ExtDragEnd();
+            if (ok) owner.DropModOn(g, r);
+        }
+
+        /// <summary>自测用：不发起真 OLE 拖放，直接走一遍「松手在 row」的落点逻辑，返回结果描述。</summary>
+        internal string SimulateExtDrop(int row, ModGroup g)
+        {
+            if (g == null) return "没有拖的东西";
+            if (row < 0 || row >= rows.Count) return "行号越界 " + row;
+            if (!ExtAccepts(rows[row])) return "这一行不收：" + RowDesc(rows[row]);
+            owner.DropModOn(g, rows[row]);
+            return "ok → " + RowDesc(rows[row]);
+        }
+
+        /// <summary>自测用：外部 OLE 拖放悬停在某一行时的状态串。</summary>
+        internal string ExtState() { return "extDrag=" + extDrag + " extRow=" + extRow; }
 
         /// <summary>这一行能不能按住拖：大类 / 小分类 / 分支 / 位置都能，只有说明行和「一堆」不行。</summary>
         private static bool CanDragRow(TreeRow r)
@@ -5186,6 +5448,9 @@ namespace Installer
 
         /// <summary>第 i 行的大类名（不是大类行返回空串）。</summary>
         internal string RowCat(int i) { return RowIsCat(i) ? rows[i].Cat : ""; }
+
+        /// <summary>第 i 行是不是说明行（「未归类」的入口行）。</summary>
+        internal bool RowIsNote(int i) { return i >= 0 && i < rows.Count && rows[i].IsNote; }
 
         protected override void OnMouseWheel(MouseEventArgs e)
         {

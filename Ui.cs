@@ -1480,6 +1480,21 @@ namespace Installer
             RefreshMods();
         }
 
+        /// <summary>
+        /// 拖拽归类（未归类页拖到树上松手）：与「设置 MOD 分类」走同一份 CatPrefs 持久化，
+        /// 归完刷新树、搜索和未归类列表，让被拖的那一行立刻消失。
+        /// </summary>
+        internal void ApplyCatAssign(ModGroup g, string cat, string slot)
+        {
+            if (g == null) return;
+            CatPrefs.Assign(g, (cat ?? "").Trim(), (slot ?? "").Trim());
+            Core.Log("OK", "拖拽归类: " + g.Name + " → " + ((cat ?? "").Trim())
+                + (((slot ?? "").Trim()).Length > 0 ? " / " + ((slot ?? "").Trim()) : ""));
+            Catalog.ApplyCats();          // 人工分类落到 ModGroup.Cat 上：树、搜索全跟着走
+            if (treeView != null) { RebuildViews(); treeView.Sync(); }
+            RefreshMods();
+        }
+
         /// <summary>右键点中的那一行。右键时已经把它选中了，所以取第一行选中项。</summary>
         private ListViewItem RowTarget(ListView lv)
         {
@@ -1565,23 +1580,30 @@ namespace Installer
         }
 
         /// <summary>
-        /// 创意工坊导入。窗口关掉之后才重扫：下载期间库在变，边下边扫会读到半截文件
-        /// （下载是先写 .part 再改名，所以其实安全，但没有必要反复扫）。
+        /// 创意工坊：独立窗口（非模态），主窗口照常能用 —— 下载期间照样翻树、拖未归类的 MOD。
+        /// 同一时刻只开一个：再点「工坊」把已有窗口提到前面。关窗时下载过才重扫库。
         /// </summary>
+        private WorkshopForm wsWindow;
+
         private void OpenWorkshop()
         {
             // 分类下拉要用方案树的位置表；树还没建的话这里先补上，否则下拉只有「全部物品」
             EnsureTree();
             treeView.Rebuild();
-            using (WorkshopForm f = new WorkshopForm(this))
+
+            if (wsWindow != null && !wsWindow.IsDisposed) { wsWindow.Activate(); return; }
+            wsWindow = new WorkshopForm(this);
+            wsWindow.FormClosed += delegate
             {
-                f.ShowDialog(this);
-                if (f.DownloadedCount > 0)
+                int got = wsWindow.DownloadedCount;
+                wsWindow = null;
+                if (got > 0)
                 {
-                    Core.Log("INFO", "工坊：新下载 " + f.DownloadedCount + " 个，重扫库");
+                    Core.Log("INFO", "工坊：新下载 " + got + " 个，重扫库");
                     RescanMods();
                 }
-            }
+            };
+            wsWindow.Show();
         }
 
         /// <summary>手动重扫：库或游戏目录在别处被改过（别人手动丢过 vpk、装了一半），点一下重读。</summary>
