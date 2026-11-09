@@ -69,6 +69,7 @@ namespace Installer
             bool scanRace = false;
             string uiSelect = null;
             bool uiDrawer = false;
+            bool uiDragPrev = false;
             bool uiLogOpen = false;
             string uiDrag = null;
             string uiDragCat = null;
@@ -130,6 +131,8 @@ namespace Installer
                 else if (a.StartsWith("--uiselect=", StringComparison.OrdinalIgnoreCase)) uiSelect = a.Substring(11);
                 // 诊断截图：展开左栏抽屉（装什么 / 安装选项 / 日志），看台面视图的排版
                 else if (string.Equals(a, "--drawer", StringComparison.OrdinalIgnoreCase)) uiDrawer = true;
+                // 诊断截图：未归类页假装拖拽悬停，验证落点行填色与跟随标签
+                else if (string.Equals(a, "--dragpreview", StringComparison.OrdinalIgnoreCase)) uiDragPrev = true;
                 // 诊断截图：把左栏日志一并展开（默认是收起的）
                 else if (string.Equals(a, "--logopen", StringComparison.OrdinalIgnoreCase)) uiLogOpen = true;
                 else if (a.StartsWith("--uidrag=", StringComparison.OrdinalIgnoreCase)) uiDrag = a.Substring(9);
@@ -506,6 +509,7 @@ namespace Installer
                     if (uiTree) { f.UiTestTree(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiSelect != null) { f.UiTestSelect(uiSelect); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDrawer) { f.UiTestDrawer(uiLogOpen); System.Windows.Forms.Application.DoEvents(); }
+                    if (uiDragPrev) { f.UiTestDragHover(); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDrag != null) { f.UiTestDrag(uiDrag); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDragCat != null)
                     {

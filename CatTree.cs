@@ -1010,7 +1010,16 @@ namespace Installer
                 ListViewItem li = e.Item as ListViewItem;
                 ModGroup g = li == null ? null : (li.Tag as ModGroup);
                 if (g == null) return;
+
+                // 拖动期间的「拿走了」观感：这一行整行变灰。DoDragDrop 是阻塞调用，
+                // 一返回就说明松手了（无论落没落下），立刻还原 —— 落下的情况列表会重填，还原无害。
+                Color keepBack = li.BackColor, keepFore = li.ForeColor;
+                li.BackColor = Theme.TreeBg;
+                li.ForeColor = Theme.Ink3;
+                lv.Invalidate();
                 lv.DoDragDrop(g, DragDropEffects.Move);
+                try { li.BackColor = keepBack; li.ForeColor = keepFore; } catch { }
+                lv.Invalidate();
             };
             lv.AccessibleName = "当前替换位置的 MOD 候选";
             lv.KeyDown += delegate(object s, KeyEventArgs e)
@@ -4290,26 +4299,37 @@ namespace Installer
             if (extDrag) DrawExtTag(g, W);
         }
 
-        /// <summary>未归类 MOD 悬在树上：落点行描一圈，光标边上的标签写清「松手归到哪」。</summary>
+        /// <summary>
+        /// 未归类 MOD 悬在树上：落点行整行填色（合法=信息蓝、非法=警示红），
+        /// 光标边上的标签写清「松手归到哪 / 替换哪个」。只描边不填色用户看不见，必须有底色。
+        /// </summary>
         private void DrawExtTag(Graphics g, int W)
         {
-            bool ok = extRow >= 0 && extRow < rows.Count && ExtAccepts(rows[extRow]);
-            if (ok)
+            bool inRow = extRow >= 0 && extRow < rows.Count;
+            bool ok = inRow && ExtAccepts(rows[extRow]);
+            if (inRow)
             {
-                using (Pen pen = new Pen(Theme.Info, 2f))
-                    g.DrawRectangle(pen, 2, extRow * RowH + 4, Math.Max(1, W - 6), RowH - 1);
+                // 与自绘行拖动同一种画法：淡色铺满整行 + 2px 描边，隔着字也看得清
+                Rectangle rr = new Rectangle(2, extRow * RowH + 4, Math.Max(1, W - 6), RowH - 1);
+                using (SolidBrush fill = new SolidBrush(Color.FromArgb(ok ? 60 : 45, ok ? Theme.Info : Theme.Accent)))
+                using (Pen pen = new Pen(ok ? Theme.Info : Theme.Accent, 2f))
+                {
+                    g.FillRectangle(fill, rr);
+                    g.DrawRectangle(pen, rr);
+                }
             }
 
-            string to = " → 松手取消（这里放不了）";
+            string to;
             if (ok)
             {
                 TreeRow r = rows[extRow];
                 if (r.Slot != null)
                     to = CatTree.IsBranchSlot(r.Slot) ? " → 放进分支「" + r.Slot.Name + "」"
-                       : " → 替换「" + r.Slot.Name + "」";
-                else if (r.IsSub) to = " → 归到「" + r.Cat + " / " + r.Sub + "」";
-                else to = " → 归到「" + r.Cat + "」";
+                       : " → 替换「" + r.Slot.Cat + " · " + r.Slot.Name + "」";
+                else if (r.IsSub) to = " → 归到「" + r.Cat + " / " + r.Sub + "」整类";
+                else to = " → 归到「" + r.Cat + "」整类";
             }
+            else to = inRow ? " → 这里放不了，松手取消" : " → 松手取消";
             string txt = "「" + (extName.Length > 0 ? extName : "?") + "」" + to;
             Size sz = TextRenderer.MeasureText(txt, Theme.UISmall, new Size(2000, 40),
                 TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
@@ -4490,6 +4510,16 @@ namespace Installer
 
         /// <summary>自测用：外部 OLE 拖放悬停在某一行时的状态串。</summary>
         internal string ExtState() { return "extDrag=" + extDrag + " extRow=" + extRow; }
+
+        /// <summary>截图专用：摆成「正把未归类 MOD 悬在第 row 行」的样子，不动任何数据。</summary>
+        public void SetExtDragFake(string name, int row)
+        {
+            extName = name ?? "?";
+            extRow = row;
+            extDrag = row >= 0;
+            extPt = new Point(Width / 2, Math.Max(8, row * RowH + RowH / 2));
+            Invalidate();
+        }
 
         /// <summary>这一行能不能按住拖：大类 / 小分类 / 分支 / 位置都能，只有说明行和「一堆」不行。</summary>
         private static bool CanDragRow(TreeRow r)
@@ -5693,6 +5723,28 @@ namespace Installer
             if (s == null) { Core.Log("WARN", "SELECT 没找到槽位: " + slotName); return; }
             treeView.SelectSlot(s.Key, true);      // 诊断截图要看得到那一行，顺带滚进视野
             Core.Log("INFO", "SELECT 已选中槽位 " + s.Name + (s.Empty ? "（空位）" : ""));
+        }
+
+        /// <summary>诊断截图（--dragpreview）：未归类页 + 假装正把第一个未归类 MOD 悬在第一个普通位置行上，验证拖放反馈的视觉效果。</summary>
+        internal void UiTestDragHover()
+        {
+            if (viewHost == null) { Core.Log("FAIL", "DND 没有 viewHost"); return; }
+            ShowTree();
+            treeView.SelectUnmatched();
+            Application.DoEvents();
+            SlotTree b = treeView.Body;
+            string name = "示例 MOD";
+            List<ModGroup> gs = treeView.UnmatchedGroups;
+            if (gs != null && gs.Count > 0) name = gs[0].Name;
+            for (int i = 0; i < b.RowCount; i++)
+            {
+                Slot t = b.RowSlot(i);
+                if (t == null || CatTree.IsBranchSlot(t) || t.Pile) continue;
+                b.SetExtDragFake(name, i);
+                Core.Log("INFO", "DRAGHOVER 悬在「" + t.Cat + " · " + t.Name + "」（第 " + i + " 行）");
+                return;
+            }
+            Core.Log("WARN", "DRAGHOVER 没找到可悬停的位置行");
         }
 
         /// <summary>自测：切到方案树、数槽位、验证「一个位置只留一个」的替换逻辑。</summary>
