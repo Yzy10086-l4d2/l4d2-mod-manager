@@ -282,7 +282,8 @@ namespace Installer
             return string.Join(" · ", tags.ToArray());
         }
 
-        /// <summary>合集 → 子项 ID。不是合集时返回空表。</summary>        public static List<string> CollectionChildren(string collectionId, out string title)
+        /// <summary>合集 → 子项 ID。不是合集时返回空表。</summary>
+        public static List<string> CollectionChildren(string collectionId, out string title)
         {
             title = "";
             List<string> kids = new List<string>();

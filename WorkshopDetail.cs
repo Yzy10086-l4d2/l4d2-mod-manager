@@ -137,7 +137,8 @@ namespace Installer
         internal static void WriteCacheForTest(string id, long updated, string zh) { WriteCache(id, updated, zh); }
         internal static string CachePathForTest(string id) { return CachePath(id); }
 
-        /// <summary>读缓存；作者改过介绍（time_updated 变了）就当没缓存。</summary>        public static string ReadCache(string id, long updated)
+        /// <summary>读缓存；作者改过介绍（time_updated 变了）就当没缓存。</summary>
+        public static string ReadCache(string id, long updated)
         {
             try
             {
