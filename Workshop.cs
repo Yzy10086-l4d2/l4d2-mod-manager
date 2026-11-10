@@ -900,6 +900,22 @@ namespace Installer
             }
             else Core.Log("INFO", "WSNET 正文前 40 字：" + cleanDesc.Substring(0, Math.Min(40, cleanDesc.Length)).Replace("\n", " "));
 
+            // 翻译通道：只记录不判失败（翻译是锦上添花，挂了不该让下载自检变红），
+            // 但必须能看见这次走的是哪条路 —— 上一条路（微软鉴权）已经 404 了。
+            if (cleanDesc.Length > 0)
+            {
+                try
+                {
+                    string terr;
+                    string zh = WsTranslate.Translate(it.Id, it.Updated, cleanDesc, out terr);
+                    Core.Log("INFO", "WSNET 翻译 通道=" + (WsTranslate.LastProvider == null ? "" : WsTranslate.LastProvider)
+                        + " 译文 " + zh.Length + " 字" + (terr != null ? "（" + terr + "）" : ""));
+                    if (zh.Length > 0)
+                        Core.Log("INFO", "WSNET 译文前 40 字：" + zh.Substring(0, Math.Min(40, zh.Length)).Replace("\n", " "));
+                }
+                catch (Exception tex) { Core.Log("WARN", "WSNET 翻译异常: " + tex.Message); }
+            }
+
             string tmp = Path.Combine(Path.GetTempPath(), "ws_" + id + ".vpk");
             string rn = null;
             try
