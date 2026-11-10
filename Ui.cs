@@ -1914,12 +1914,30 @@ namespace Installer
             {
                 using (Bitmap b = new Bitmap(f.Width, f.Height))
                 {
-                    f.DrawToBitmap(b, new Rectangle(0, 0, b.Width, b.Height));
+                    // 别用 DrawToBitmap：它走 WM_PRINT，对「滚动到可视区外的自绘内容」渲染不全
+                    // （实测：卡片墙滚到底，第 5 排和底部提示条在截图里是空白，几何日志却是对的）。
+                    // 直接拷屏幕像素，见到的才是用户见到的。
+                    Point tl = f.PointToScreen(Point.Empty);
+                    using (Graphics g = Graphics.FromImage(b))
+                        g.CopyFromScreen(tl, Point.Empty, b.Size);
                     b.Save(System.IO.Path.Combine(Core.LogDir, name + ".png"), System.Drawing.Imaging.ImageFormat.Png);
                 }
                 Core.Log("INFO", "GAL 截图已保存 " + name + ".png（" + f.Width + "x" + f.Height + "）");
             }
-            catch (Exception ex) { Core.Log("FAIL", "GAL 截图失败 " + name + ": " + ex.Message); }
+            catch (Exception ex)
+            {
+                // 屏幕拷贝可能被挡（窗口被盖住 / 无交互桌面），退回 DrawToBitmap 保底
+                try
+                {
+                    using (Bitmap b = new Bitmap(f.Width, f.Height))
+                    {
+                        f.DrawToBitmap(b, new Rectangle(0, 0, b.Width, b.Height));
+                        b.Save(System.IO.Path.Combine(Core.LogDir, name + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    Core.Log("WARN", "GAL 截图(回退DrawToBitmap) " + name + ".png: " + ex.Message);
+                }
+                catch (Exception ex2) { Core.Log("FAIL", "GAL 截图失败 " + name + ": " + ex2.Message); }
+            }
         }
 
         /// <summary>
