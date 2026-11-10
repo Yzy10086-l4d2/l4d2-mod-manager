@@ -1839,11 +1839,32 @@ namespace Installer
                     Application.DoEvents();
                 }
                 Core.Log("INFO", "WSM 工坊窗口：构造 / 填样例 / 两种尺寸重排 都正常");
-                return 0;
             }
             catch (Exception ex)
             {
                 Core.Log("FAIL", "WSM 工坊窗口塌了: " + ex.GetType().Name + " " + ex.Message);
+                return 1;
+            }
+
+            // 画廊是新页面，同样得在自检里真的构造一次 —— 上一次工坊窗口就是漏了这步，
+            // 结果「字段忘了 new」这种 NRE 一路混到 release 才被截图发现。
+            try
+            {
+                using (GalleryForm g = new GalleryForm(this))
+                {
+                    g.FillSample();
+                    g.ClientSize = new Size(Dpi.S(900), Dpi.S(620));
+                    g.ClientSize = new Size(Dpi.S(1400), Dpi.S(880));
+                    g.ShowDetailForTest(0);
+                    g.ClientSize = new Size(Dpi.S(1180), Dpi.S(780));
+                    Application.DoEvents();
+                }
+                Core.Log("INFO", "GAL 画廊：构造 / 样例卡片 / 详情页 / 三种尺寸重排 都正常");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Core.Log("FAIL", "GAL 画廊塌了: " + ex.GetType().Name + " " + ex.Message);
                 return 1;
             }
         }
@@ -1853,10 +1874,62 @@ namespace Installer
         /// 同一时刻只开一个：再点「工坊」把已有窗口提到前面。关窗时下载过才重扫库。
         /// </summary>
         private WorkshopForm wsWindow;
+        private GalleryForm galleryWindow;    // 画廊页面（顶栏「工坊」进的就是它）
 
+        /// <summary>
+        /// 画廊自检：建窗 + 样例数据 + 截图（卡片墙一张、详情页一张）。
+        /// 样例模式不联网，缩略图用代码画的色块，能看出卡片比例与裁切对不对。
+        /// </summary>
+        internal void GalleryShot()
+        {
+            using (GalleryForm f = new GalleryForm(this))
+            {
+                f.FillSample();
+                f.Show();
+                Application.DoEvents();
+                Application.DoEvents();
+                Shot(f, "gallery");
+                f.ShowDetailForTest(0);
+                Application.DoEvents();
+                Application.DoEvents();
+                Shot(f, "gallery-detail");
+                f.Close();
+            }
+        }
+
+        private void Shot(Form f, string name)
+        {
+            try
+            {
+                using (Bitmap b = new Bitmap(f.Width, f.Height))
+                {
+                    f.DrawToBitmap(b, new Rectangle(0, 0, b.Width, b.Height));
+                    b.Save(System.IO.Path.Combine(Core.LogDir, name + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+                }
+                Core.Log("INFO", "GAL 截图已保存 " + name + ".png（" + f.Width + "x" + f.Height + "）");
+            }
+            catch (Exception ex) { Core.Log("FAIL", "GAL 截图失败 " + name + ": " + ex.Message); }
+        }
+
+        /// <summary>
+        /// 顶栏「工坊」→ 画廊（用图找 MOD）。批量勾选下载那个列表窗口还在，从画廊右上角「批量下载」进。
+        /// 两种活法：不知道装什么时看图扫；知道要哪几个时进列表一次勾完。
+        /// </summary>
         private void OpenWorkshop()
         {
             // 分类下拉要用方案树的位置表；树还没建的话这里先补上，否则下拉只有「全部物品」
+            EnsureTree();
+            treeView.Rebuild();
+
+            if (galleryWindow != null && !galleryWindow.IsDisposed) { galleryWindow.Activate(); return; }
+            galleryWindow = new GalleryForm(this);
+            galleryWindow.FormClosed += delegate { galleryWindow = null; };
+            galleryWindow.Show();
+        }
+
+        /// <summary>画廊里的「批量下载」调它；也能被外部自检直接调。</summary>
+        internal void ShowWorkshopList()
+        {
             EnsureTree();
             treeView.Rebuild();
 

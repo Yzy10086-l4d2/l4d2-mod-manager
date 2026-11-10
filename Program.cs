@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
@@ -83,6 +83,7 @@ namespace Installer
             string wsNet = null;
             string wsSearch = null;
             bool uiWorkshop = false;
+            bool uiGallery = false;
             int deskServe = 0;
             bool deskSelf = false;
             bool deskLaunch = false;
@@ -150,6 +151,7 @@ namespace Installer
                 else if (a.StartsWith("--workshopsearch=", StringComparison.OrdinalIgnoreCase)) wsSearch = a.Substring(17).Trim();
                 // 诊断截图：打开工坊窗口、填假数据、存 workshop.png，不联网
                 else if (string.Equals(a, "--workshopui", StringComparison.OrdinalIgnoreCase)) { uiWorkshop = true; uiTest = true; }
+                else if (string.Equals(a, "--galleryui", StringComparison.OrdinalIgnoreCase)) { uiGallery = true; uiTest = true; }
                 else if (a.StartsWith("--deskserve=", StringComparison.OrdinalIgnoreCase)) { int.TryParse(a.Substring(12), out deskServe); uiTest = true; }
                 else if (string.Equals(a, "--deskself", StringComparison.OrdinalIgnoreCase)) { deskSelf = true; uiTest = true; }
                 else if (string.Equals(a, "--desklaunch", StringComparison.OrdinalIgnoreCase)) { deskLaunch = true; uiTest = true; }
@@ -544,6 +546,7 @@ namespace Installer
                         return bad == 0 ? 0 : 1;
                     }
                     if (uiWorkshop) { f.WorkshopShot(); System.Windows.Forms.Application.DoEvents(); return 0; }
+                    if (uiGallery) { f.GalleryShot(); System.Windows.Forms.Application.DoEvents(); return 0; }
                     if (uiFilter != null) { f.UiTestFilter(uiFilter); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDeep != null) { f.UiTestFilter(uiDeep); System.Windows.Forms.Application.DoEvents(); f.UiTestDeep(); System.Windows.Forms.Application.DoEvents(); }
                     System.IO.File.WriteAllText(System.IO.Path.Combine(Core.LogDir, "uitest.txt"), f.LayoutDump(), new System.Text.UTF8Encoding(true));
