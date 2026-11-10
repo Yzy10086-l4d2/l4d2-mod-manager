@@ -1823,6 +1823,32 @@ namespace Installer
         }
 
         /// <summary>
+        /// 工坊窗口冒烟：构造 + 填样例 + 换两次尺寸，不联网、不截图。
+        /// 加这条是因为 v2.53.1 真栽在这儿 —— 构造函数里一个字段忘了 new，编译器不报，
+        /// --layoutself 又不构造工坊窗口，结果一点「工坊」就 NRE 崩掉。
+        /// </summary>
+        internal int WorkshopSmoke()
+        {
+            try
+            {
+                using (WorkshopForm f = new WorkshopForm(this))
+                {
+                    f.FillSample();
+                    f.ClientSize = new Size(Dpi.S(940), Dpi.S(600));
+                    f.ClientSize = new Size(Dpi.S(1360), Dpi.S(820));
+                    Application.DoEvents();
+                }
+                Core.Log("INFO", "WSM 工坊窗口：构造 / 填样例 / 两种尺寸重排 都正常");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Core.Log("FAIL", "WSM 工坊窗口塌了: " + ex.GetType().Name + " " + ex.Message);
+                return 1;
+            }
+        }
+
+        /// <summary>
         /// 创意工坊：独立窗口（非模态），主窗口照常能用 —— 下载期间照样翻树、拖未归类的 MOD。
         /// 同一时刻只开一个：再点「工坊」把已有窗口提到前面。关窗时下载过才重扫库。
         /// </summary>

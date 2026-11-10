@@ -235,6 +235,7 @@ namespace Installer
                     foreach (float k in scales) bad += lf.LayoutSelfTest(k, 1440, 940);
                     foreach (float k in scales) bad += lf.LayoutSelfTest(k, 1120, 740);
                     bad += lf.TriPaneSelfTest();          // 右半并排：树 / 候选 / 扩展 三栏
+                    bad += lf.WorkshopSmoke();            // 工坊窗口：构造 + 填样例 + 换尺寸
                     Console.WriteLine("layoutself failures = " + bad);
                     return bad == 0 ? 0 : 1;
                 }

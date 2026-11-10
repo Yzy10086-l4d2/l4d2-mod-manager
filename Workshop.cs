@@ -965,7 +965,7 @@ namespace Installer
         private readonly TextBox txtDesc = new TextBox();
         private readonly FlatButton btnLang = new FlatButton();
         private readonly FlatButton btnOpen = new FlatButton();
-        private Label lblTip;
+        private readonly Label lblTip = new Label();
         private readonly Label lblCat = new Label();
         private WsItem detailItem;                   // 详情面板当前展示的物品
         private bool showZh = true;                  // true = 显示译文（默认），false = 原文
