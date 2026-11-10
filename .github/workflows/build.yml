@@ -49,13 +49,6 @@ jobs:
           del srcs.rsp
           dir L4D2Setup.exe
 
-      - name: 上传构建产物
-        uses: actions/upload-artifact@v4
-        with:
-          name: L4D2Setup
-          path: L4D2Setup.exe
-          if-no-files-found: error
-
       # 只编过不等于跑得起来：布局自检要真的把 MainForm 建出来走一遍排版，
       # 能抓到「按钮叠了 / 栏跑出窗口 / 新代码在构造期抛异常」这类编译期看不见的问题。
       # 它不开窗口、不读 MOD 库、不需要游戏目录，几秒就完。
@@ -80,6 +73,8 @@ jobs:
           Write-Host "workshopself exit=$code"
           if ($code -ne 0) { exit $code }
 
+      # 顺序是有讲究的：自检和日志必须在「传产物」之前。
+      # 产物服务抽风（实测卡过 5 分钟）不该把自检结果一起埋掉，那是唯一能证明代码跑得起来的东西。
       - name: 把自检日志一起带走
         if: always()
         uses: actions/upload-artifact@v4
@@ -87,6 +82,16 @@ jobs:
           name: selftest-logs
           path: _装机记录/
           if-no-files-found: ignore
+
+      # 产物只是方便下载的副本：传失败不该把整条流水线判死，exe 本地 build.bat 随时能出；
+      # 打 tag 发 Release 用的是 runner 上那个文件，不依赖这里。
+      - name: 上传构建产物
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: L4D2Setup
+          path: L4D2Setup.exe
+          if-no-files-found: error
 
       - name: 打 tag 时发 Release
         if: startsWith(github.ref, 'refs/tags/')
