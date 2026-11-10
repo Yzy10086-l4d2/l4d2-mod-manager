@@ -871,6 +871,8 @@ namespace Installer
             ShowGallery();                          // 详情页那几张截完还停在详情态，先切回墙
             grid.SetItems(new List<WsItem>());
             grid.ShowSkeleton(n);
+            grid.FooterText = "";                   // 真实流程里 DoSearch 会清掉底部提示，截图也照做
+            grid.FooterClickable = false;
             lblStatus.Text = "正在搜工坊…（骨架态截图）";
         }
 
