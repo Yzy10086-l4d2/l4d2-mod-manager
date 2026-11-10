@@ -208,8 +208,11 @@ namespace Installer
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Theme.Bg);
 
-            // 只画视口内的：可视区外面那些画了也看不见，白耗 GDI
-            int top = Parent != null ? -Parent.Top : 0;
+            // 只画视口内的：可视区外面那些画了也看不见，白耗 GDI。
+            // 视口起点是【自己】的 Top —— ScrollHost 把它设成 -offset；画在宿主身上是错的：
+            // 宿主固定不动（Top=56），用它算出来的视口永远停在墙的顶部，
+            // 往下滚之后新区域根本不在「待画名单」里，滑出来的就是一段空白。
+            int top = -Top;
             int viewH = Parent != null ? Parent.ClientSize.Height : Height;
 
             for (int i = 0; i < items.Count; i++)
