@@ -1278,7 +1278,10 @@ namespace Installer
 
             // 底栏：左起主操作，右边收尾
             int btnY = H - S(16) - S(32);
-            int bottomTop = btnY - S(8);
+            // 纵向从下往上排，别用「减一个常数」硬凑：按钮行 → 进度条 → 状态行 → 列表
+            int barTop = btnY - S(8) - S(10);
+            int statusTop = barTop - S(8) - S(18);
+            int contentBottom = btnY - S(8);            // 左右两栏共用的那条底线
             btnStart.SetBounds(m, btnY, S(112), bh);
             btnAll.SetBounds(m + S(120), btnY, S(56), bh);
             btnNone.SetBounds(m + S(184), btnY, S(72), bh);
@@ -1286,11 +1289,11 @@ namespace Installer
             btnMore.SetBounds(m + S(360), btnY, S(72), bh);
             btnClose.SetBounds(W - m - S(88), btnY, S(88), bh);
 
-            lblStatus.SetBounds(m, bottomTop - S(18) - S(8), leftW, S(18));
-            bar.SetBounds(m, bottomTop - S(12), leftW, S(10));
+            lblStatus.SetBounds(m, statusTop, leftW, S(18));
+            bar.SetBounds(m, barTop, leftW, S(10));
 
             int listTop = S(180);
-            int listH = Math.Max(S(120), bar.Top - S(8) - listTop);
+            int listH = Math.Max(S(120), statusTop - S(8) - listTop);
             lv.SetBounds(m, listTop, leftW, listH);
 
             // 右栏详情
@@ -1300,7 +1303,7 @@ namespace Installer
             lblTags.SetBounds(detailX, S(302), dw, S(18));
             lblWhere.SetBounds(detailX, S(322), dw, S(18));
             int descTop = S(346);
-            txtDesc.SetBounds(detailX, descTop, dw, Math.Max(S(80), bottomTop - S(8) - descTop));
+            txtDesc.SetBounds(detailX, descTop, dw, Math.Max(S(80), contentBottom - descTop));
             btnLang.SetBounds(detailX, btnY, S(88), bh);
             btnOpen.SetBounds(detailX + S(96), btnY, S(120), bh);
 
