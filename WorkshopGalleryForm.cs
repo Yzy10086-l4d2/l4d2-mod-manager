@@ -578,6 +578,7 @@ namespace Installer
                 w.Updated = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds - 86400 * (3 + i * 9);
                 w.Tags = i % 2 == 0 ? "模型 · 角色" : "vscript · 玩法";
                 w.Url = "https://example.invalid/" + i + ".vpk";
+                w.Preview = "sample://" + i;      // 有这个标记才会铺样例色块，空的就是真·空态
                 w.Desc = "[h1]" + names[i] + "[/h1]\n[b]English description sample.[/b] "
                        + "This is what the author wrote on the workshop page, several lines long, "
                        + "so the detail page has something to wrap and scroll.\n\n"
