@@ -29,15 +29,24 @@ jobs:
             echo [X] csc.exe not found - needs .NET Framework 4.x
             exit /b 1
           )
+          rem 源码清单走通配符，和 build.bat 一样。以前这里手写枚举：
+          rem 加了新 .cs 忘了同步，就会出现「CI 编译成功、exe 里少一个文件」。
+          dir /b *.cs > srcs.rsp
+          for %%A in (srcs.rsp) do if %%~zA LSS 10 (
+            echo [X] No .cs files found next to build.yml
+            exit /b 1
+          )
+          echo [i] source files:
+          type srcs.rsp
           "%CSC%" /nologo /codepage:65001 /target:winexe /optimize+ /out:L4D2Setup.exe /win32icon:app.ico ^
             /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll ^
             /reference:System.Windows.Forms.dll /reference:System.IO.Compression.dll ^
             /reference:System.IO.Compression.FileSystem.dll ^
             /resource:desk\index.html,desk.html ^
             /resource:desk\three.min.js,three.js ^
-            AssemblyInfo.cs Theme.cs Glyph.cs Program.cs Core.cs Launch.cs Dup.cs Catalog.cs Parts.cs ^
-            CatPrefs.cs MyBranch.cs Tweaks.cs Work.cs Mods.cs Identify.cs SelfTest.cs CatTree.cs TreeHost.cs Desk.cs DeskServer.cs OverviewModel.cs OverviewLayout.cs OverviewCanvas.cs Ui.cs SettingsForm.cs Dpi.cs Workshop.cs
+            @srcs.rsp
           if errorlevel 1 exit /b 1
+          del srcs.rsp
           dir L4D2Setup.exe
 
       - name: 上传构建产物
