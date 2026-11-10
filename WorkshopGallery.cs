@@ -26,6 +26,7 @@ namespace Installer
         private readonly Dictionary<string, Image> imgs = new Dictionary<string, Image>(StringComparer.Ordinal);
         private readonly HashSet<string> pending = new HashSet<string>(StringComparer.Ordinal);
         private readonly Queue<WsItem> queue = new Queue<WsItem>();
+        private readonly object gate = new object();   // imgs / pending / queue 共用：跨线程读写必须同一把锁
         private Thread worker;
         private int hover = -1;
         private int cols = 1, cardW = 240, cardH = 200, gap = 14, imgH = 135;
@@ -48,10 +49,13 @@ namespace Installer
         {
             items = list == null ? new List<WsItem>() : list;
             hover = -1;
-            foreach (Image im in imgs.Values) if (im != null) im.Dispose();
-            imgs.Clear();
-            pending.Clear();
-            lock (queue) queue.Clear();
+            lock (gate)
+            {
+                foreach (Image im in imgs.Values) if (im != null) im.Dispose();
+                imgs.Clear();
+                pending.Clear();
+                queue.Clear();
+            }
             Relayout();
         }
 
@@ -160,8 +164,8 @@ namespace Installer
             }
 
             Rectangle ir = new Rectangle(r.X + 1, r.Y + 1, r.Width - 2, imgH);
-            Image img;
-            if (imgs.TryGetValue(it.Id, out img) && img != null)
+            Image img = ThumbOf(it.Id);
+            if (img != null)
             {
                 // 等比填满并居中裁切：封面比例五花八门，直接拉伸会变形
                 double k = Math.Max((double)ir.Width / img.Width, (double)ir.Height / img.Height);
@@ -194,6 +198,16 @@ namespace Installer
                 Theme.Ink3, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
         }
 
+        /// <summary>取已缓存的缩略图；没有返回 null。锁住读，避免撞上后台线程正在写。</summary>
+        private Image ThumbOf(string id)
+        {
+            lock (gate)
+            {
+                Image img;
+                return imgs.TryGetValue(id, out img) ? img : null;
+            }
+        }
+
         /// <summary>把视口内的卡片排进下载队列（一次只跑一个线程，图上不来就画占位）。</summary>
         private void QueueVisible(int top, int viewH)
         {
@@ -204,8 +218,13 @@ namespace Installer
                 Rectangle r = CardRect(i);
                 if (r.Bottom < top - Dpi.S(80) || r.Top > top + viewH + Dpi.S(80)) continue;
                 WsItem it = items[i];
-                if (it.Preview.Length == 0 || imgs.ContainsKey(it.Id) || pending.Contains(it.Id)) continue;
-                lock (queue) { queue.Enqueue(it); pending.Add(it.Id); }
+                if (it.Preview.Length == 0) continue;
+                lock (gate)
+                {
+                    if (imgs.ContainsKey(it.Id) || pending.Contains(it.Id)) continue;
+                    queue.Enqueue(it);
+                    pending.Add(it.Id);
+                }
                 added = true;
             }
             if (added) EnsureWorker();
@@ -213,7 +232,7 @@ namespace Installer
 
         private void EnsureWorker()
         {
-            lock (queue)
+            lock (gate)
             {
                 if (worker != null && worker.IsAlive) return;
                 worker = new Thread(delegate()
@@ -221,7 +240,7 @@ namespace Installer
                     while (true)
                     {
                         WsItem it = null;
-                        lock (queue)
+                        lock (gate)
                         {
                             if (queue.Count == 0) { worker = null; return; }
                             it = queue.Dequeue();
@@ -229,7 +248,7 @@ namespace Installer
                         Image img = null;
                         try { img = WsThumb.Load(it.Preview, it.Id, ThumbW, ThumbH); }
                         catch { }
-                        lock (queue)
+                        lock (gate)
                         {
                             pending.Remove(it.Id);
                             if (img != null) imgs[it.Id] = img;
@@ -261,7 +280,7 @@ namespace Installer
                         g.DrawString("预览图 " + (i + 1), new Font("Microsoft YaHei UI", 22F, FontStyle.Bold),
                             ib, new PointF(24, ThumbH / 2 - 24));
                 }
-                imgs[items[i].Id] = b;
+                lock (gate) { imgs[items[i].Id] = b; }
             }
             Invalidate();
         }
