@@ -991,6 +991,30 @@ namespace Installer
                 if (string.IsNullOrEmpty(it.Title)) { bad++; Core.Log("FAIL", "WSS " + it.Id + " 没有标题"); }
                 else Core.Log("INFO", "WSS " + it.Id + "「" + (it.Title.Length <= 46 ? it.Title : it.Title.Substring(0, 46) + "…") + "」");
             }
+
+            // 翻页：画廊现在是「往下滑就往后追加」，全靠这两点 —— 第 2 页取得到、且和第 1 页不重复。
+            // 顺带验一下「不足 30 个 = 到底」这个判断的前提（满页）。
+            List<string> p2 = Search(query, "mostsubscribed", 2);
+            Core.Log("INFO", "WSS 第 2 页 = " + p2.Count + " 个");
+            if (p2.Count == 0)
+            {
+                bad++;
+                Core.Log("FAIL", "WSS 第 2 页是空的 —— 翻页没生效，滑动加载会卡在第一页");
+            }
+            else
+            {
+                HashSet<string> s1 = new HashSet<string>(ids, StringComparer.Ordinal);
+                int dup = 0;
+                foreach (string x in p2) if (s1.Contains(x)) dup++;
+                if (dup > 0)
+                {
+                    bad++;
+                    Core.Log("FAIL", "WSS 第 1/2 页重复 " + dup + " 个 —— 追加后会出现重复卡片");
+                }
+                else Core.Log("INFO", "WSS 第 1/2 页无重复，追加安全");
+            }
+            if (ids.Count < 30)
+                Core.Log("WARN", "WSS 第 1 页只有 " + ids.Count + " 个（不足 30），界面会判成「已到底」—— 这个词本身结果就少");
             return bad;
         }
     }

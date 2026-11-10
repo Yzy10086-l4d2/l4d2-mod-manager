@@ -42,12 +42,16 @@ namespace Installer
         private readonly FlatButton btnSearch = new FlatButton();
         private readonly FlatButton btnList = new FlatButton();
         private readonly FlatButton btnClose = new FlatButton();
-        private readonly FlatButton btnPrev = new FlatButton();
-        private readonly FlatButton btnNext = new FlatButton();
+        private readonly FlatButton btnTop = new FlatButton();     // 回到顶部（追加模式下「上一页」没意义）
+        private readonly FlatButton btnMore = new FlatButton();    // 加载更多 / 已到底
         private readonly Label lblStatus = new Label();
         private readonly Label lblCat = new Label();
 
-        private List<WsItem> items = new List<WsItem>();
+        const int PageSize = 30;        // 工坊 browse 一页固定 30 个，用它判断到底
+        const int AutoPages = 3;        // 自动连翻的页数上限，再多就等用户点（别一口气拉十页）
+        private int pagesLoaded;        // 本次搜索已经加载了几页
+        private bool atEnd;             // 已到底
+        private readonly HashSet<string> seenIds = new HashSet<string>(StringComparer.Ordinal);
         private WsItem detailItem;
         private int page = 1;
         private volatile bool busy;
@@ -134,6 +138,14 @@ namespace Installer
             host.Attach(grid);
             Controls.Add(host);
             grid.Activated += delegate(WsItem it) { ShowDetail(it); };
+            // 快滑到底：还没到自动翻页上限就自己接着取，到了上限就把「加载更多」摆出来等用户点
+            grid.NearEnd += delegate
+            {
+                if (busy || atEnd) return;
+                if (pagesLoaded < AutoPages) LoadMore();
+                else UpdateFooter();
+            };
+            grid.FooterClicked += delegate { LoadMore(); };
 
             // ---- 详情页 ----
             detail.BackColor = Theme.Bg;
@@ -222,15 +234,14 @@ namespace Installer
             lblStatus.Text = "挑一个分类，或直接搜关键词；点卡片看完整介绍。";
             Controls.Add(lblStatus);
 
-            btnPrev.Text = "上一页";
-            btnPrev.Enabled = false;
-            btnPrev.Click += delegate { if (page > 1) DoSearch(page - 1); };
-            Controls.Add(btnPrev);
+            btnTop.Text = "回到顶部";
+            btnTop.Click += delegate { GoTop(); };
+            Controls.Add(btnTop);
 
-            btnNext.Text = "下一页";
-            btnNext.Enabled = false;
-            btnNext.Click += delegate { DoSearch(page + 1); };
-            Controls.Add(btnNext);
+            btnMore.Text = "加载更多";
+            btnMore.Enabled = false;
+            btnMore.Click += delegate { LoadMore(); };
+            Controls.Add(btnMore);
 
             FormClosing += delegate { cancel = true; };
             Load += delegate { Theme.ApplyChrome(this); Theme.DeepNative(this); };
@@ -267,9 +278,9 @@ namespace Installer
 
             // 底部状态 + 翻页
             int by = H - bottom + S(6);
-            btnNext.SetBounds(W - m - S(56), by, S(56), S(30));
-            btnPrev.SetBounds(W - m - S(56) - S(8) - S(56), by, S(56), S(30));
-            lblStatus.SetBounds(m, by + S(6), Math.Max(S(160), (W - m - S(56) * 2 - S(24)) - m), S(18));
+            btnTop.SetBounds(W - m - S(84), by, S(84), S(30));
+            btnMore.SetBounds(W - m - S(84) - S(8) - S(96), by, S(96), S(30));
+            lblStatus.SetBounds(m, by + S(6), Math.Max(S(160), (W - m - S(84) - S(8) - S(96) - S(24)) - m), S(18));
 
             // 详情页内部
             // 大图高度跟着窗口走：窗口矮的时候（最小 940×600）固定 300 会把正文挤成十几像素、
@@ -322,28 +333,58 @@ namespace Installer
             }
         }
 
+        /// <summary>
+        /// 换搜索条件 → 从第 1 页重新来（清空墙、清空去重表）。
+        /// </summary>
         private void DoSearch(int p)
+        {
+            if (busy) return;
+            seenIds.Clear();
+            atEnd = false;
+            pagesLoaded = 0;
+            grid.FooterText = "";
+            grid.FooterClickable = false;
+            LoadPage(p, false);
+        }
+
+        /// <summary>往后翻一页（追加，不清空）。</summary>
+        private void LoadMore()
+        {
+            if (busy || atEnd) return;
+            LoadPage(page + 1, true);
+        }
+
+        /// <summary>
+        /// 取一页。append=false 是换搜索（替换整面墙），append=true 是翻页（往后接）。
+        ///
+        /// 到底的判断靠「这一页返回的 id 不足 30 个」——原来用 items.Count >= 20 当「还有下一页」，
+        /// 第一页正好 20~29 个时会亮着按钮点了却翻出空页，不足 20 个又会误判到底。
+        /// </summary>
+        private void LoadPage(int p, bool append)
         {
             if (busy) return;
             GalChoice c = cboCat.SelectedItem as GalChoice;
             string q = txtQuery.Text.Trim();
             if (q.Length == 0 && c != null) q = c.Query;
             GalChoice s = cboSort.SelectedItem as GalChoice;
+            string sort = s == null ? "mostsubscribed" : s.Sort;
 
             busy = true;
             btnSearch.Enabled = false;
-            lblStatus.Text = "正在搜工坊…";
-            string sort = s == null ? "mostsubscribed" : s.Sort;
+            btnMore.Enabled = false;
+            if (!append) lblStatus.Text = "正在搜工坊…";
+            if (append) { grid.FooterText = "正在加载…"; grid.FooterClickable = false; RelayoutWall(); }
 
             Thread t = new Thread(delegate()
             {
                 List<WsItem> got = null;
+                int idCount = 0;
                 string err = null;
                 try
                 {
                     List<string> ids = Workshop.Search(q, sort, p);
-                    if (ids.Count == 0) { got = new List<WsItem>(); }
-                    else got = Workshop.Fetch(ids);
+                    idCount = ids.Count;
+                    got = ids.Count == 0 ? new List<WsItem>() : Workshop.Fetch(ids);
                 }
                 catch (Exception ex) { err = ex.Message; }
 
@@ -353,22 +394,84 @@ namespace Installer
                     btnSearch.Enabled = true;
                     if (err != null)
                     {
+                        grid.FooterText = "";
+                        RelayoutWall();
                         lblStatus.Text = "搜索失败：" + err;
                         return;
                     }
+
                     page = p;
-                    items = got;
-                    grid.SetItems(items);
-                    ShowGallery();
-                    btnPrev.Enabled = page > 1;
-                    btnNext.Enabled = items.Count >= 20;
-                    lblStatus.Text = items.Count == 0
-                        ? "没搜到。换个词试试，或把「分类」切到「全部物品」。"
-                        : "第 " + page + " 页 · " + items.Count + " 个 · 点卡片看完整介绍";
+                    // 去重：排序变化时同一物品可能在相邻两页都出现，重复卡片比少几张更让人困惑
+                    List<WsItem> fresh = new List<WsItem>();
+                    foreach (WsItem one in got)
+                        if (one != null && seenIds.Add(one.Id)) fresh.Add(one);
+
+                    atEnd = idCount < PageSize || fresh.Count == 0;
+                    pagesLoaded = append ? pagesLoaded + 1 : 1;
+
+                    if (append) grid.AppendItems(fresh);
+                    else { grid.SetItems(fresh); ShowGallery(); host.ScrollTo(0); }
+
+                    UpdateFooter();
+                    RelayoutWall();
+                    if (grid.Items.Count == 0)
+                        lblStatus.Text = "没搜到。换个词试试，或把「分类」切到「全部物品」。";
                 });
             });
             t.IsBackground = true;
             t.Start();
+        }
+
+        /// <summary>
+        /// 底部提示与按钮的状态集中在这里算：
+        /// 还能自动翻 → 不显示提示；自动翻到上限 → 显示可点的「加载更多」；到底了 → 显示已到底。
+        /// </summary>
+        private void UpdateFooter()
+        {
+            int n = grid.Items.Count;
+            if (busy)
+            {
+                grid.FooterText = "正在加载…";
+                grid.FooterClickable = false;
+            }
+            else if (n == 0)
+            {
+                grid.FooterText = "";
+                grid.FooterClickable = false;
+            }
+            else if (atEnd)
+            {
+                grid.FooterText = "— 到底了 · 共 " + n + " 个 —";
+                grid.FooterClickable = false;
+            }
+            else if (pagesLoaded < AutoPages)
+            {
+                grid.FooterText = "";          // 还能自动往下翻，先不打扰
+                grid.FooterClickable = false;
+            }
+            else
+            {
+                grid.FooterText = "加载更多（第 " + (page + 1) + " 页）";
+                grid.FooterClickable = true;
+            }
+
+            btnMore.Text = atEnd ? "已到底" : "加载更多";
+            btnMore.Enabled = !atEnd && !busy;
+            lblStatus.Text = n == 0 ? lblStatus.Text
+                : "已加载 " + n + " 个 · 第 1–" + pagesLoaded + " 页"
+                  + (atEnd ? " · 到底了" : pagesLoaded < AutoPages ? " · 继续下滑自动加载" : " · 点底部继续");
+        }
+
+        private void RelayoutWall()
+        {
+            grid.Relayout();
+            host.Relayout();
+        }
+
+        private void GoTop()
+        {
+            host.ScrollTo(0);
+            grid.Focus();
         }
 
         // ---------------------------------------------------------- 两个页面之间切换
@@ -380,8 +483,8 @@ namespace Installer
             detailItem = null;
             detailToken++;
             // 翻页和「第 N 页」是卡片墙的东西，回详情页时不该跟着亮
-            btnPrev.Visible = true;
-            btnNext.Visible = true;
+            btnTop.Visible = true;
+            btnMore.Visible = true;
             lblStatus.Visible = true;
             grid.Relayout();
             host.Relayout();
@@ -395,8 +498,8 @@ namespace Installer
             host.Visible = false;
             detail.Visible = true;
             detail.BringToFront();
-            btnPrev.Visible = false;         // 详情页是一屏独立页面，翻页按钮属于卡片墙
-            btnNext.Visible = false;
+            btnTop.Visible = false;         // 详情页是一屏独立页面，翻页按钮属于卡片墙
+            btnMore.Visible = false;
             lblStatus.Visible = false;
 
             lblTitle.Text = it.Title.Length > 0 ? it.Title : "(无标题)";
@@ -567,7 +670,7 @@ namespace Installer
                 "HUD 图标重绘 · 极简版",
                 "（拿不到直链的那种条目）"
             };
-            items = new List<WsItem>();
+            List<WsItem> items = new List<WsItem>();
             for (int i = 0; i < names.Length; i++)
             {
                 WsItem w = new WsItem();
@@ -596,8 +699,11 @@ namespace Installer
             sampleHero = SampleBanner(960, 540, "预览图大图 16:9");
             grid.SetItems(items);
             grid.SeedSampleImages();
-            lblStatus.Text = "样例数据 · " + items.Count + " 个 · 点卡片看完整介绍";
             ShowGallery();
+            // 截图要能看到新的底部提示：样例当成「自动翻页已经用满、该点了」的状态
+            pagesLoaded = AutoPages;
+            atEnd = false;
+            UpdateFooter();
         }
 
         /// <summary>把一张图按「填满 + 居中裁切」画成 w×h（详情页横幅用，避免两侧大片空白）。</summary>
@@ -635,10 +741,11 @@ namespace Installer
         /// <summary>自检用：直接打开第 index 个的详情页。超出范围就取最后一个（方便专门去看脏数据那条）。</summary>
         internal void ShowDetailForTest(int index)
         {
-            if (items.Count == 0) return;
+            IList<WsItem> all = grid.Items;
+            if (all.Count == 0) return;
             if (index < 0) index = 0;
-            if (index >= items.Count) index = items.Count - 1;
-            ShowDetail(items[index]);
+            if (index >= all.Count) index = all.Count - 1;
+            ShowDetail(all[index]);
         }
     }
 }

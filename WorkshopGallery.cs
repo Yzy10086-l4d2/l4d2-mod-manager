@@ -35,8 +35,24 @@ namespace Installer
         /// <summary>点中一张卡。</summary>
         public event Action<WsItem> Activated;
 
+        /// <summary>快滑到底了 —— 调用方据此自动加载下一页（只报一次，翻页后重新计）。</summary>
+        public event Action NearEnd;
+
+        /// <summary>点了底部的「加载更多」。</summary>
+        public event Action FooterClicked;
+
+        /// <summary>卡片墙最下面那一行提示；空串 = 不占位。</summary>
+        public string FooterText = "";
+        /// <summary>这一行提示能不能点（加载更多 = 能，正在加载 / 已到底 = 不能）。</summary>
+        public bool FooterClickable;
+
         /// <summary>样例模式：不联网，用代码画的色块占位，截图自检才能看出卡片排得对不对。</summary>
         public bool SampleMode;
+
+        /// <summary>当前墙上所有的条目（调用方别再自己存一份，容易和追加对不上）。</summary>
+        public IList<WsItem> Items { get { return items; } }
+
+        private int nearRow = -1;         // 上一次报过「快到底」时的总行数：行数没变就不重复报
 
         public WsCardGrid()
         {
@@ -49,6 +65,7 @@ namespace Installer
         {
             items = list == null ? new List<WsItem>() : list;
             hover = -1;
+            nearRow = -1;
             lock (gate)
             {
                 foreach (Image im in imgs.Values) if (im != null) im.Dispose();
@@ -57,6 +74,22 @@ namespace Installer
                 queue.Clear();
             }
             Relayout();
+        }
+
+        /// <summary>
+        /// 往后追加一页。**不清图缓存** —— 已经下过的缩略图要留着，否则往下滑一页就把上面的图全丢了，
+        /// 滑回去又得重下。这是 SetItems（换搜索结果）和 AppendItems（翻页）最关键的区别。
+        /// </summary>
+        public void AppendItems(List<WsItem> more)
+        {
+            if (more == null || more.Count == 0) return;
+            items.AddRange(more);
+            hover = -1;
+            nearRow = -1;                       // 行数变了，允许再报一次「快到底」
+            Relayout();
+            ScrollHost h = Parent as ScrollHost;
+            if (h != null) h.Relayout();
+            Invalidate();
         }
 
         /// <summary>按当前宽度重算列数、卡片尺寸和自己的总高度（ScrollHost 靠这个高度决定能不能滚）。</summary>
@@ -70,7 +103,8 @@ namespace Installer
             imgH = cardW * 9 / 16;
             cardH = imgH + Dpi.S(8) + Dpi.S(40) + Dpi.S(18);
             int rows = (items.Count + cols - 1) / cols;
-            int h = Math.Max(Dpi.S(60), rows * (cardH + gap) + gap);
+            int footH = FooterText.Length > 0 ? Dpi.S(64) : 0;
+            int h = Math.Max(Dpi.S(60), rows * (cardH + gap) + gap + footH);
             if (Height != h) Height = h;
             Invalidate();
         }
@@ -98,14 +132,23 @@ namespace Installer
             return new Rectangle(c * (cardW + gap), gap + r * (cardH + gap), cardW, cardH);
         }
 
+        /// <summary>底部那一行「加载更多 / 正在加载 / 已到底」的位置：最后一行卡片下面。</summary>
+        private Rectangle FooterRect()
+        {
+            int rows = (items.Count + cols - 1) / cols;
+            int y = gap + rows * (cardH + gap);
+            return new Rectangle(gap, y, Math.Max(0, Width - gap * 2), Dpi.S(48));
+        }
+
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
-            int hit = HitTest(e.Location);
+            bool overFooter = FooterText.Length > 0 && FooterClickable && FooterRect().Contains(e.Location);
+            int hit = overFooter ? -2 : HitTest(e.Location);
             if (hit != hover)
             {
                 hover = hit;
-                Cursor = hit >= 0 ? Cursors.Hand : Cursors.Default;
+                Cursor = (hit >= 0 || overFooter) ? Cursors.Hand : Cursors.Default;
                 Invalidate();
             }
         }
@@ -120,6 +163,11 @@ namespace Installer
         {
             base.OnMouseDown(e);
             if (e.Button != MouseButtons.Left) return;
+            if (FooterText.Length > 0 && FooterClickable && FooterRect().Contains(e.Location))
+            {
+                if (FooterClicked != null) FooterClicked();
+                return;
+            }
             int hit = HitTest(e.Location);
             if (hit >= 0 && Activated != null) Activated(items[hit]);
         }
@@ -148,7 +196,48 @@ namespace Installer
                 DrawCard(g, i, r);
             }
 
+            DrawFooter(g, top, viewH);
             QueueVisible(top, viewH);
+            CheckNearEnd(top, viewH);
+        }
+
+        /// <summary>底部那一行：加载更多 / 正在加载 / 已到底。滚到看不见就不画。</summary>
+        private void DrawFooter(Graphics g, int top, int viewH)
+        {
+            if (FooterText.Length == 0) return;
+            Rectangle r = FooterRect();
+            if (r.Bottom < top || r.Top > top + viewH) return;
+
+            bool hot = hover == -2;
+            using (GraphicsPath p = Theme.Round(r, Dpi.S(10)))
+            {
+                using (SolidBrush b = new SolidBrush(hot ? Theme.SurfaceAlt : Theme.Surface)) g.FillPath(b, p);
+                using (Pen pen = new Pen(hot ? Theme.Accent : Theme.CardEdge))
+                {
+                    if (!FooterClickable) pen.DashStyle = DashStyle.Dash;
+                    g.DrawPath(pen, p);
+                }
+            }
+            TextRenderer.DrawText(g, FooterText, FooterClickable ? Theme.UIBold : Theme.UISmall, r,
+                FooterClickable ? Theme.Ink : Theme.Ink2,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+        }
+
+        /// <summary>
+        /// 快滑到底就通知调用方去取下一页。用 BeginInvoke 抛出去：这里还在 OnPaint 里，
+        /// 直接同步回调会在绘制过程中改 items / 改高度，容易画出半张墙或递归重绘。
+        /// </summary>
+        private void CheckNearEnd(int top, int viewH)
+        {
+            if (NearEnd == null || items.Count == 0 || !IsHandleCreated) return;
+            int rows = (items.Count + cols - 1) / cols;
+            if (rows <= 0) return;
+            int seenRows = (top + viewH) / Math.Max(1, cardH + gap);
+            if (seenRows < rows - 2) return;          // 还没滑到倒数第二行
+            if (nearRow == rows) return;              // 这一屏已经报过了
+            nearRow = rows;
+            try { BeginInvoke((MethodInvoker)delegate { if (NearEnd != null) NearEnd(); }); }
+            catch { }
         }
 
         private void DrawCard(Graphics g, int i, Rectangle r)
