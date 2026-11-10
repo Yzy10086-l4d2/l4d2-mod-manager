@@ -72,6 +72,16 @@ namespace Installer
             return cjk > 0 && cjk * 2 > latin;
         }
 
+        /// <summary>
+        /// 给界面显示的换行处理：WinForms 的 TextBox 只认 CRLF。
+        /// 只塞 LF 的话整段会挤成一行，列表符号和段落全丢 —— 详情面版看着像一段乱码。
+        /// </summary>
+        public static string ToDisplay(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Replace("\r\n", "\n").Replace("\n", "\r\n");
+        }
+
         /// <summary>缓存文件名用的 ID：工坊 ID 本身就是纯数字，这里只做一次保险。</summary>
         public static string SafeId(string id)
         {

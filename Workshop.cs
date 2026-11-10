@@ -958,6 +958,7 @@ namespace Installer
 
         // ---- 详情面板（右侧）----
         private readonly PictureBox pic = new PictureBox();
+        private readonly Label lblPicHint = new Label();   // 没有预览图时的占位说明（空白块看不出是坏还是没图）
         private readonly Label lblTitle2 = new Label();
         private readonly Label lblMeta = new Label();
         private readonly Label lblTags = new Label();
@@ -1186,6 +1187,15 @@ namespace Installer
             pic.BorderStyle = BorderStyle.FixedSingle;
             Controls.Add(pic);
 
+            lblPicHint.Text = "（左边选一条看介绍）";
+            lblPicHint.TextAlign = ContentAlignment.MiddleCenter;
+            lblPicHint.Font = Theme.UISmall;
+            lblPicHint.ForeColor = Theme.Ink3;
+            lblPicHint.BackColor = Theme.SurfaceAlt;
+            lblPicHint.AutoSize = false;
+            Controls.Add(lblPicHint);
+            lblPicHint.BringToFront();
+
             lblTitle2.Font = Theme.UIBold;
             lblTitle2.ForeColor = Theme.Ink;
             lblTitle2.AutoSize = false;
@@ -1298,6 +1308,8 @@ namespace Installer
 
             // 右栏详情
             pic.SetBounds(detailX, S(36), dw, S(196));
+            lblPicHint.SetBounds(detailX, S(36), dw, S(196));
+            lblPicHint.BringToFront();
             lblTitle2.SetBounds(detailX, S(240), dw, S(40));
             lblMeta.SetBounds(detailX, S(282), dw, S(18));
             lblTags.SetBounds(detailX, S(302), dw, S(18));
@@ -1462,11 +1474,13 @@ namespace Installer
 
             string clean = WsText.Clean(it.Desc);
             string cached = WsTranslate.ReadCache(it.Id, it.Updated);
-            txtDesc.Text = (showZh && cached != null) ? cached : (clean.Length > 0 ? clean : "（这个物品没有写介绍）");
+            txtDesc.Text = WsText.ToDisplay((showZh && cached != null) ? cached : (clean.Length > 0 ? clean : "（这个物品没有写介绍）"));
             btnLang.Text = showZh ? "看原文" : "看译文";
             btnLang.Enabled = clean.Length > 0;
 
             if (pic.Image != null) { Image old = pic.Image; pic.Image = null; old.Dispose(); }
+            lblPicHint.Visible = true;
+            lblPicHint.Text = sampleMode ? "（样例模式，不加载预览图）" : "（正在加载预览图…）";
 
             if (sampleMode) return;                 // 截图自检：样例数据不联网，免得截图等网络
 
@@ -1491,8 +1505,10 @@ namespace Installer
                     {
                         if (pic.Image != null) pic.Image.Dispose();
                         pic.Image = img;
+                        lblPicHint.Visible = false;
                     }
-                    if (showZh && zh != null && zh.Length > 0) txtDesc.Text = zh;
+                    else lblPicHint.Text = "（没有预览图）";
+                    if (showZh && zh != null && zh.Length > 0) txtDesc.Text = WsText.ToDisplay(zh);
                     else if (showZh && err != null) SetStatus(err);
                 });
             });
@@ -1511,6 +1527,8 @@ namespace Installer
             lblTags.Text = "";
             lblWhere.Text = "";
             txtDesc.Text = "";
+            lblPicHint.Visible = true;
+            lblPicHint.Text = "（左边选一条看介绍）";
             btnLang.Enabled = false;
             btnOpen.Enabled = false;
         }
