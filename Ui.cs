@@ -1908,36 +1908,76 @@ namespace Installer
             }
         }
 
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
+        private const uint PW_RENDERFULLCONTENT = 0x2;   // Win8.1+：抓 DWM 合成后的真实内容，被遮挡也照抓
+
         private void Shot(Form f, string name)
         {
+            // 三种抓法按可靠性排序：
+            // 1. PrintWindow+RENDERFULLCONTENT —— 取本窗口合成后的像素，被别的窗口盖住也照抓（用户在打游戏也行）
+            // 2. CopyFromScreen —— 拷屏幕，最真实但会被上层窗口污染
+            // 3. DrawToBitmap（WM_PRINT）—— 兜底；但对「滚动到可视区外的自绘内容」渲染不全，
+            //    实测卡片墙滚到底第 5 排在截图里是空白，几何日志却是对的 —— 只能当最后手段
+            if (ShotByPrintWindow(f, name)) return;
             try
             {
                 using (Bitmap b = new Bitmap(f.Width, f.Height))
                 {
-                    // 别用 DrawToBitmap：它走 WM_PRINT，对「滚动到可视区外的自绘内容」渲染不全
-                    // （实测：卡片墙滚到底，第 5 排和底部提示条在截图里是空白，几何日志却是对的）。
-                    // 直接拷屏幕像素，见到的才是用户见到的。
                     Point tl = f.PointToScreen(Point.Empty);
                     using (Graphics g = Graphics.FromImage(b))
                         g.CopyFromScreen(tl, Point.Empty, b.Size);
                     b.Save(System.IO.Path.Combine(Core.LogDir, name + ".png"), System.Drawing.Imaging.ImageFormat.Png);
                 }
-                Core.Log("INFO", "GAL 截图已保存 " + name + ".png（" + f.Width + "x" + f.Height + "）");
+                Core.Log("INFO", "GAL 截图(CopyFromScreen) " + name + ".png（" + f.Width + "x" + f.Height + "）");
+                return;
             }
-            catch (Exception ex)
+            catch (Exception ex) { Core.Log("WARN", "GAL 屏幕拷贝失败，退 DrawToBitmap: " + ex.Message); }
+            try
             {
-                // 屏幕拷贝可能被挡（窗口被盖住 / 无交互桌面），退回 DrawToBitmap 保底
-                try
+                using (Bitmap b = new Bitmap(f.Width, f.Height))
                 {
-                    using (Bitmap b = new Bitmap(f.Width, f.Height))
-                    {
-                        f.DrawToBitmap(b, new Rectangle(0, 0, b.Width, b.Height));
-                        b.Save(System.IO.Path.Combine(Core.LogDir, name + ".png"), System.Drawing.Imaging.ImageFormat.Png);
-                    }
-                    Core.Log("WARN", "GAL 截图(回退DrawToBitmap) " + name + ".png: " + ex.Message);
+                    f.DrawToBitmap(b, new Rectangle(0, 0, b.Width, b.Height));
+                    b.Save(System.IO.Path.Combine(Core.LogDir, name + ".png"), System.Drawing.Imaging.ImageFormat.Png);
                 }
-                catch (Exception ex2) { Core.Log("FAIL", "GAL 截图失败 " + name + ": " + ex2.Message); }
+                Core.Log("WARN", "GAL 截图(DrawToBitmap，可能缺滚动区) " + name + ".png");
             }
+            catch (Exception ex2) { Core.Log("FAIL", "GAL 截图失败 " + name + ": " + ex2.Message); }
+        }
+
+        private bool ShotByPrintWindow(Form f, string name)
+        {
+            try
+            {
+                if (!f.IsHandleCreated) return false;
+                using (Bitmap b = new Bitmap(f.Width, f.Height))
+                using (Graphics g = Graphics.FromImage(b))
+                {
+                    IntPtr hdc = g.GetHdc();
+                    bool ok = PrintWindow(f.Handle, hdc, PW_RENDERFULLCONTENT);
+                    g.ReleaseHdc(hdc);
+                    if (!ok) return false;
+                    // 全背景 = 抓了个寂寞（有的系统上 RenderFullContent 不可用会返回黑/白块）
+                    if (IsBlank(b)) return false;
+                    b.Save(System.IO.Path.Combine(Core.LogDir, name + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+                    Core.Log("INFO", "GAL 截图(PrintWindow) " + name + ".png（" + f.Width + "x" + f.Height + "）");
+                    return true;
+                }
+            }
+            catch (Exception ex) { Core.Log("WARN", "GAL PrintWindow 失败: " + ex.Message); return false; }
+        }
+
+        /// <summary>粗查是不是整片纯色（PrintWindow 不可用时的典型症状）。</summary>
+        private static bool IsBlank(Bitmap b)
+        {
+            Color c0 = b.GetPixel(5, 5);
+            for (int y = 10; y < b.Height; y += 24)
+                for (int x = 10; x < b.Width; x += 24)
+                {
+                    Color c = b.GetPixel(x, y);
+                    if (Math.Abs(c.R - c0.R) + Math.Abs(c.G - c0.G) + Math.Abs(c.B - c0.B) > 30) return false;
+                }
+            return true;
         }
 
         /// <summary>
