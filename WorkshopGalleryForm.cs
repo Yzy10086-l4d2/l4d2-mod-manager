@@ -143,6 +143,7 @@ namespace Installer
             // 快滑到底：还没到自动翻页上限就自己接着取，到了上限就把「加载更多」摆出来等用户点
             grid.NearEnd += delegate
             {
+                if (sampleMode) return;               // 样例没有下一页，别去真搜
                 if (busy || atEnd) return;
                 if (pagesLoaded < AutoPages) LoadMore();
                 else UpdateFooter();
@@ -702,18 +703,20 @@ namespace Installer
                 "（拿不到直链的那种条目）"
             };
             List<WsItem> items = new List<WsItem>();
-            for (int i = 0; i < names.Length; i++)
+            // 一页 30 个量级的样例：墙要比可视区高出一截，截图才验得了滚动和底部提示
+            for (int i = 0; i < 24; i++)
             {
+                string name = names[i % names.Length] + (i >= names.Length ? " #" + (i / names.Length + 1) : "");
                 WsItem w = new WsItem();
                 w.Id = (3832308500 + i).ToString();
-                w.Title = names[i];
-                w.Size = 3000000L * (i + 1);
-                w.Subs = 12400 - i * 1500;
-                w.Updated = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds - 86400 * (3 + i * 9);
+                w.Title = name;
+                w.Size = 3000000L * (i % names.Length + 1);
+                w.Subs = 12400 - (i % names.Length) * 1500;
+                w.Updated = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds - 86400 * (3 + (i % names.Length) * 9);
                 w.Tags = i % 2 == 0 ? "模型 · 角色" : "vscript · 玩法";
                 w.Url = "https://example.invalid/" + i + ".vpk";
                 w.Preview = "sample://" + i;      // 有这个标记才会铺样例色块，空的就是真·空态
-                w.Desc = "[h1]" + names[i] + "[/h1]\n[b]English description sample.[/b] "
+                w.Desc = "[h1]" + name + "[/h1]\n[b]English description sample.[/b] "
                        + "This is what the author wrote on the workshop page, several lines long, "
                        + "so the detail page has something to wrap and scroll.\n\n"
                        + "[list][*]First feature line\n[*]Second feature line\n[*]Third feature line[/list]\n\n"
@@ -768,6 +771,9 @@ namespace Installer
             }
             return b;
         }
+
+        /// <summary>自检用：直接把墙滚到指定位置（验证滚动是否真的移动内容）。</summary>
+        internal void ScrollForTest(int y) { host.ScrollTo(y); }
 
         /// <summary>自检用：直接打开第 index 个的详情页。超出范围就取最后一个（方便专门去看脏数据那条）。</summary>
         internal void ShowDetailForTest(int index)

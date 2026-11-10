@@ -1889,6 +1889,12 @@ namespace Installer
                 Application.DoEvents();
                 Application.DoEvents();
                 Shot(f, "gallery");
+                // 滚动验证：同一窗口滚一段再截一张 —— 两张图内容不同才说明滚动真的在动
+                f.ScrollForTest(Dpi.S(420));
+                Application.DoEvents();
+                Application.DoEvents();
+                Shot(f, "gallery-scrolled");
+                f.ScrollForTest(0);
                 f.ShowDetailForTest(0);
                 Application.DoEvents();
                 Application.DoEvents();
