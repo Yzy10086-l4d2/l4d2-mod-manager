@@ -3815,7 +3815,14 @@ namespace Installer
             int nv = Math.Max(0, Math.Min(MaxOffset, v));
             if (nv == offset) return;
             offset = nv;
-            if (body != null) body.Top = -offset;
+            if (body != null)
+            {
+                body.Top = -offset;
+                // 必须整体重绘：只挪位置的话，Windows 对子窗口做位块搬移，
+                // 搬的是「上一次画过的内容」。视口裁剪的自绘控件（卡片墙）在初始视口外的
+                // 表面从来没画过 —— 往下滚就会滚出一段空白， 直到有别的机会触发重绘。
+                body.Invalidate();
+            }
             Invalidate();
         }
 
