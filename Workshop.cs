@@ -247,7 +247,10 @@ namespace Installer
                     it.Url = JStr(o, "file_url");
                     it.FileName = JStr(o, "filename");
                     // 详情字段：同一个响应里本来就有，顺手全取下来（详情面板 + 中文翻译要用）
-                    it.Desc = JStr(o, "file_description");
+                    // 注意字段名：Steam 现在返回的是 description，早期文档里的 file_description 已经不再下发。
+                    // 只认后者的话，真实数据里所有物品的正文都会是空的（详情页统一显示「没有写介绍」）。
+                    it.Desc = JStr(o, "description");
+                    if (it.Desc.Length == 0) it.Desc = JStr(o, "file_description");
                     it.Preview = JStr(o, "preview_url");
                     it.Created = JNum(o, "time_created");
                     it.Updated = JNum(o, "time_updated");
@@ -724,6 +727,26 @@ namespace Installer
             }
             else { bad++; Core.Log("FAIL", "WS 详情字段：夹具没解析出来"); }
 
+            // 回归：Steam 现在下发的字段名是 description，不是 file_description。
+            // 上面那个夹具写的是老名字，所以「只认 file_description」的 bug 离线全绿、真实数据全空
+            // （详情页统一显示「这个物品没有写介绍」）。这里按真实字段名再验一遍，并且要求优先用它。
+            string realJson = "{\"response\":{\"publishedfiledetails\":[{\"publishedfileid\":\"445\",\"result\":1,"
+                            + "\"title\":\"AK\",\"description\":\"[b]正文[/b] 带换行\\n第二行\","
+                            + "\"preview_url\":\"\",\"tags\":[]}]}}";
+            List<string> rl = SplitObjects(realJson, "publishedfiledetails");
+            if (rl.Count == 1)
+            {
+                string d1 = JStr(rl[0], "description");
+                if (d1.Length == 0) d1 = JStr(rl[0], "file_description");
+                if (d1.IndexOf("正文") < 0 || d1.IndexOf("\n") < 0)
+                {
+                    bad++;
+                    Core.Log("FAIL", "WS 真实字段名 description 解析不对：" + d1.Replace("\n", "\\n"));
+                }
+                else Core.Log("INFO", "WS 真实字段名 description 解析正常（含 \\n 转义）");
+            }
+            else { bad++; Core.Log("FAIL", "WS description 夹具没解析出来"); }
+
             // BBCode 清洗：标签清干净、小标题与列表符号保留、链接只留文字
             string cleaned = WsText.Clean("[h1]Title[/h1][b]Bold[/b][list][*]one\n[*]two[/list][url=http://x]link[/url]");
             if (cleaned.IndexOf('[') >= 0 || cleaned.IndexOf("■ Title") < 0
@@ -859,6 +882,23 @@ namespace Installer
                 return 1;
             }
             Core.Log("INFO", "WSNET " + it.Id + "「" + it.Title + "」" + Core.Human(it.Size));
+
+            // 正文是详情页的主体，必须拿真实数据验一次：上一版字段名写错（file_description），
+            // 离线自检全绿，但真实数据里全都是空串，详情页统一显示「这个物品没有写介绍」。
+            string rawDesc = it.Desc == null ? "" : it.Desc;
+            string cleanDesc = WsText.Clean(rawDesc);
+            Core.Log("INFO", "WSNET 正文 原文 " + rawDesc.Length + " 字 / 清洗后 " + cleanDesc.Length + " 字");
+            if (rawDesc.Length == 0)
+            {
+                bad++;
+                Core.Log("FAIL", "WSNET 正文是空的 —— 接口字段名可能又变了");
+            }
+            else if (cleanDesc.Length == 0)
+            {
+                bad++;
+                Core.Log("FAIL", "WSNET 正文清洗后变空 —— BBCode 清洗器把内容吃掉了");
+            }
+            else Core.Log("INFO", "WSNET 正文前 40 字：" + cleanDesc.Substring(0, Math.Min(40, cleanDesc.Length)).Replace("\n", " "));
 
             string tmp = Path.Combine(Path.GetTempPath(), "ws_" + id + ".vpk");
             string rn = null;
