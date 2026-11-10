@@ -1904,6 +1904,11 @@ namespace Installer
                 Application.DoEvents();
                 Application.DoEvents();
                 Shot(f, "gallery-nopreview");
+                // 骨架屏：搜索中应该立刻有占位卡，而不是一面空墙
+                f.SkeletonForTest(12);
+                Application.DoEvents();
+                Application.DoEvents();
+                Shot(f, "gallery-skeleton");
                 f.Close();
             }
         }

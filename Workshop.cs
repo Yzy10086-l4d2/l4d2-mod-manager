@@ -559,6 +559,38 @@ namespace Installer
         // ---------------------------------------------------------- 落盘
 
         /// <summary>下载目录。U 盘模式放主库，本地模式直接放游戏 addons（本地模式就是直接管游戏目录）。</summary>
+        /// <summary>
+        /// 下载记录：工坊 ID → 落盘文件名。画廊打开时预扫它给卡片标「已下载」。
+        /// 只增不改；旧的按标题改名的历史下载没有 ID，标不出来（诚实胜过猜）。
+        /// </summary>
+        internal static string IdMapPath { get { return Path.Combine(Core.LogDir, "workshop-idmap.txt"); } }
+
+        internal static void RememberDownload(string id, string fileName)
+        {
+            try
+            {
+                Directory.CreateDirectory(Core.LogDir);
+                File.AppendAllText(IdMapPath, (id ?? "").Trim() + "|" + (fileName ?? "").Trim() + "\r\n", Encoding.UTF8);
+            }
+            catch { }
+        }
+
+        internal static HashSet<string> LoadDownloadedIds()
+        {
+            HashSet<string> set = new HashSet<string>(StringComparer.Ordinal);
+            try
+            {
+                if (!File.Exists(IdMapPath)) return set;
+                foreach (string line in File.ReadAllLines(IdMapPath, Encoding.UTF8))
+                {
+                    int bar = line.IndexOf('|');
+                    if (bar > 0) set.Add(line.Substring(0, bar).Trim());
+                }
+            }
+            catch { }
+            return set;
+        }
+
         public static string DestDir()
         {
             string root;
@@ -1714,6 +1746,16 @@ namespace Installer
             btnParse.Enabled = false;
             lv.Items.Clear();
             items.Clear();
+            // 骨架行：搜索中列表不再是空的，进度看得见
+            for (int i = 0; i < 8; i++)
+            {
+                ListViewItem ph = new ListViewItem("…………");
+                ph.SubItems.Add("");
+                ph.SubItems.Add("");
+                ph.SubItems.Add("加载中");
+                ph.ForeColor = Theme.Ink3;
+                lv.Items.Add(ph);
+            }
             SetStatus("正在搜索「" + (q.Length == 0 ? "全部" : q) + "」第 " + p + " 页…");
 
             Thread t = new Thread(delegate()
@@ -1920,6 +1962,7 @@ namespace Installer
                             dest = Path.Combine(dir, rn);
                         }
                         it.SavedAs = Path.GetFileName(dest);
+                        RememberDownload(it.Id, it.SavedAs);
                         done.Add(it);
                         SetRowState(it, "已下载 " + Core.Human(it.Size) + (rn != null ? "，已改名 " + Clip(rn, 16) : ""));
                         Core.Log("OK", "工坊：已下载 " + it.Id + " → " + dest);

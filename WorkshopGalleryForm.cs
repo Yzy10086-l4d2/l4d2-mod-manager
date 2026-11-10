@@ -51,9 +51,15 @@ namespace Installer
 
         const int PageSize = 30;        // 工坊 browse 一页固定 30 个，用它判断到底
         const int AutoPages = 3;        // 自动连翻的页数上限，再多就等用户点（别一口气拉十页）
+        const int SkeletonSearch = 12;  // 搜索中的骨架卡数（约铺满一屏）
+        const int SkeletonAppend = 5;   // 翻页中的骨架卡数
         private int pagesLoaded;        // 本次搜索已经加载了几页
         private bool atEnd;             // 已到底
         private readonly HashSet<string> seenIds = new HashSet<string>(StringComparer.Ordinal);
+        private List<WsItem> prefetched;    // 预扫好的下一页（含缩略图预热），滑到底直接上墙
+        private int prefetchedPage;
+        private volatile bool prefetching;
+        private int searchGen;              // 搜索条件代数：换条件后，在途的预取作废
         private WsItem detailItem;
         private int page = 1;
         private volatile bool busy;
@@ -257,6 +263,16 @@ namespace Installer
 
             ApplyLayout();
             if (cboCat.Items.Count > 0) cboCat.SelectedIndex = 0;
+
+            // 预扫本地下载记录：卡片直接标「已下载」，不用等用户点开才发现重复
+            foreach (string id in Workshop.LoadDownloadedIds())
+                grid.DownloadedIds.Add(id);
+
+            // 打开画廊就预载第一页，别让用户面对一面空墙自己找按钮
+            Shown += delegate
+            {
+                if (!sampleMode && grid.Items.Count == 0 && !busy) DoSearch(1);
+            };
         }
 
         private void ApplyLayout()
@@ -346,18 +362,35 @@ namespace Installer
         private void DoSearch(int p)
         {
             if (busy) return;
+            searchGen++;                       // 换条件：在途的预取全部作废
+            prefetched = null;
             seenIds.Clear();
             atEnd = false;
             pagesLoaded = 0;
+            grid.SetItems(new List<WsItem>()); // 旧结果连图一起清（换搜索了）
+            grid.ShowSkeleton(SkeletonSearch); // 立刻铺骨架，别让人对着空墙猜
             grid.FooterText = "";
             grid.FooterClickable = false;
+            lblStatus.Text = "正在搜工坊…";
             LoadPage(p, false);
         }
 
-        /// <summary>往后翻一页（追加，不清空）。</summary>
+        /// <summary>往后翻一页（追加，不清空）。预扫好的数据直接上墙，不用再等网络。</summary>
         private void LoadMore()
         {
             if (busy || atEnd) return;
+            if (prefetched != null && prefetchedPage == page + 1)
+            {
+                List<WsItem> batch = prefetched;
+                prefetched = null;
+                page++;
+                pagesLoaded++;
+                grid.AppendItems(batch);       // AppendItems 会撤掉骨架
+                if (batch.Count < PageSize) atEnd = true;
+                UpdateFooter();
+                KickPrefetch();                // 接着预扫下一页
+                return;
+            }
             LoadPage(page + 1, true);
         }
 
@@ -380,7 +413,12 @@ namespace Installer
             btnSearch.Enabled = false;
             btnMore.Enabled = false;
             if (!append) lblStatus.Text = "正在搜工坊…";
-            if (append) { grid.FooterText = "正在加载…"; grid.FooterClickable = false; RelayoutWall(); }
+            if (append)
+            {
+                grid.FooterText = "正在加载…";
+                grid.FooterClickable = false;
+                grid.ShowSkeleton(SkeletonAppend);   // 骨架跟在已有卡片后面，等待看得见
+            }
 
             Thread t = new Thread(delegate()
             {
@@ -416,11 +454,12 @@ namespace Installer
                     atEnd = idCount < PageSize || fresh.Count == 0;
                     pagesLoaded = append ? pagesLoaded + 1 : 1;
 
+                    grid.HideSkeleton();
                     if (append) grid.AppendItems(fresh);
                     else { grid.SetItems(fresh); ShowGallery(); host.ScrollTo(0); }
 
                     UpdateFooter();
-                    RelayoutWall();
+                    KickPrefetch();
                     if (grid.Items.Count == 0)
                         lblStatus.Text = "没搜到。换个词试试，或把「分类」切到「全部物品」。";
                 });
@@ -471,6 +510,55 @@ namespace Installer
             // 底部提示条改高改矮都会影响墙的总高度，必须跟着重算 ——
             // 少了这一步，提示文字就算写好了也会被控件边界裁掉（第一版就是这么不显示的）。
             RelayoutWall();
+        }
+
+        /// <summary>
+        /// 预扫下一页：数据 + 元数据 + 缩略图全部提前备好。
+        /// 只预取一页、失败静默、换搜索条件即作废 —— 克制，不把 Steam 刷狠了。
+        /// 滑到底触发加载时，预扫好的直接上墙，0 网络等待。
+        /// </summary>
+        private void KickPrefetch()
+        {
+            if (atEnd || busy || prefetching) return;
+            if (prefetched != null && prefetchedPage == page + 1) return;   // 已经备好
+            int gen = searchGen;
+            GalChoice c = cboCat.SelectedItem as GalChoice;
+            string q = txtQuery.Text.Trim();
+            if (q.Length == 0 && c != null) q = c.Query;
+            GalChoice so = cboSort.SelectedItem as GalChoice;
+            string sort = so == null ? "mostsubscribed" : so.Sort;
+            int p = page + 1;
+            prefetching = true;
+
+            Thread t = new Thread(delegate()
+            {
+                List<WsItem> got = null;
+                string err = null;
+                try
+                {
+                    List<string> ids = Workshop.Search(q, sort, p);
+                    got = ids.Count == 0 ? new List<WsItem>() : Workshop.Fetch(ids);
+                }
+                catch (Exception ex) { err = ex.Message; }
+
+                Ui(delegate()
+                {
+                    prefetching = false;
+                    if (gen != searchGen) return;                  // 条件变了，这批扔掉
+                    if (err != null) { Core.Log("WARN", "画廊预扫第 " + p + " 页失败（静默）: " + err); return; }
+                    List<WsItem> fresh = new List<WsItem>();
+                    foreach (WsItem one in got)
+                        if (one != null && seenIds.Add(one.Id)) fresh.Add(one);
+                    if (fresh.Count == 0) return;
+                    prefetched = fresh;
+                    prefetchedPage = p;
+                    grid.PrimeThumbs(fresh);                       // 缩略图也提前下好
+                    Core.Log("INFO", "画廊：预扫第 " + p + " 页完成（" + fresh.Count + " 个，缩略图已预热）");
+                });
+            });
+            t.IsBackground = true;
+            t.Priority = ThreadPriority.BelowNormal;
+            t.Start();
         }
 
         private void RelayoutWall()
@@ -545,6 +633,8 @@ namespace Installer
                 return;
             }
             int pw = picHero.Width, ph = picHero.Height;
+            if (detailClean.Length > 0 && detailZh == null)
+                lblState.Text = "正文是英文，正在翻成中文…（点「看原文」可先看）";
             Thread t = new Thread(delegate()
             {
                 Image img = WsThumb.LoadCover(it.Preview, it.Id, pw, ph);
@@ -621,10 +711,13 @@ namespace Installer
                     string rn = Workshop.RenameToAddonTitle(dest);
                     if (rn != null) dest = Path.Combine(dir, rn);
                     string name = Path.GetFileName(dest);
+                    Workshop.RememberDownload(it.Id, name);          // 记 id→文件名，下次打开画廊卡片直接标「已下载」
                     Ui(delegate()
                     {
                         busy = false;
                         btnGet.Enabled = true;
+                        grid.DownloadedIds.Add(it.Id);
+                        grid.Invalidate();
                         lblState.Text = "已下载到库里：" + name + "（关窗后在方案树里找它）";
                     });
                     Core.Log("OK", "画廊：下载 " + it.Id + " → " + dest);
@@ -770,6 +863,14 @@ namespace Installer
                     g.DrawString(caption, new Font("Microsoft YaHei UI", 34F, FontStyle.Bold), tb, new PointF(40, h / 2 - 34));
             }
             return b;
+        }
+
+        /// <summary>自检用：铺骨架占位卡（验证「搜索中」的状态看得见）。</summary>
+        internal void SkeletonForTest(int n)
+        {
+            grid.SetItems(new List<WsItem>());
+            grid.ShowSkeleton(n);
+            lblStatus.Text = "正在搜工坊…（骨架态截图）";
         }
 
         /// <summary>自检用：直接把墙滚到指定位置（验证滚动是否真的移动内容），并把关键几何打进日志。</summary>

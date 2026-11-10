@@ -49,6 +49,37 @@ namespace Installer
         /// <summary>样例模式：不联网，用代码画的色块占位，截图自检才能看出卡片排得对不对。</summary>
         public bool SampleMode;
 
+        /// <summary>骨架屏：>0 时在真实卡片后面铺这么多张占位卡（搜索中 / 翻页中）。</summary>
+        public int SkeletonCount;
+
+        /// <summary>本地库里已经下载过的工坊 ID —— 卡片标「已下载」用，打开窗口时预扫 idmap 填进来。</summary>
+        public readonly HashSet<string> DownloadedIds = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>真实卡片 + 骨架卡的总数（排版和视口判断都用它）。</summary>
+        private int TotalCount { get { return items.Count + SkeletonCount; } }
+
+        /// <summary>
+        /// 预扫：把还没滑到的卡片缩略图先排进下载队列（排在队尾，不抢视口内的）。
+        /// 用户滑到时图已在缓存里，卡片秒出图。
+        /// </summary>
+        public void PrimeThumbs(List<WsItem> list)
+        {
+            if (SampleMode || list == null) return;
+            bool added = false;
+            foreach (WsItem it in list)
+            {
+                if (it == null || it.Preview.Length == 0) continue;
+                lock (gate)
+                {
+                    if (imgs.ContainsKey(it.Id) || pending.Contains(it.Id)) continue;
+                    queue.Enqueue(it);
+                    pending.Add(it.Id);
+                }
+                added = true;
+            }
+            if (added) EnsureWorker();
+        }
+
         /// <summary>当前墙上所有的条目（调用方别再自己存一份，容易和追加对不上）。</summary>
         public IList<WsItem> Items { get { return items; } }
 
@@ -66,6 +97,7 @@ namespace Installer
             items = list == null ? new List<WsItem>() : list;
             hover = -1;
             nearRow = -1;
+            SkeletonCount = 0;
             lock (gate)
             {
                 foreach (Image im in imgs.Values) if (im != null) im.Dispose();
@@ -85,7 +117,30 @@ namespace Installer
             if (more == null || more.Count == 0) return;
             items.AddRange(more);
             hover = -1;
+            SkeletonCount = 0;
             nearRow = -1;                       // 行数变了，允许再报一次「快到底」
+            Relayout();
+            ScrollHost h = Parent as ScrollHost;
+            if (h != null) h.Relayout();
+            Invalidate();
+        }
+
+        /// <summary>铺骨架占位卡（搜索开始时调用）。</summary>
+        public void ShowSkeleton(int n)
+        {
+            SkeletonCount = Math.Max(0, n);
+            hover = -1;
+            Relayout();
+            ScrollHost h = Parent as ScrollHost;
+            if (h != null) h.Relayout();
+            Invalidate();
+        }
+
+        /// <summary>撤掉骨架（结果到了调用）。</summary>
+        public void HideSkeleton()
+        {
+            if (SkeletonCount == 0) return;
+            SkeletonCount = 0;
             Relayout();
             ScrollHost h = Parent as ScrollHost;
             if (h != null) h.Relayout();
@@ -102,7 +157,7 @@ namespace Installer
             cardW = (w - gap * (cols - 1)) / cols;
             imgH = cardW * 9 / 16;
             cardH = imgH + Dpi.S(8) + Dpi.S(40) + Dpi.S(18);
-            int rows = (items.Count + cols - 1) / cols;
+            int rows = (TotalCount + cols - 1) / cols;
             int footH = FooterText.Length > 0 ? Dpi.S(64) : 0;
             int h = Math.Max(Dpi.S(60), rows * (cardH + gap) + gap + footH);
             if (Height != h) Height = h;
@@ -157,7 +212,7 @@ namespace Installer
         /// <summary>底部那一行「加载更多 / 正在加载 / 已到底」的位置：最后一行卡片下面。</summary>
         private Rectangle FooterRect()
         {
-            int rows = (items.Count + cols - 1) / cols;
+            int rows = (TotalCount + cols - 1) / cols;
             int y = gap + rows * (cardH + gap);
             return new Rectangle(gap, y, Math.Max(0, Width - gap * 2), Dpi.S(48));
         }
@@ -197,7 +252,7 @@ namespace Installer
 
         private int HitTest(Point p)
         {
-            for (int i = 0; i < items.Count; i++)
+            for (int i = 0; i < items.Count; i++)          // 骨架卡点不了
                 if (CardRect(i).Contains(p)) return i;
             return -1;
         }
@@ -215,11 +270,13 @@ namespace Installer
             int top = -Top;
             int viewH = Parent != null ? Parent.ClientSize.Height : Height;
 
-            for (int i = 0; i < items.Count; i++)
+            int total = TotalCount;
+            for (int i = 0; i < total; i++)
             {
                 Rectangle r = CardRect(i);
                 if (r.Bottom < top - Dpi.S(40) || r.Top > top + viewH + Dpi.S(40)) continue;
-                DrawCard(g, i, r);
+                if (i >= items.Count) DrawSkeletonCard(g, r);
+                else DrawCard(g, i, r);
             }
 
             DrawFooter(g, top, viewH);
@@ -256,7 +313,7 @@ namespace Installer
         private void CheckNearEnd(int top, int viewH)
         {
             if (NearEnd == null || items.Count == 0 || !IsHandleCreated) return;
-            int rows = (items.Count + cols - 1) / cols;
+            int rows = (TotalCount + cols - 1) / cols;
             if (rows <= 0) return;
             int seenRows = (top + viewH) / Math.Max(1, cardH + gap);
             if (seenRows < rows - 2) return;          // 还没滑到倒数第二行
@@ -264,6 +321,26 @@ namespace Installer
             nearRow = rows;
             try { BeginInvoke((MethodInvoker)delegate { if (NearEnd != null) NearEnd(); }); }
             catch { }
+        }
+
+        /// <summary>骨架卡：灰底封面块 + 三条占位灰条。没有内容、点不了，只负责告诉用户「在加载」。</summary>
+        private void DrawSkeletonCard(Graphics g, Rectangle r)
+        {
+            using (GraphicsPath p = Theme.Round(r, Dpi.S(10)))
+            {
+                using (SolidBrush b = new SolidBrush(Theme.Surface)) g.FillPath(b, p);
+                using (Pen pen = new Pen(Theme.CardEdge)) g.DrawPath(pen, p);
+            }
+            Rectangle ir = new Rectangle(r.X + 1, r.Y + 1, r.Width - 2, imgH);
+            using (SolidBrush b = new SolidBrush(Theme.SurfaceAlt)) g.FillRectangle(b, ir);
+            using (SolidBrush b = new SolidBrush(Theme.Chip))
+            {
+                int tx = r.X + Dpi.S(10);
+                int w = r.Width - Dpi.S(20);
+                g.FillRectangle(b, tx, ir.Bottom + Dpi.S(10), (int)(w * 0.72), Dpi.S(11));
+                g.FillRectangle(b, tx, ir.Bottom + Dpi.S(27), (int)(w * 0.46), Dpi.S(11));
+                g.FillRectangle(b, tx, ir.Bottom + Dpi.S(46), (int)(w * 0.3), Dpi.S(9));
+            }
         }
 
         private void DrawCard(Graphics g, int i, Rectangle r)
@@ -308,9 +385,12 @@ namespace Installer
             if (it.Subs > 0) meta += "订阅 " + WsText.Compact(it.Subs);
             if (it.Size > 0) meta += (meta.Length > 0 ? "  ·  " : "") + Core.Human(it.Size);
             if (meta.Length == 0) meta = it.IsCollection ? "合集" : "ID " + it.Id;
+            bool owned = DownloadedIds.Contains(it.Id);
+            if (owned) meta += (meta.Length > 0 ? "  ·  " : "") + "已下载";
             TextRenderer.DrawText(g, meta, Theme.UISmall,
                 new Rectangle(r.X + Dpi.S(10), tr.Bottom, r.Width - Dpi.S(20), Dpi.S(16)),
-                Theme.Ink3, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+                owned ? Theme.Ok : Theme.Ink3,
+                TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
         }
 
         /// <summary>取已缓存的缩略图；没有返回 null。锁住读，避免撞上后台线程正在写。</summary>
