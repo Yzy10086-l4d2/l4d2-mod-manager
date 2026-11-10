@@ -1075,6 +1075,7 @@ namespace Installer
         private readonly ComboBox cboSort = new ComboBox();
         private readonly FlatButton btnSearch = new FlatButton();
         private readonly FlatButton btnMore = new FlatButton();
+        private readonly FlatButton btnPrev = new FlatButton();     // 翻回去：原来只能往后翻，翻过头就回不来
         private string lastQuery = "";
         private int page = 1;
         private int lastResultCount;
@@ -1256,6 +1257,11 @@ namespace Installer
             btnMore.Click += delegate { DoSearch(page + 1); };
             Controls.Add(btnMore);
 
+            btnPrev.Text = "上一页";
+            btnPrev.Enabled = false;
+            btnPrev.Click += delegate { if (page > 1) DoSearch(page - 1); };
+            Controls.Add(btnPrev);
+
             btnClose.Text = "关闭";
             btnClose.DialogResult = DialogResult.Cancel;
             Controls.Add(btnClose);
@@ -1375,7 +1381,10 @@ namespace Installer
             btnAll.SetBounds(m + S(120), btnY, S(56), bh);
             btnNone.SetBounds(m + S(184), btnY, S(72), bh);
             btnRetry.SetBounds(m + S(264), btnY, S(88), bh);
-            btnMore.SetBounds(m + S(360), btnY, S(72), bh);
+            // 两个翻页键在左栏里右对齐：左栏多窄都不会压到「重试失败」上
+            int pageW = S(64), pageGap = S(6);
+            btnMore.SetBounds(detailX - gap - pageW, btnY, pageW, bh);
+            btnPrev.SetBounds(detailX - gap - pageW - pageGap - pageW, btnY, pageW, bh);
             btnClose.SetBounds(W - m - S(88), btnY, S(88), bh);
 
             lblStatus.SetBounds(m, statusTop, leftW, S(18));
@@ -1735,6 +1744,7 @@ namespace Installer
                     SetStatus("第 " + p + " 页：" + items.Count + " 个结果，可下载 " + can + " 个"
                             + (count >= 30 ? "。还有下一页" : "。没有更多了"));
                     btnMore.Enabled = count >= 30;
+                    btnPrev.Enabled = p > 1;
                     btnStart.Enabled = can > 0;
                 });
             });
