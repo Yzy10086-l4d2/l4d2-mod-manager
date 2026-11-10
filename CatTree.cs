@@ -3878,17 +3878,7 @@ namespace Installer
             Invalidate();
         }
 
-        /// <summary>
-        /// 滚轮。WinForms 的 WM_MOUSEWHEEL 是发给「有焦点的控件」的，
-        /// 鼠标停在宿主上、焦点却在别处时，子控件根本收不到 —— 这里宿主自己也接一份。
-        /// </summary>
-        protected override void OnMouseWheel(MouseEventArgs e)
-        {
-            if (CanScroll) { ScrollTo(offset - e.Delta); return; }
-            base.OnMouseWheel(e);
-        }
-
-        /// <summary>键盘滚：PageUp/PageDown/Home/End（子控件拿到焦点时用）。</summary>
+        /// <summary>键盘滚：PageUp/PageDown/Home/End（子控件拿到焦点时用；滚轮见下面原有的 OnMouseWheel）。</summary>
         internal void ScrollByKey(Keys key)
         {
             int page = Math.Max(1, ClientSize.Height - Dpi.S(60));
