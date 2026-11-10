@@ -272,6 +272,7 @@ namespace Installer
                                        Color.FromArgb(70, 110, 92), Color.FromArgb(96, 74, 130) };
             for (int i = 0; i < items.Count; i++)
             {
+                if (items[i].Preview.Length == 0) continue;   // 本来就没预览图的，让它走空态，别拿色块盖住
                 Bitmap b = new Bitmap(ThumbW, ThumbH);
                 using (Graphics g = Graphics.FromImage(b))
                 {

@@ -1893,6 +1893,11 @@ namespace Installer
                 Application.DoEvents();
                 Application.DoEvents();
                 Shot(f, "gallery-detail");
+                // 第三条：脏数据（没有预览图 / 没有介绍 / 没有直链）的空态，看占位文案会不会缺
+                f.ShowDetailForTest(int.MaxValue);
+                Application.DoEvents();
+                Application.DoEvents();
+                Shot(f, "gallery-nopreview");
                 f.Close();
             }
         }

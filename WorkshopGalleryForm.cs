@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Threading;
 using System.Windows.Forms;
@@ -28,9 +29,12 @@ namespace Installer
         private readonly Label lblTags = new Label();
         private readonly Label lblState = new Label();
         private readonly TextBox txtDesc = new TextBox();
+        private readonly Panel descBox = new Panel();          // 正文的容器：给 TextBox 补内边距 + 一圈细边
+        private readonly Label lblHeroHint = new Label();      // 大图没加载出来时的说明（空白块看不出是没图还是坏了）
         private readonly FlatButton btnBack = new FlatButton();
         private readonly FlatButton btnOpen = new FlatButton();
         private readonly FlatButton btnGet = new FlatButton();
+        private readonly FlatButton btnLang = new FlatButton();   // 原文 / 译文 切换
 
         private readonly ComboBox cboCat = new ComboBox();
         private readonly TextBox txtQuery = new TextBox();
@@ -51,6 +55,9 @@ namespace Installer
         private int detailToken;
         private bool showZh = true;
         private bool sampleMode;
+        private string detailClean = "";      // 清洗后的原文：切原文/译文时不用重新计算
+        private string detailZh;              // 译文（null = 还没翻好）
+        private Bitmap sampleHero;            // 样例模式的大图（截图里能看出等比缩放对不对）
 
         /// <summary>下拉项：跟列表窗口那个私有的 CatChoice 分开，免得撞上命名空间里同名的那个。</summary>
         private sealed class GalChoice
@@ -138,6 +145,16 @@ namespace Installer
             picHero.BorderStyle = BorderStyle.FixedSingle;
             detail.Controls.Add(picHero);
 
+            // 说明文字挂成 picHero 的子控件：父控件总把自己的子控件画在自己的图上面，
+            // 不依赖 z-order，也不用 BringToFront（列表窗口那次用兄弟控件 + BringToFront 没生效）
+            lblHeroHint.Text = "（点卡片看介绍）";
+            lblHeroHint.TextAlign = ContentAlignment.MiddleCenter;
+            lblHeroHint.Font = Theme.UISmall;
+            lblHeroHint.ForeColor = Theme.Ink2;
+            lblHeroHint.BackColor = Color.Transparent;
+            lblHeroHint.AutoSize = false;
+            picHero.Controls.Add(lblHeroHint);
+
             lblTitle.Font = Theme.UIBold;
             lblTitle.ForeColor = Theme.Ink;
             lblTitle.AutoSize = false;
@@ -165,9 +182,20 @@ namespace Installer
             txtDesc.ReadOnly = true;
             txtDesc.ScrollBars = ScrollBars.Vertical;
             txtDesc.WordWrap = true;
-            txtDesc.BorderStyle = BorderStyle.FixedSingle;
+            txtDesc.BorderStyle = BorderStyle.None;      // 边和留白交给外面的 descBox
             Theme.Dress(txtDesc);
-            detail.Controls.Add(txtDesc);
+            txtDesc.Dock = DockStyle.Fill;
+
+            // TextBox 本身没有 Padding，塞进一个带内边距的面板才不至于文字贴边
+            descBox.BackColor = Theme.Surface;
+            descBox.Padding = new Padding(S(12), S(10), S(4), S(10));
+            descBox.Paint += delegate(object s2, PaintEventArgs e2)
+            {
+                using (Pen p = new Pen(Theme.CardEdge))
+                    e2.Graphics.DrawRectangle(p, 0, 0, descBox.Width - 1, descBox.Height - 1);
+            };
+            descBox.Controls.Add(txtDesc);
+            detail.Controls.Add(descBox);
 
             btnBack.Text = "← 返回";
             btnBack.Click += delegate { ShowGallery(); };
@@ -181,6 +209,10 @@ namespace Installer
             btnOpen.Text = "在浏览器打开";
             btnOpen.Click += delegate { OpenInBrowser(); };
             detail.Controls.Add(btnOpen);
+
+            btnLang.Text = "看原文";
+            btnLang.Click += delegate { showZh = !showZh; RenderDesc(); UpdateLangButton(); };
+            detail.Controls.Add(btnLang);
 
             // ---- 底部 ----
             lblStatus.Font = Theme.UISmall;
@@ -240,18 +272,24 @@ namespace Installer
             lblStatus.SetBounds(m, by + S(6), Math.Max(S(160), (W - m - S(56) * 2 - S(24)) - m), S(18));
 
             // 详情页内部
+            // 大图高度跟着窗口走：窗口矮的时候（最小 940×600）固定 300 会把正文挤成十几像素、
+            // 还会被 Math.Max(80) 撑起来压到按钮上。留出下面这几行的固定开销，剩下的才给大图。
             int dw = detail.ClientSize.Width, dh = detail.ClientSize.Height;
-            picHero.SetBounds(0, 0, dw, S(300));
-            lblTitle.SetBounds(0, S(310), dw, S(46));
-            lblMeta.SetBounds(0, S(358), dw, S(18));
-            lblTags.SetBounds(0, S(378), dw, S(18));
-            lblState.SetBounds(0, S(398), dw, S(18));
-            int descTop = S(422);
+            int heroH = Math.Min(S(300), Math.Max(S(140), dh - S(300)));
+            picHero.SetBounds(0, 0, dw, heroH);
+            lblHeroHint.SetBounds(0, 0, picHero.ClientSize.Width, picHero.ClientSize.Height);   // 子控件坐标：相对 picHero
+            int ty = heroH + S(10);
+            lblTitle.SetBounds(0, ty, dw, S(46));
+            lblMeta.SetBounds(0, ty + S(48), dw, S(18));
+            lblTags.SetBounds(0, ty + S(68), dw, S(18));
+            lblState.SetBounds(0, ty + S(88), dw, S(18));
+            int descTop = ty + S(112);
             int btnY = dh - S(34);
-            txtDesc.SetBounds(0, descTop, dw, Math.Max(S(80), btnY - S(10) - descTop));
+            descBox.SetBounds(0, descTop, dw, Math.Max(S(60), btnY - S(10) - descTop));
             btnBack.SetBounds(0, btnY, S(88), S(32));
             btnGet.SetBounds(S(96), btnY, S(124), S(32));
             btnOpen.SetBounds(S(228), btnY, S(120), S(32));
+            btnLang.SetBounds(dw - S(96), btnY, S(96), S(32));
         }
 
         // ---------------------------------------------------------- 找
@@ -341,6 +379,10 @@ namespace Installer
             host.Visible = true;
             detailItem = null;
             detailToken++;
+            // 翻页和「第 N 页」是卡片墙的东西，回详情页时不该跟着亮
+            btnPrev.Visible = true;
+            btnNext.Visible = true;
+            lblStatus.Visible = true;
             grid.Relayout();
             host.Relayout();
         }
@@ -353,6 +395,9 @@ namespace Installer
             host.Visible = false;
             detail.Visible = true;
             detail.BringToFront();
+            btnPrev.Visible = false;         // 详情页是一屏独立页面，翻页按钮属于卡片墙
+            btnNext.Visible = false;
+            lblStatus.Visible = false;
 
             lblTitle.Text = it.Title.Length > 0 ? it.Title : "(无标题)";
             string meta = "";
@@ -366,23 +411,31 @@ namespace Installer
             btnGet.Enabled = !it.IsCollection && it.Url.Length > 0;
 
             if (picHero.Image != null) { Image old = picHero.Image; picHero.Image = null; old.Dispose(); }
+            lblHeroHint.Visible = true;
+            lblHeroHint.Text = it.Preview.Length == 0 ? "（这个物品没有预览图）" : "（正在加载预览图…）";
 
-            string clean = WsText.Clean(it.Desc);
-            string cached = WsTranslate.ReadCache(it.Id, it.Updated);
-            txtDesc.Text = WsText.ToDisplay(
-                (showZh && cached != null) ? cached : (clean.Length > 0 ? clean : "（这个物品没有写介绍）"));
+            detailClean = WsText.Clean(it.Desc);
+            detailZh = WsTranslate.ReadCache(it.Id, it.Updated);
+            RenderDesc();
+            UpdateLangButton();
 
-            if (sampleMode) return;
+            if (sampleMode)
+            {
+                // 样例模式不联网：用造出来的大图代替，好让截图能看出等比缩放与留白
+                if (sampleHero != null && it.Preview.Length > 0)
+                {
+                    picHero.Image = (Image)sampleHero.Clone();
+                    lblHeroHint.Visible = false;
+                }
+                return;
+            }
             int pw = picHero.Width, ph = picHero.Height;
             Thread t = new Thread(delegate()
             {
                 Image img = WsThumb.Load(it.Preview, it.Id, pw, ph);
-                string zh = null, err = null;
-                if (clean.Length > 0)
-                {
-                    zh = WsTranslate.ReadCache(it.Id, it.Updated);
-                    if (zh == null) zh = WsTranslate.Translate(it.Id, it.Updated, clean, out err);
-                }
+                string zh = detailZh, err = null;
+                if (detailClean.Length > 0 && zh == null)
+                    zh = WsTranslate.Translate(it.Id, it.Updated, detailClean, out err);
                 Ui(delegate()
                 {
                     if (token != detailToken) { if (img != null) img.Dispose(); return; }
@@ -390,14 +443,38 @@ namespace Installer
                     {
                         if (picHero.Image != null) picHero.Image.Dispose();
                         picHero.Image = img;
+                        lblHeroHint.Visible = false;
                     }
-                    if (showZh && zh != null && zh.Length > 0) txtDesc.Text = WsText.ToDisplay(zh);
-                    else if (showZh && err != null) lblState.Text = err;
+                    else if (it.Preview.Length > 0) lblHeroHint.Text = "（预览图加载失败，先在浏览器里看）";
+
+                    if (zh != null && zh.Length > 0) { detailZh = zh; RenderDesc(); UpdateLangButton(); }
+                    else if (err != null) lblState.Text = err;
                 });
             });
             t.IsBackground = true;
             t.Priority = ThreadPriority.BelowNormal;
             t.Start();
+        }
+
+        /// <summary>按当前「原文 / 译文」选择把正文填进框里。两处都要走 ToDisplay：TextBox 只认 CRLF。</summary>
+        private void RenderDesc()
+        {
+            if (detailItem == null) { txtDesc.Text = ""; return; }
+            if (showZh && detailZh != null && detailZh.Length > 0)
+                txtDesc.Text = WsText.ToDisplay(detailZh);
+            else if (detailClean.Length > 0)
+                txtDesc.Text = WsText.ToDisplay(detailClean);
+            else
+                txtDesc.Text = WsText.ToDisplay("（这个物品没有写介绍）");
+            try { txtDesc.SelectionStart = 0; txtDesc.SelectionLength = 0; } catch { }
+        }
+
+        /// <summary>没有译文时按钮就没意义 —— 灰掉，别让人点了没反应。</summary>
+        private void UpdateLangButton()
+        {
+            bool has = detailZh != null && detailZh.Length > 0;
+            btnLang.Enabled = has;
+            btnLang.Text = showZh ? "看原文" : "看译文";
         }
 
         // ---------------------------------------------------------- 下载单个
@@ -487,7 +564,8 @@ namespace Installer
                 "黑色 AK-103 科幻涂装 · 带自定义音效",
                 "Outland Necrotics",
                 "Zoey 替换为 Ellie（含第一人称手部）",
-                "HUD 图标重绘 · 极简版"
+                "HUD 图标重绘 · 极简版",
+                "（拿不到直链的那种条目）"
             };
             items = new List<WsItem>();
             for (int i = 0; i < names.Length; i++)
@@ -507,16 +585,42 @@ namespace Installer
                        + "Credits and notes go here.";
                 items.Add(w);
             }
+            // 最后一条模拟「没有预览图 / 没有介绍 / 没有直链」的脏数据，专门用来验空态
+            WsItem last = items[items.Count - 1];
+            last.Url = "";
+            last.Desc = "";
+            last.Preview = "";
+            last.Note = "没有直链";
+
+            sampleHero = SampleBanner(960, 540, "预览图大图 16:9");
             grid.SetItems(items);
             grid.SeedSampleImages();
             lblStatus.Text = "样例数据 · " + items.Count + " 个 · 点卡片看完整介绍";
             ShowGallery();
         }
 
-        /// <summary>自检用：直接打开第 index 个的详情页。</summary>
+        /// <summary>造一张带文字的横向色块，代替真实预览图（样例模式不联网）。</summary>
+        private static Bitmap SampleBanner(int w, int h, string caption)
+        {
+            Bitmap b = new Bitmap(w, h);
+            using (Graphics g = Graphics.FromImage(b))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                using (LinearGradientBrush lb = new LinearGradientBrush(
+                    new Rectangle(0, 0, w, h), Color.FromArgb(46, 62, 86), Color.FromArgb(96, 74, 130), 25f))
+                    g.FillRectangle(lb, 0, 0, w, h);
+                using (SolidBrush tb = new SolidBrush(Color.FromArgb(235, 255, 255, 255)))
+                    g.DrawString(caption, new Font("Microsoft YaHei UI", 34F, FontStyle.Bold), tb, new PointF(40, h / 2 - 34));
+            }
+            return b;
+        }
+
+        /// <summary>自检用：直接打开第 index 个的详情页。超出范围就取最后一个（方便专门去看脏数据那条）。</summary>
         internal void ShowDetailForTest(int index)
         {
-            if (index < 0 || index >= items.Count) return;
+            if (items.Count == 0) return;
+            if (index < 0) index = 0;
+            if (index >= items.Count) index = items.Count - 1;
             ShowDetail(items[index]);
         }
     }
