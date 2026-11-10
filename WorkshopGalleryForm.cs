@@ -868,6 +868,7 @@ namespace Installer
         /// <summary>自检用：铺骨架占位卡（验证「搜索中」的状态看得见）。</summary>
         internal void SkeletonForTest(int n)
         {
+            ShowGallery();                          // 详情页那几张截完还停在详情态，先切回墙
             grid.SetItems(new List<WsItem>());
             grid.ShowSkeleton(n);
             lblStatus.Text = "正在搜工坊…（骨架态截图）";
