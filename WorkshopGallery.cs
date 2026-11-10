@@ -97,7 +97,7 @@ namespace Installer
         {
             int w = Math.Max(Dpi.S(200), Width);
             gap = Dpi.S(14);
-            int minW = Dpi.S(230);
+            int minW = Dpi.S(210);
             cols = Math.Max(1, (w + gap) / (minW + gap));
             cardW = (w - gap * (cols - 1)) / cols;
             imgH = cardW * 9 / 16;
@@ -117,6 +117,28 @@ namespace Installer
             Relayout();
             ScrollHost h = Parent as ScrollHost;
             if (h != null) h.Relayout();
+        }
+
+        protected override bool IsInputKey(Keys keyData)
+        {
+            Keys k = keyData & Keys.KeyCode;
+            if (k == Keys.Up || k == Keys.Down || k == Keys.PageUp || k == Keys.PageDown
+                || k == Keys.Home || k == Keys.End) return true;
+            return base.IsInputKey(keyData);
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            ScrollHost p = Parent as ScrollHost;
+            if (p != null && p.CanScroll)
+            {
+                if (e.KeyCode == Keys.Down) { p.ScrollTo(p.Offset + Dpi.S(64)); e.Handled = true; return; }
+                if (e.KeyCode == Keys.Up) { p.ScrollTo(p.Offset - Dpi.S(64)); e.Handled = true; return; }
+                if (e.KeyCode == Keys.PageDown || e.KeyCode == Keys.PageUp
+                    || e.KeyCode == Keys.Home || e.KeyCode == Keys.End)
+                { p.ScrollByKey(e.KeyCode); e.Handled = true; return; }
+            }
+            base.OnKeyDown(e);
         }
 
         protected override void OnMouseWheel(MouseEventArgs e)
@@ -163,6 +185,7 @@ namespace Installer
         {
             base.OnMouseDown(e);
             if (e.Button != MouseButtons.Left) return;
+            Focus();                                   // 点了就把焦点拿过来，滚轮/键盘才有落点
             if (FooterText.Length > 0 && FooterClickable && FooterRect().Contains(e.Location))
             {
                 if (FooterClicked != null) FooterClicked();

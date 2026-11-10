@@ -16,8 +16,10 @@ namespace Installer
     ///   · 列表那边解决「我知道要哪几个，一次勾完下完」——靠勾选和批量。
     /// 两个入口都在：这个页面右上角有「批量下载」，列表窗口里也有「画廊」。
     /// </summary>
-    internal sealed class GalleryForm : Form
+    internal sealed class GalleryForm : Form, IMessageFilter
     {
+        const int WM_MOUSEWHEEL = 0x020A;
+
         private readonly MainForm owner;
         private readonly ScrollHost host = new ScrollHost();
         private readonly WsCardGrid grid = new WsCardGrid();
@@ -244,6 +246,10 @@ namespace Installer
             Controls.Add(btnMore);
 
             FormClosing += delegate { cancel = true; };
+            // 滚轮要能落在卡片墙上：WM_MOUSEWHEEL 只发给有焦点的控件，
+            // 搜索完焦点通常在输入框里，光靠子控件的 OnMouseWheel 一辈子收不到。
+            Load += delegate { Application.AddMessageFilter(this); };
+            FormClosed += delegate { Application.RemoveMessageFilter(this); };
             Load += delegate { Theme.ApplyChrome(this); Theme.DeepNative(this); };
             Shown += delegate { Theme.ApplyChrome(this); Theme.DeepNative(this); };
             Resize += delegate { ApplyLayout(); };
@@ -492,6 +498,7 @@ namespace Installer
             lblStatus.Visible = true;
             grid.Relayout();
             host.Relayout();
+            grid.Focus();                 // 回到墙上就把焦点交给它，滚轮/键盘立刻可用
         }
 
         private void ShowDetail(WsItem it)
@@ -650,6 +657,26 @@ namespace Installer
         {
             if (owner == null) return;
             owner.ShowWorkshopList();
+        }
+
+        /// <summary>
+        /// 光标停在卡片墙上时，把滚轮直接转给滚动容器 —— 不管焦点在哪个控件上。
+        /// 光标在墙外（输入框、详情页正文）就放行，让它们自己滚。
+        /// </summary>
+        bool IMessageFilter.PreFilterMessage(ref Message m)
+        {
+            if (m.Msg != WM_MOUSEWHEEL) return false;
+            if (host == null || !host.Visible || host.IsDisposed) return false;
+            try
+            {
+                Point pt = host.PointToClient(Cursor.Position);
+                if (!host.ClientRectangle.Contains(pt)) return false;
+                int delta = (short)(((long)m.WParam >> 16) & 0xFFFF);
+                if (delta == 0) return false;
+                host.ScrollTo(host.Offset - delta);
+                return true;                       // 吃掉了，别再传下去
+            }
+            catch { return false; }
         }
 
         private void Ui(Action a)
