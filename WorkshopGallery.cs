@@ -27,7 +27,6 @@ namespace Installer
         private readonly HashSet<string> pending = new HashSet<string>(StringComparer.Ordinal);
         private readonly Queue<WsItem> queue = new Queue<WsItem>();
         private readonly object gate = new object();   // imgs / pending / queue 共用：跨线程读写必须同一把锁
-        private Thread worker;
         private int hover = -1;
         // 卡片位图缓存：每张卡渲染一次成位图，滚动/重绘时只贴图。
         // 没有它，每次滚一格要把可见的十几张卡全部现场重画（圆角路径 + 图片裁切 + 两段
@@ -483,37 +482,46 @@ namespace Installer
             if (added) EnsureWorker();
         }
 
+        private const int WorkerCount = 6;      // 并行取图：30 张从 ~15 秒缩到 ~3 秒（CDN 扛得住 6 连）
+        private int workers;                    // 存活的取图线程数
+
         private void EnsureWorker()
         {
             lock (gate)
             {
-                if (worker != null && worker.IsAlive) return;
-                worker = new Thread(delegate()
+                if (queue.Count == 0) return;
+                while (workers < WorkerCount)
                 {
-                    while (true)
-                    {
-                        WsItem it = null;
-                        lock (gate)
-                        {
-                            if (queue.Count == 0) { worker = null; return; }
-                            it = queue.Dequeue();
-                        }
-                        Image img = null;
-                        try { img = WsThumb.Load(it.Preview, it.Id, ThumbW, ThumbH); }
-                        catch { }
-                        lock (gate)
-                        {
-                            pending.Remove(it.Id);
-                            if (img != null) imgs[it.Id] = img;
-                            else imgs[it.Id] = null;      // 记成「下过了但没有」，别无限重试
-                        }
-                        try { BeginInvoke(new MethodInvoker(delegate { InvalidateCardById(it.Id); })); }
-                        catch { return; }
-                    }
-                });
-                worker.IsBackground = true;
-                worker.Priority = ThreadPriority.BelowNormal;
-                worker.Start();
+                    workers++;
+                    Thread th = new Thread(WorkerLoop);
+                    th.IsBackground = true;
+                    th.Priority = ThreadPriority.BelowNormal;
+                    th.Start();
+                }
+            }
+        }
+
+        private void WorkerLoop()
+        {
+            while (true)
+            {
+                WsItem it = null;
+                lock (gate)
+                {
+                    if (queue.Count == 0) { workers--; return; }
+                    it = queue.Dequeue();
+                }
+                Image img = null;
+                try { img = WsThumb.Load(it.Preview, it.Id, ThumbW, ThumbH); }
+                catch { }
+                lock (gate)
+                {
+                    pending.Remove(it.Id);
+                    if (img != null) imgs[it.Id] = img;
+                    else imgs[it.Id] = null;      // 记成「下过了但没有」，别无限重试
+                }
+                try { BeginInvoke(new MethodInvoker(delegate { InvalidateCardById(it.Id); })); }
+                catch { workers--; return; }
             }
         }
 

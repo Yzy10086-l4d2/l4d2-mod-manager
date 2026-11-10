@@ -33,6 +33,7 @@ namespace Installer
 
         public string State = "待下载";
         public bool Ok;                     // 已经落盘
+        public bool DetailsLoaded;          // 详情接口是否已补全（浏览页只有短介绍）
     }
 
     /// <summary>
@@ -120,6 +121,86 @@ namespace Installer
             if (!string.IsNullOrEmpty(query)) u.Append("&searchtext=").Append(Uri.EscapeDataString(query));
             if (page > 1) u.Append("&p=").Append(page);
             return ParseBrowse(Get(u.ToString()));
+        }
+
+        /// <summary>
+        /// 搜索并直接解析出完整条目 —— 浏览页内嵌的 JSON 本来就带
+        /// title / subscriptions / file_size / preview_url / tags / time_updated / file_url，
+        /// 以前只抽 ID 再去详情接口批量换元数据，白白多一趟网络（每页 1~2 秒）。
+        /// 解析失败时回退老路径（Search + Fetch），保证功能不退化。
+        /// </summary>
+        internal static List<WsItem> SearchItems(string query, string sort, int page)
+        {
+            StringBuilder u = new StringBuilder();
+            u.Append("https://steamcommunity.com/workshop/browse/?appid=").Append(AppId);
+            u.Append("&section=readytouseitems");
+            if (!string.IsNullOrEmpty(sort)) u.Append("&browsesort=").Append(sort);
+            if (!string.IsNullOrEmpty(query)) u.Append("&searchtext=").Append(Uri.EscapeDataString(query));
+            if (page > 1) u.Append("&p=").Append(page);
+            List<WsItem> outp = ParseBrowseItems(Get(u.ToString()));
+            if (outp.Count > 0) return outp;
+
+            // 回退：老路径（抽 ID → 详情接口）
+            List<string> ids = ParseBrowse(Get(u.ToString()));
+            return ids.Count > 0 ? Fetch(ids) : outp;
+        }
+
+        /// <summary>从浏览页 HTML 提取转义 JSON 数组，反转义一层后按条目拆开。</summary>
+        internal static List<WsItem> ParseBrowseItems(string html)
+        {
+            List<WsItem> outp = new List<WsItem>();
+            if (string.IsNullOrEmpty(html)) return outp;
+
+            // 条目数据是「JSON 套 JSON」——必须先整体反转义一层，再按普通 JSON 扫描。
+            // 在转义文本上直接扫会被两层转义骗（实测 30 个条目一个都提不出来）。
+            string json = html.Replace("\\\\", "\u0001").Replace("\\\"", "\"").Replace("\u0001", "\\\\");
+            int at = json.IndexOf("\"results\"", StringComparison.Ordinal);
+            if (at < 0) return outp;
+            int i = json.IndexOf('[', at);
+            if (i < 0) return outp;
+            int depth = 0, end = -1;
+            bool inStr = false, esc = false;
+            for (; i < json.Length; i++)
+            {
+                char c = json[i];
+                if (inStr)
+                {
+                    if (esc) esc = false;
+                    else if (c == '\\') esc = true;
+                    else if (c == '"') inStr = false;
+                    continue;
+                }
+                if (c == '"') { inStr = true; continue; }
+                if (c == '[') depth++;
+                else if (c == ']')
+                {
+                    depth--;
+                    if (depth == 0) { end = i; break; }
+                }
+            }
+            if (end < 0) return outp;
+
+            // results 数组本体不含 "publishedfiledetails" 键，包一层借 SplitObjects 拆条目
+            string arr = json.Substring(i, end - i + 1);
+            List<string> objs = SplitObjects("{\"x\":" + arr + "}", "x");
+            foreach (string ob in objs)
+            {
+                WsItem it = new WsItem();
+                it.Id = JStr(ob, "publishedfileid");
+                if (it.Id.Length == 0) continue;
+                it.Title = JStr(ob, "title").Trim();
+                it.Size = JNum(ob, "file_size");
+                it.Url = JStr(ob, "file_url");
+                it.Preview = JStr(ob, "preview_url");
+                it.Created = JNum(ob, "time_created");
+                it.Updated = JNum(ob, "time_updated");
+                it.Subs = JNum(ob, "subscriptions");
+                it.Views = JNum(ob, "views");
+                it.Tags = TagsOf(ob);
+                it.Desc = JStr(ob, "short_description");     // 短介绍兜底，全文在点开时按需补
+                outp.Add(it);
+            }
+            return outp;
         }
 
         internal static List<string> ParseBrowse(string html)
@@ -259,6 +340,7 @@ namespace Installer
                     it.Creator = JStr(o, "creator");
                     it.Tags = TagsOf(o);
                     if (res != 1) it.Note = "物品不存在或已删除";
+                    it.DetailsLoaded = true;
                     outp.Add(it);
                 }
             }
@@ -1003,30 +1085,30 @@ namespace Installer
         internal static int SearchTest(string query)
         {
             int bad = 0;
-            List<string> ids = Search(query, "mostsubscribed", 1);
-            Core.Log("INFO", "WSS 搜「" + query + "」第 1 页 = " + ids.Count + " 个");
-            if (ids.Count < 5)
+            // 用 SearchItems（浏览页直解）测 —— 这是画廊/列表的真实路径
+            List<WsItem> items = SearchItems(query, "mostsubscribed", 1);
+            Core.Log("INFO", "WSS 搜「" + query + "」第 1 页 = " + items.Count + " 个");
+            if (items.Count < 5)
             {
                 Core.Log("FAIL", "WSS 结果少于 5 个，浏览页解析多半断了");
                 return 1;
             }
-            if (ids.Count > 30)
+            if (items.Count > 30)
             {
                 bad++;
-                Core.Log("FAIL", "WSS 一页不该超过 30 个（侧栏推荐混进来了？），实际 " + ids.Count);
+                Core.Log("FAIL", "WSS 一页不该超过 30 个（侧栏推荐混进来了？），实际 " + items.Count);
             }
 
-            // 前 3 个再查一次元数据：标题不为空、result==1
-            List<WsItem> meta = Fetch(ids.GetRange(0, Math.Min(3, ids.Count)));
-            foreach (WsItem it in meta)
+            // 每个条目的关键字段：ID / 标题 / 订阅数（浏览页直解，不再走详情接口）
+            foreach (WsItem it in items.GetRange(0, Math.Min(3, items.Count)))
             {
-                if (string.IsNullOrEmpty(it.Title)) { bad++; Core.Log("FAIL", "WSS " + it.Id + " 没有标题"); }
-                else Core.Log("INFO", "WSS " + it.Id + "「" + (it.Title.Length <= 46 ? it.Title : it.Title.Substring(0, 46) + "…") + "」");
+                if (it.Id.Length == 0 || string.IsNullOrEmpty(it.Title))
+                { bad++; Core.Log("FAIL", "WSS 条目字段缺失: id=" + it.Id + " title=" + (it.Title ?? "")); }
+                else Core.Log("INFO", "WSS " + it.Id + "「" + (it.Title.Length <= 46 ? it.Title : it.Title.Substring(0, 46) + "…") + "」订阅 " + it.Subs);
             }
 
             // 翻页：画廊现在是「往下滑就往后追加」，全靠这两点 —— 第 2 页取得到、且和第 1 页不重复。
-            // 顺带验一下「不足 30 个 = 到底」这个判断的前提（满页）。
-            List<string> p2 = Search(query, "mostsubscribed", 2);
+            List<WsItem> p2 = SearchItems(query, "mostsubscribed", 2);
             Core.Log("INFO", "WSS 第 2 页 = " + p2.Count + " 个");
             if (p2.Count == 0)
             {
@@ -1035,9 +1117,10 @@ namespace Installer
             }
             else
             {
-                HashSet<string> s1 = new HashSet<string>(ids, StringComparer.Ordinal);
+                HashSet<string> s1 = new HashSet<string>(StringComparer.Ordinal);
+                foreach (WsItem x in items) s1.Add(x.Id);
                 int dup = 0;
-                foreach (string x in p2) if (s1.Contains(x)) dup++;
+                foreach (WsItem x in p2) if (s1.Contains(x.Id)) dup++;
                 if (dup > 0)
                 {
                     bad++;
@@ -1045,8 +1128,8 @@ namespace Installer
                 }
                 else Core.Log("INFO", "WSS 第 1/2 页无重复，追加安全");
             }
-            if (ids.Count < 30)
-                Core.Log("WARN", "WSS 第 1 页只有 " + ids.Count + " 个（不足 30），界面会判成「已到底」—— 这个词本身结果就少");
+            if (items.Count < 30)
+                Core.Log("WARN", "WSS 第 1 页只有 " + items.Count + " 个（不足 30），界面会判成「已到底」—— 这个词本身结果就少");
             return bad;
         }
     }
@@ -1765,9 +1848,8 @@ namespace Installer
                 int count = 0;
                 try
                 {
-                    List<string> ids = Workshop.Search(q, sort, p);
-                    count = ids.Count;
-                    got = ids.Count > 0 ? Workshop.Fetch(ids) : new List<WsItem>();
+                    got = Workshop.SearchItems(q, sort, p);   // 浏览页直解：少一趟详情接口
+                    count = got.Count;
                 }
                 catch (Exception ex) { err = ex.Message; Core.Log("FAIL", "工坊搜索失败: " + ex); }
 

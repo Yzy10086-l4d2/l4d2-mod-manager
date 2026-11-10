@@ -463,9 +463,8 @@ namespace Installer
                 string err = null;
                 try
                 {
-                    List<string> ids = Workshop.Search(q, sort, p);
-                    idCount = ids.Count;
-                    got = ids.Count == 0 ? new List<WsItem>() : Workshop.Fetch(ids);
+                    got = Workshop.SearchItems(q, sort, p);   // 浏览页直解：省掉详情接口整趟往返
+                    idCount = got.Count;
                 }
                 catch (Exception ex) { err = ex.Message; }
 
@@ -681,6 +680,30 @@ namespace Installer
                 lblState.Text = "正文是英文，正在翻成中文…（点「看原文」可先看）";
             Thread t = new Thread(delegate()
             {
+                // 浏览页只有短介绍 —— 点开时按需补全详情接口（全文/直链），一次调用
+                if (!it.DetailsLoaded && !it.IsCollection)
+                {
+                    try
+                    {
+                        List<WsItem> full = Workshop.Fetch(new List<string>(new string[] { it.Id }));
+                        if (full.Count > 0)
+                        {
+                            WsItem f2 = full[0];
+                            if (f2.Desc.Length > 0) it.Desc = f2.Desc;
+                            if (f2.Url.Length > 0) it.Url = f2.Url;
+                            if (f2.Updated > 0) it.Updated = f2.Updated;
+                            it.DetailsLoaded = true;
+                        }
+                    }
+                    catch { }
+                    Ui(delegate()
+                    {
+                        if (token != detailToken) return;
+                        detailClean = WsText.Clean(it.Desc);      // 短介绍换成全文
+                        RenderDesc();
+                        if (it.Url.Length > 0 && !it.IsCollection) btnGet.Enabled = true;
+                    });
+                }
                 Image img = WsThumb.LoadCover(it.Preview, it.Id, pw, ph);
                 string zh = detailZh, err = null;
                 if (detailClean.Length > 0 && zh == null)
