@@ -413,12 +413,13 @@ namespace Installer
                 g.FillPath(b, p);
 
             Rectangle ir = new Rectangle(1, 1, w - 2, imgH);
+            using (SolidBrush b = new SolidBrush(Theme.SurfaceAlt)) g.FillRectangle(b, ir);   // 信箱底色
             Image img = ThumbOf(it.Id);
             if (img != null)
             {
-                // 等比填满并居中裁切：封面比例五花八门，直接拉伸会变形
-                double k = Math.Max((double)ir.Width / img.Width, (double)ir.Height / img.Height);
-                int iw = (int)(img.Width * k), ih = (int)(img.Height * k);
+                // 完整显示：等比缩到能整个放进卡里（用户明确要看到完整封面，不裁切）
+                double k = Math.Min((double)ir.Width / img.Width, (double)ir.Height / img.Height);
+                int iw = Math.Max(1, (int)(img.Width * k)), ih = Math.Max(1, (int)(img.Height * k));
                 Rectangle dst = new Rectangle(ir.X + (ir.Width - iw) / 2, ir.Y + (ir.Height - ih) / 2, iw, ih);
                 Region old = g.Clip;
                 g.SetClip(ir);

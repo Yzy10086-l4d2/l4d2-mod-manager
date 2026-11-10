@@ -49,6 +49,9 @@ namespace Installer
         private readonly FlatButton btnNextPage = new FlatButton();  // 下一页（替换式定位）
         private readonly TextBox txtJump = new TextBox();            // 输入页数回车直达
         private readonly Label lblJump = new Label();                // 「页」
+        private readonly ProgressBar barLoad = new ProgressBar();    // 详情页加载动效（跑马灯）
+        private int detailLoading;                                   // 详情页在途的加载任务数
+        private bool ready;                                          // 构造完成：之后的分类切换才自动搜索
         private readonly Label lblStatus = new Label();
         private readonly Label lblCat = new Label();
 
@@ -108,6 +111,13 @@ namespace Installer
 
             cboCat.DropDownStyle = ComboBoxStyle.DropDownList;
             Theme.Dress(cboCat);
+            // 切分类 = 换了一批要看的 MOD，自动刷新（带骨架屏），不用再手动点搜索
+            cboCat.SelectedIndexChanged += delegate
+            {
+                GalChoice c0 = cboCat.SelectedItem as GalChoice;
+                if (c0 != null) txtQuery.Text = c0.Query;
+                if (ready && !busy) DoSearch(1);
+            };
             Controls.Add(cboCat);
             FillCats();
 
@@ -164,7 +174,7 @@ namespace Installer
             detail.Visible = false;
             Controls.Add(detail);
 
-            picHero.SizeMode = PictureBoxSizeMode.Normal;   // 图已经是按框裁好的精确尺寸，交给 Zoom 反而会再缩一次
+            picHero.SizeMode = PictureBoxSizeMode.Zoom;     // 完整显示整张图（比例不符时两侧留底色，不裁切）
             picHero.BackColor = Theme.SurfaceAlt;
             picHero.BorderStyle = BorderStyle.FixedSingle;
             detail.Controls.Add(picHero);
@@ -201,6 +211,13 @@ namespace Installer
             lblState.AutoSize = false;
             lblState.AutoEllipsis = true;
             detail.Controls.Add(lblState);
+
+            // 加载动效：抓全文 / 翻译 / 大图期间跑跑马灯，全完成自动消失
+            barLoad.Style = ProgressBarStyle.Marquee;
+            barLoad.MarqueeAnimationSpeed = 30;
+            barLoad.Height = 7;
+            barLoad.Visible = false;
+            detail.Controls.Add(barLoad);
 
             txtDesc.Multiline = true;
             txtDesc.ReadOnly = true;
@@ -303,6 +320,7 @@ namespace Installer
             {
                 if (!sampleMode && grid.Items.Count == 0 && !busy) DoSearch(1);
             };
+            ready = true;       // 构造里 SelectedIndex=0 也会触发分类事件，置位放在最后防误触发
         }
 
         private void ApplyLayout()
@@ -350,8 +368,9 @@ namespace Installer
             lblTitle.SetBounds(0, ty, dw, S(46));
             lblMeta.SetBounds(0, ty + S(48), dw, S(18));
             lblTags.SetBounds(0, ty + S(68), dw, S(18));
-            lblState.SetBounds(0, ty + S(88), dw, S(18));
-            int descTop = ty + S(112);
+            lblState.SetBounds(0, ty + S(86), dw, S(18));
+            barLoad.SetBounds(0, ty + S(104), dw, S(7));
+            int descTop = ty + S(118);
             int btnY = dh - S(34);
             descBox.SetBounds(0, descTop, dw, Math.Max(S(60), btnY - S(10) - descTop));
             btnBack.SetBounds(0, btnY, S(88), S(32));
@@ -660,6 +679,15 @@ namespace Installer
             lblHeroHint.Visible = true;
             lblHeroHint.Text = it.Preview.Length == 0 ? "（这个物品没有预览图）" : "（正在加载预览图…）";
 
+            // 加载动效：抓全文 / 翻译 / 大图各占一格计数，全完成自动消失
+            detailLoading = 0;
+            if (!sampleMode)
+            {
+                if (!it.DetailsLoaded && !it.IsCollection) DetailBusy(true);   // 补全文
+                if (it.Preview.Length > 0 || (detailClean.Length > 0 && detailZh == null))
+                    DetailBusy(true);                                          // 大图 + 翻译（同一线程同一回调）
+            }
+
             detailClean = WsText.Clean(it.Desc);
             detailZh = WsTranslate.ReadCache(it.Id, it.Updated);
             RenderDesc();
@@ -698,19 +726,21 @@ namespace Installer
                     catch { }
                     Ui(delegate()
                     {
-                        if (token != detailToken) return;
+                        if (token != detailToken) return;         // 换条目了：计数已被新条目重置，别碰
+                        DetailBusy(false);
                         detailClean = WsText.Clean(it.Desc);      // 短介绍换成全文
                         RenderDesc();
                         if (it.Url.Length > 0 && !it.IsCollection) btnGet.Enabled = true;
                     });
                 }
-                Image img = WsThumb.LoadCover(it.Preview, it.Id, pw, ph);
+                Image img = WsThumb.Load(it.Preview, it.Id, pw * 2, ph * 2);   // 放大上限翻倍，小图也能铺满，Zoom 负责等比
                 string zh = detailZh, err = null;
                 if (detailClean.Length > 0 && zh == null)
                     zh = WsTranslate.Translate(it.Id, it.Updated, detailClean, out err);
                 Ui(delegate()
                 {
-                    if (token != detailToken) { if (img != null) img.Dispose(); return; }
+                    if (token != detailToken) { DetailBusy(false); if (img != null) img.Dispose(); return; }
+                    DetailBusy(false);                            // 大图 + 翻译这格完成
                     if (img != null)
                     {
                         if (picHero.Image != null) picHero.Image.Dispose();
@@ -726,6 +756,13 @@ namespace Installer
             t.IsBackground = true;
             t.Priority = ThreadPriority.BelowNormal;
             t.Start();
+        }
+
+        /// <summary>详情页加载动效：在途任务计数，归零时跑马灯消失。切条目时计数清零重算。</summary>
+        private void DetailBusy(bool on)
+        {
+            detailLoading = Math.Max(0, detailLoading + (on ? 1 : -1));
+            barLoad.Visible = detailLoading > 0 && !sampleMode;
         }
 
         /// <summary>按当前「原文 / 译文」选择把正文填进框里。两处都要走 ToDisplay：TextBox 只认 CRLF。</summary>
