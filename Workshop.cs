@@ -1962,7 +1962,7 @@ namespace Installer
                             dest = Path.Combine(dir, rn);
                         }
                         it.SavedAs = Path.GetFileName(dest);
-                        RememberDownload(it.Id, it.SavedAs);
+                        Workshop.RememberDownload(it.Id, it.SavedAs);
                         done.Add(it);
                         SetRowState(it, "已下载 " + Core.Human(it.Size) + (rn != null ? "，已改名 " + Clip(rn, 16) : ""));
                         Core.Log("OK", "工坊：已下载 " + it.Id + " → " + dest);
