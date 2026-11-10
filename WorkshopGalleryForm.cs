@@ -772,8 +772,16 @@ namespace Installer
             return b;
         }
 
-        /// <summary>自检用：直接把墙滚到指定位置（验证滚动是否真的移动内容）。</summary>
-        internal void ScrollForTest(int y) { host.ScrollTo(y); }
+        /// <summary>自检用：直接把墙滚到指定位置（验证滚动是否真的移动内容），并把关键几何打进日志。</summary>
+        internal void ScrollForTest(int y)
+        {
+            host.ScrollTo(y);
+            int maxOff = grid.Height - host.ClientSize.Height;
+            Core.Log("INFO", "GALSCROLL items=" + grid.Items.Count
+                + " gridH=" + grid.Height + " hostH=" + host.ClientSize.Height
+                + " 请求=" + y + " 实际offset=" + host.Offset + " maxOff=" + maxOff
+                + " 可滚=" + host.CanScroll + " footer=" + grid.FooterText);
+        }
 
         /// <summary>自检用：直接打开第 index 个的详情页。超出范围就取最后一个（方便专门去看脏数据那条）。</summary>
         internal void ShowDetailForTest(int index)
