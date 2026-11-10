@@ -109,6 +109,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" L4D2Setup.exe \
+          set -e
+          sha=$(sha256sum L4D2Setup.exe | cut -d' ' -f1)
+          echo "$sha  L4D2Setup.exe" > L4D2Setup.exe.sha256
+          # 有些受限网络（公司代理 / 沙箱）会按 1 MB 截断单次下载，1.6 MB 的 exe 永远下不完。
+          # 顺手切一份 900 KB 的分片一起发：拿不到整包时按分片取、拼回来、对 sha256。
+          split -b 900000 -d -a 1 L4D2Setup.exe L4D2Setup.part
+          ls -l L4D2Setup.part*
+          gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
-            --notes "由 GitHub Actions 自动编译，与源码同一提交；校验哈希见下方附件信息。"
+            --notes "由 GitHub Actions 自动编译，与源码同一提交。
+          SHA256 见 L4D2Setup.exe.sha256。
+          如果整包下载被网络截断，可用 L4D2Setup.part* 分片按序号拼接：cat L4D2Setup.part* > L4D2Setup.exe"
+          gh release upload "${GITHUB_REF_NAME}" L4D2Setup.exe L4D2Setup.exe.sha256 L4D2Setup.part* --clobber
