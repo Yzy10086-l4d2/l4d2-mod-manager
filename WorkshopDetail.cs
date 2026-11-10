@@ -337,6 +337,17 @@ namespace Installer
 
         public static Image Load(string url, string id, int maxW, int maxH)
         {
+            return Load(url, id, maxW, maxH, false);
+        }
+
+        /// <summary>填满裁切版本：详情页横幅用（等比缩放会在两侧留大片空白）。</summary>
+        public static Image LoadCover(string url, string id, int w, int h)
+        {
+            return Load(url, id, w, h, true);
+        }
+
+        static Image Load(string url, string id, int maxW, int maxH, bool cover)
+        {
             if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(id) || maxW <= 0 || maxH <= 0) return null;
             try
             {
@@ -376,6 +387,29 @@ namespace Installer
                 using (MemoryStream ms2 = new MemoryStream(data))
                 using (Image raw = Image.FromStream(ms2))
                 {
+                    if (cover)
+                    {
+                        // 填满裁切（详情页横幅用）：按长边放大到刚好盖住目标框，再居中裁一块，
+                        // 不会像等比缩放那样在两侧留出大片空白
+                        double kc = Math.Max((double)maxW / raw.Width, (double)maxH / raw.Height);
+                        int cw = Math.Max(1, (int)Math.Ceiling(raw.Width * kc));
+                        int chh = Math.Max(1, (int)Math.Ceiling(raw.Height * kc));
+                        using (Bitmap mid = new Bitmap(cw, chh))
+                        {
+                            using (Graphics g = Graphics.FromImage(mid))
+                            {
+                                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                                g.DrawImage(raw, 0, 0, cw, chh);
+                            }
+                            Rectangle src = new Rectangle(Math.Max(0, (cw - maxW) / 2), Math.Max(0, (chh - maxH) / 2), maxW, maxH);
+                            Bitmap cut = new Bitmap(maxW, maxH);
+                            using (Graphics g2 = Graphics.FromImage(cut))
+                            using (Bitmap clipped = mid.Clone(src, mid.PixelFormat))
+                                g2.DrawImageUnscaled(clipped, 0, 0);
+                            return cut;
+                        }
+                    }
                     double k = Math.Min((double)maxW / raw.Width, (double)maxH / raw.Height);
                     if (k > 1) k = 1;
                     int w = Math.Max(1, (int)(raw.Width * k));

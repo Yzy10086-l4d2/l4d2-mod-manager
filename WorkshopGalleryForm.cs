@@ -140,7 +140,7 @@ namespace Installer
             detail.Visible = false;
             Controls.Add(detail);
 
-            picHero.SizeMode = PictureBoxSizeMode.Zoom;
+            picHero.SizeMode = PictureBoxSizeMode.Normal;   // 图已经是按框裁好的精确尺寸，交给 Zoom 反而会再缩一次
             picHero.BackColor = Theme.SurfaceAlt;
             picHero.BorderStyle = BorderStyle.FixedSingle;
             detail.Controls.Add(picHero);
@@ -421,10 +421,10 @@ namespace Installer
 
             if (sampleMode)
             {
-                // 样例模式不联网：用造出来的大图代替，好让截图能看出等比缩放与留白
+                // 样例模式不联网：用造出来的大图代替，好让截图能看出填满裁切的效果
                 if (sampleHero != null && it.Preview.Length > 0)
                 {
-                    picHero.Image = (Image)sampleHero.Clone();
+                    picHero.Image = CoverFill(sampleHero, picHero.Width, picHero.Height);
                     lblHeroHint.Visible = false;
                 }
                 return;
@@ -432,7 +432,7 @@ namespace Installer
             int pw = picHero.Width, ph = picHero.Height;
             Thread t = new Thread(delegate()
             {
-                Image img = WsThumb.Load(it.Preview, it.Id, pw, ph);
+                Image img = WsThumb.LoadCover(it.Preview, it.Id, pw, ph);
                 string zh = detailZh, err = null;
                 if (detailClean.Length > 0 && zh == null)
                     zh = WsTranslate.Translate(it.Id, it.Updated, detailClean, out err);
@@ -598,6 +598,22 @@ namespace Installer
             grid.SeedSampleImages();
             lblStatus.Text = "样例数据 · " + items.Count + " 个 · 点卡片看完整介绍";
             ShowGallery();
+        }
+
+        /// <summary>把一张图按「填满 + 居中裁切」画成 w×h（详情页横幅用，避免两侧大片空白）。</summary>
+        private static Image CoverFill(Image src, int w, int h)
+        {
+            if (src == null || w <= 0 || h <= 0) return null;
+            Bitmap b = new Bitmap(w, h);
+            using (Graphics g = Graphics.FromImage(b))
+            {
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                double k = Math.Max((double)w / src.Width, (double)h / src.Height);
+                int sw = (int)Math.Ceiling(src.Width * k), sh = (int)Math.Ceiling(src.Height * k);
+                g.DrawImage(src, new Rectangle((w - sw) / 2, (h - sh) / 2, sw, sh));
+            }
+            return b;
         }
 
         /// <summary>造一张带文字的横向色块，代替真实预览图（样例模式不联网）。</summary>
