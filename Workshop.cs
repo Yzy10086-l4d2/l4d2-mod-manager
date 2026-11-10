@@ -20,6 +20,17 @@ namespace Installer
         public string FileName = "";        // 接口给的内部存储路径，不是文件名
         public bool IsCollection;
         public string Note = "";            // 「没有直链」这类说明
+
+        /// <summary>详情页要用的字段：同一个响应里本来就有，以前一个都没解析。</summary>
+        public string Desc = "";            // file_description，原文是 BBCode
+        public string Preview = "";         // preview_url
+        public long Created, Updated;       // time_created / time_updated（Unix 秒）
+        public long Subs, Views;            // subscriptions / views
+        public string Creator = "";         // 作者 steamid
+        public string Tags = "";            // "枪械 · 模型" 这种拼好的标签串
+        public string Where = "";           // 下载后识别出来的「替换 AK-47 · 模型」
+        public string SavedAs = "";         // 落盘后的文件名（改名之后），用来回查识别结果
+
         public string State = "待下载";
         public bool Ok;                     // 已经落盘
     }
@@ -235,6 +246,15 @@ namespace Installer
                     it.Size = JNum(o, "file_size");
                     it.Url = JStr(o, "file_url");
                     it.FileName = JStr(o, "filename");
+                    // 详情字段：同一个响应里本来就有，顺手全取下来（详情面板 + 中文翻译要用）
+                    it.Desc = JStr(o, "file_description");
+                    it.Preview = JStr(o, "preview_url");
+                    it.Created = JNum(o, "time_created");
+                    it.Updated = JNum(o, "time_updated");
+                    it.Subs = JNum(o, "subscriptions");
+                    it.Views = JNum(o, "views");
+                    it.Creator = JStr(o, "creator");
+                    it.Tags = TagsOf(o);
                     if (res != 1) it.Note = "物品不存在或已删除";
                     outp.Add(it);
                 }
@@ -242,8 +262,27 @@ namespace Installer
             return outp;
         }
 
-        /// <summary>合集 → 子项 ID。不是合集时返回空表。</summary>
-        public static List<string> CollectionChildren(string collectionId, out string title)
+        static readonly Regex RxTag = new Regex("\"tag\"\\s*:\\s*\"([^\"]*)\"", RegexOptions.IgnoreCase);
+
+        /// <summary>
+        /// 标签：接口给的是 [{"tag":"Action"},…] 这种对象数组，手写解析器没有数组支持，
+        /// 这里用一条正则把 tag 值抠出来拼成一句。没有标签返回空串。
+        /// </summary>
+        internal static string TagsOf(string obj)
+        {
+            List<string> tags = new List<string>();
+            if (string.IsNullOrEmpty(obj)) return "";
+            foreach (Match m in RxTag.Matches(obj))
+            {
+                string t = m.Groups[1].Value.Trim();
+                if (t.Length == 0 || tags.Contains(t)) continue;
+                tags.Add(t);
+                if (tags.Count >= 8) break;
+            }
+            return string.Join(" · ", tags.ToArray());
+        }
+
+        /// <summary>合集 → 子项 ID。不是合集时返回空表。</summary>        public static List<string> CollectionChildren(string collectionId, out string title)
         {
             title = "";
             List<string> kids = new List<string>();
@@ -657,6 +696,65 @@ namespace Installer
             else
             { bad++; Core.Log("FAIL", "WS 无直链物品没被正确识别"); }
 
+            // 详情字段：同一个响应里就带着 file_description / preview_url / tags / time_updated，
+            // 以前一个都没取 —— 现在右侧详情面板和中文翻译全靠它们，断了就是一片空白。
+            string detJson = "{\"response\":{\"publishedfiledetails\":[{\"publishedfileid\":\"444\",\"result\":1,"
+                           + "\"title\":\"Tank\",\"file_size\":\"1024\",\"file_url\":\"https://x/z.vpk\","
+                           + "\"file_description\":\"[b]Bold[/b] text\",\"preview_url\":\"https://img/p.jpg\","
+                           + "\"time_created\":\"1700000000\",\"time_updated\":\"1710000000\","
+                           + "\"subscriptions\":\"12400\",\"views\":\"99\","
+                           + "\"tags\":[{\"tag\":\"Tank\"},{\"tag\":\"角色\"}]}]}}";
+            List<string> dd = SplitObjects(detJson, "publishedfiledetails");
+            if (dd.Count == 1)
+            {
+                string desc = JStr(dd[0], "file_description");
+                string prev = JStr(dd[0], "preview_url");
+                string tags = TagsOf(dd[0]);
+                long upd = JNum(dd[0], "time_updated");
+                long subs = JNum(dd[0], "subscriptions");
+                if (desc != "[b]Bold[/b] text" || prev != "https://img/p.jpg" || tags != "Tank · 角色"
+                    || upd != 1710000000 || subs != 12400)
+                {
+                    bad++;
+                    Core.Log("FAIL", "WS 详情字段解析错：desc=" + desc + " prev=" + prev
+                        + " tags=" + tags + " upd=" + upd + " subs=" + subs);
+                }
+                else Core.Log("INFO", "WS 详情字段：描述 / 预览图 / 标签 / 更新时间 / 订阅数 全部解析正常");
+            }
+            else { bad++; Core.Log("FAIL", "WS 详情字段：夹具没解析出来"); }
+
+            // BBCode 清洗：标签清干净、小标题与列表符号保留、链接只留文字
+            string cleaned = WsText.Clean("[h1]Title[/h1][b]Bold[/b][list][*]one\n[*]two[/list][url=http://x]link[/url]");
+            if (cleaned.IndexOf('[') >= 0 || cleaned.IndexOf("■ Title") < 0
+                || cleaned.IndexOf("· one") < 0 || cleaned.IndexOf("link") < 0)
+            {
+                bad++;
+                Core.Log("FAIL", "WS 正文清洗不对：" + cleaned.Replace("\n", " / "));
+            }
+            else Core.Log("INFO", "WS 正文清洗：标签清空、小标题 / 列表 / 链接文字保留");
+
+            // 中文正文不该再白跑一趟翻译
+            if (!WsText.MostlyChinese("这是一个中文介绍") || WsText.MostlyChinese("This is an English description"))
+            { bad++; Core.Log("FAIL", "WS 中英判定不对"); }
+            else Core.Log("INFO", "WS 中英判定：中文不翻、英文要翻");
+
+            // 译文缓存：键里带 time_updated —— 作者改过介绍，旧译文必须失效
+            {
+                string cid = "999001";
+                bool hitOld, missNew;
+                try
+                {
+                    WsTranslate.WriteCacheForTest(cid, 111, "旧译文");
+                    hitOld = WsTranslate.ReadCache(cid, 111) == "旧译文";
+                    missNew = WsTranslate.ReadCache(cid, 222) == null;
+                    string cp = WsTranslate.CachePathForTest(cid);
+                    if (File.Exists(cp)) File.Delete(cp);
+                }
+                catch (Exception ex) { hitOld = false; missNew = false; Core.Log("WARN", "WS 缓存测试异常: " + ex.Message); }
+                if (hitOld && missNew) Core.Log("INFO", "WS 译文缓存：命中同版本、介绍更新后失效");
+                else { bad++; Core.Log("FAIL", "WS 译文缓存行为不对 (hit=" + hitOld + " miss=" + missNew + ")"); }
+            }
+
             // 合集识别：合集本身也有 file_url，指向缩略图 JPG。曾经按「没有直链才算合集」判断，
             // 结果粘贴一个合集链接，下下来的是一张封面图被存成 .vpk。这条断言就是防这个回归。
             WsItem col = new WsItem();
@@ -852,8 +950,37 @@ namespace Installer
         private readonly ProgressBar bar = new ProgressBar();
         private readonly Label lblStatus = new Label();
         private readonly FlatButton btnParse = new FlatButton();
+        private readonly FlatButton btnPaste = new FlatButton();
+        private readonly FlatButton btnClear = new FlatButton();
         private readonly FlatButton btnStart = new FlatButton();
         private readonly FlatButton btnClose = new FlatButton();
+
+        // ---- 详情面板（右侧）----
+        private readonly PictureBox pic = new PictureBox();
+        private readonly Label lblTitle2 = new Label();
+        private readonly Label lblMeta = new Label();
+        private readonly Label lblTags = new Label();
+        private readonly Label lblWhere = new Label();
+        private readonly TextBox txtDesc = new TextBox();
+        private readonly FlatButton btnLang = new FlatButton();
+        private readonly FlatButton btnOpen = new FlatButton();
+        private Label lblTip;
+        private readonly Label lblCat = new Label();
+        private WsItem detailItem;                   // 详情面板当前展示的物品
+        private bool showZh = true;                  // true = 显示译文（默认），false = 原文
+        private int detailToken;                     // 切行递增：旧线程回来时发现号不对就不改界面
+        private bool filling;                        // 正在批量填表：这时的勾选变化别去刷状态栏
+        private bool sampleMode;                     // 截图自检用的样例数据：不联网
+
+        // ---- 下载队列 ----
+        private readonly FlatButton btnAll = new FlatButton();
+        private readonly FlatButton btnNone = new FlatButton();
+        private readonly FlatButton btnRetry = new FlatButton();
+        private readonly List<WsItem> failed = new List<WsItem>();
+
+        private const int M = 16;                    // 设计值：外边距
+        private const int Gap = 12;
+        private const int DetailW = 384;             // 详情栏定宽
 
         private List<WsItem> items = new List<WsItem>();
         private volatile bool busy;
@@ -885,32 +1012,31 @@ namespace Installer
         public WorkshopForm(MainForm o)
         {
             owner = o;
-            Text = "从创意工坊导入";
+            Text = "创意工坊 · 求生之路 2";
             Theme.UseDpi(this);
-            ClientSize = Dpi.Sz(680, 520);
+            ClientSize = Dpi.Sz(1080, 700);
+            MinimumSize = Dpi.Sz(940, 600);
             Font = Theme.UI;
             BackColor = Theme.Bg;
             StartPosition = FormStartPosition.CenterScreen;   // 独立窗口，不从主窗口取位置
-            MaximizeBox = false;
             MinimizeBox = false;
             ShowInTaskbar = true;                             // 独立窗口，任务栏里得有自己的格子
 
-            Label tip = new Label();
-            tip.SetBounds(16, 10, 648, 20);
-            tip.Font = Theme.UISmall;
-            tip.ForeColor = Theme.Ink2;
-            tip.Text = "选分类直接浏览工坊，或粘贴物品 / 合集链接（...?id=123456）。下到库里后自动归纳位置。";
-            Controls.Add(tip);
+            // ---------------- 左栏：找 + 选 + 下 ----------------
+            lblTip.Font = Theme.UISmall;
+            lblTip.ForeColor = Theme.Ink2;
+            lblTip.AutoSize = false;
+            lblTip.AutoEllipsis = true;
+            lblTip.Text = "选分类直接浏览，或粘贴物品 / 合集链接（...?id=123456）。"
+                        + "点一行看右边介绍（自动翻中文），勾上再下载。";
+            Controls.Add(lblTip);
 
-            // 浏览行：分类来自本地方案树的位置表，选中就把默认搜索词填上（可自己改）
-            Label lc = new Label();
-            lc.Text = "分类";
-            lc.SetBounds(16, 40, 36, 20);
-            lc.Font = Theme.UISmall;
-            lc.ForeColor = Theme.Ink2;
-            Controls.Add(lc);
+            lblCat.Text = "分类";
+            lblCat.Font = Theme.UISmall;
+            lblCat.ForeColor = Theme.Ink2;
+            lblCat.AutoSize = false;
+            Controls.Add(lblCat);
 
-            cboCat.SetBounds(56, 36, 176, 24);
             cboCat.DropDownStyle = ComboBoxStyle.DropDownList;
             Theme.Dress(cboCat);
             cboCat.SelectedIndexChanged += delegate
@@ -920,7 +1046,6 @@ namespace Installer
             };
             Controls.Add(cboCat);
 
-            txtQuery.SetBounds(240, 36, 224, 24);
             Theme.Dress(txtQuery);
             txtQuery.AccessibleName = "工坊搜索词";
             txtQuery.KeyDown += delegate(object s, KeyEventArgs e)
@@ -933,11 +1058,9 @@ namespace Installer
             Controls.Add(txtQuery);
 
             btnSearch.Text = "搜索";
-            btnSearch.SetBounds(472, 32, 72, Theme.H);
             btnSearch.Click += delegate { DoSearch(1); };
             Controls.Add(btnSearch);
 
-            cboSort.SetBounds(552, 36, 112, 24);
             cboSort.DropDownStyle = ComboBoxStyle.DropDownList;
             Theme.Dress(cboSort);
             cboSort.Items.Add(new CatChoice { Label = "最多订阅", Sort = "mostsubscribed" });
@@ -947,7 +1070,6 @@ namespace Installer
             cboSort.SelectedIndex = 0;
             Controls.Add(cboSort);
 
-            box.SetBounds(16, 76, 648, 60);
             box.Multiline = true;
             box.ScrollBars = ScrollBars.Vertical;
             box.AcceptsReturn = true;
@@ -956,13 +1078,10 @@ namespace Installer
 
             btnParse.Text = "解析";
             btnParse.Primary = true;
-            btnParse.SetBounds(16, 144, 96, Theme.H);
             btnParse.Click += delegate { Parse(); };
             Controls.Add(btnParse);
 
-            FlatButton btnPaste = new FlatButton();
             btnPaste.Text = "从剪贴板";
-            btnPaste.SetBounds(120, 144, 96, Theme.H);
             btnPaste.Click += delegate
             {
                 try
@@ -978,23 +1097,22 @@ namespace Installer
             };
             Controls.Add(btnPaste);
 
-            FlatButton btnClear = new FlatButton();
             btnClear.Text = "清空";
-            btnClear.SetBounds(224, 144, 72, Theme.H);
             btnClear.Click += delegate
             {
                 if (busy) return;
                 box.Clear();
                 items.Clear();
                 lv.Items.Clear();
+                ClearDetail();
                 SetStatus("就绪");
                 btnStart.Enabled = false;
             };
             Controls.Add(btnClear);
 
-            lv.SetBounds(16, 184, 648, 232);
             lv.View = View.Details;
             lv.FullRowSelect = true;
+            lv.CheckBoxes = true;                    // 下载队列 = 勾选的那些
             lv.HeaderStyle = ColumnHeaderStyle.Nonclickable;
             lv.BorderStyle = BorderStyle.FixedSingle;
             lv.BackColor = Theme.Surface;
@@ -1002,21 +1120,31 @@ namespace Installer
             lv.Font = Theme.UISmall;
             lv.GridLines = false;
             lv.MultiSelect = true;
-            lv.Columns.Add("物品 ID", 110);
-            lv.Columns.Add("标题", 300);
-            lv.Columns.Add("大小", 76, HorizontalAlignment.Right);
-            lv.Columns.Add("状态", 156);
+            lv.ShowItemToolTips = true;
+            lv.Columns.Add("标题", 296);
+            lv.Columns.Add("订阅", 58, HorizontalAlignment.Right);
+            lv.Columns.Add("更新", 84);
+            lv.Columns.Add("大小", 70, HorizontalAlignment.Right);
+            lv.Columns.Add("状态", 150);
+            lv.SelectedIndexChanged += delegate { FillDetail(); };
+            lv.ItemCheck += delegate(object s, ItemCheckEventArgs e)
+            {
+                // 合集行不是可下载项（它的子项已经展开成行了），勾它只会让人以为能下
+                WsItem w = (e.Index >= 0 && e.Index < lv.Items.Count) ? lv.Items[e.Index].Tag as WsItem : null;
+                if (w != null && (w.IsCollection || (w.Url.Length == 0 && w.Note.Length == 0)))
+                    e.NewValue = CheckState.Unchecked;
+            };
+            lv.ItemChecked += delegate { UpdatePickCount(); };
             Controls.Add(lv);
 
-            lblStatus.SetBounds(16, 424, 648, 20);
             lblStatus.Font = Theme.UISmall;
             lblStatus.ForeColor = Theme.Ink2;
-            lblStatus.Text = "就绪。先粘贴链接，再点「解析」。";
+            lblStatus.AutoSize = false;
             lblStatus.AutoEllipsis = true;
+            lblStatus.Text = "就绪。先粘贴链接，再点「解析」。";
             Controls.Add(lblStatus);
 
             // 原生进度条在深色主题下永远是浅色的一条，平时不下载就别摆在那里
-            bar.SetBounds(16, 448, 648, 12);
             bar.Minimum = 0;
             bar.Maximum = 100;
             bar.Visible = false;
@@ -1025,30 +1153,160 @@ namespace Installer
             btnStart.Text = "开始下载";
             btnStart.Primary = true;
             btnStart.Enabled = false;
-            btnStart.SetBounds(16, 472, 112, Theme.H);
             btnStart.Click += delegate { StartDownload(); };
             Controls.Add(btnStart);
 
+            btnAll.Text = "全选";
+            btnAll.Click += delegate { SetAllChecked(true); };
+            Controls.Add(btnAll);
+
+            btnNone.Text = "全不选";
+            btnNone.Click += delegate { SetAllChecked(false); };
+            Controls.Add(btnNone);
+
+            btnRetry.Text = "重试失败";
+            btnRetry.Enabled = false;
+            btnRetry.Click += delegate { RetryFailed(); };
+            Controls.Add(btnRetry);
+
             btnMore.Text = "下一页";
-            btnMore.SetBounds(136, 472, 88, Theme.H);
             btnMore.Enabled = false;
             btnMore.Click += delegate { DoSearch(page + 1); };
             Controls.Add(btnMore);
 
             btnClose.Text = "关闭";
-            btnClose.SetBounds(564, 472, 100, Theme.H);
             btnClose.DialogResult = DialogResult.Cancel;
             Controls.Add(btnClose);
             CancelButton = btnClose;
+
+            // ---------------- 右栏：详情 ----------------
+            pic.SizeMode = PictureBoxSizeMode.Zoom;
+            pic.BackColor = Theme.SurfaceAlt;
+            pic.BorderStyle = BorderStyle.FixedSingle;
+            Controls.Add(pic);
+
+            lblTitle2.Font = Theme.UIBold;
+            lblTitle2.ForeColor = Theme.Ink;
+            lblTitle2.AutoSize = false;
+            lblTitle2.Text = "（左边选一条看介绍）";
+            Controls.Add(lblTitle2);
+
+            lblMeta.Font = Theme.UISmall;
+            lblMeta.ForeColor = Theme.Ink2;
+            lblMeta.AutoSize = false;
+            lblMeta.AutoEllipsis = true;
+            Controls.Add(lblMeta);
+
+            lblTags.Font = Theme.UISmall;
+            lblTags.ForeColor = Theme.Info;
+            lblTags.AutoSize = false;
+            lblTags.AutoEllipsis = true;
+            Controls.Add(lblTags);
+
+            lblWhere.Font = Theme.UISmall;
+            lblWhere.ForeColor = Theme.Ok;
+            lblWhere.AutoSize = false;
+            lblWhere.AutoEllipsis = true;
+            Controls.Add(lblWhere);
+
+            txtDesc.Multiline = true;
+            txtDesc.ReadOnly = true;
+            txtDesc.ScrollBars = ScrollBars.Vertical;
+            txtDesc.WordWrap = true;
+            txtDesc.BorderStyle = BorderStyle.FixedSingle;
+            Theme.Dress(txtDesc);
+            Controls.Add(txtDesc);
+
+            btnLang.Text = "看原文";
+            btnLang.Click += delegate { showZh = !showZh; FillDetail(); };
+            Controls.Add(btnLang);
+
+            btnOpen.Text = "在浏览器打开";
+            btnOpen.Click += delegate { OpenInBrowser(); };
+            Controls.Add(btnOpen);
 
             FormClosing += delegate { cancel = true; };
 
             // 标题栏和表头/滚动条交给主题：这两个必须在句柄建好之后打招呼
             Load += delegate { Theme.ApplyChrome(this); Theme.DeepNative(this); };
             Shown += delegate { Theme.ApplyChrome(this); Theme.DeepNative(this); };
+            Resize += delegate { ApplyLayout(); };
 
+            ApplyLayout();
             FillCats();
             cboCat.SelectedIndex = 0;
+        }
+
+        /// <summary>设计值 → 物理像素。C# 5 没有局部函数，摊成一个小方法，省得每行写 Dpi.S。</summary>
+        private static int S(int v) { return Dpi.S(v); }
+
+        /// <summary>
+        /// 全部坐标集中在这里算：左栏吃剩余宽度、右栏定宽 384。
+        /// 窗口可缩放（原来是写死 680x520 的固定框，合集一展开就只能在 7 行里翻）。
+        /// 用物理像素 + Dpi.S 换算，和主窗口 ApplyResponsive 同一套路子。
+        /// </summary>
+        private void ApplyLayout()
+        {
+            int W = ClientSize.Width, H = ClientSize.Height;
+            int m = S(M), gap = S(Gap);
+            int dw = S(DetailW);
+            int detailX = W - m - dw;
+            int leftW = Math.Max(S(320), detailX - gap - m);
+
+            int y = S(10);
+            lblTip.SetBounds(m, y, leftW, S(20));
+
+            y = S(36);
+            lblCat.SetBounds(m, y + S(4), S(36), S(20));
+            cboCat.SetBounds(m + S(40), y, S(150), S(24));
+            int sortW = S(96), searchW = S(64);
+            int queryX = m + S(40) + S(150) + S(8);
+            int sortX = detailX - gap - sortW;
+            int searchX = sortX - S(8) - searchW;
+            int queryW = Math.Max(S(110), searchX - S(8) - queryX);
+            txtQuery.SetBounds(queryX, y, queryW, S(24));
+            btnSearch.SetBounds(searchX, S(32), searchW, S(32));
+            cboSort.SetBounds(sortX, y, sortW, S(24));
+
+            box.SetBounds(m, S(76), leftW, S(56));
+
+            int by = S(140), bh = S(32);
+            btnParse.SetBounds(m, by, S(88), bh);
+            btnPaste.SetBounds(m + S(96), by, S(96), bh);
+            btnClear.SetBounds(m + S(200), by, S(64), bh);
+
+            // 底栏：左起主操作，右边收尾
+            int btnY = H - S(16) - S(32);
+            int bottomTop = btnY - S(8);
+            btnStart.SetBounds(m, btnY, S(112), bh);
+            btnAll.SetBounds(m + S(120), btnY, S(56), bh);
+            btnNone.SetBounds(m + S(184), btnY, S(72), bh);
+            btnRetry.SetBounds(m + S(264), btnY, S(88), bh);
+            btnMore.SetBounds(m + S(360), btnY, S(72), bh);
+            btnClose.SetBounds(W - m - S(88), btnY, S(88), bh);
+
+            lblStatus.SetBounds(m, bottomTop - S(18) - S(8), leftW, S(18));
+            bar.SetBounds(m, bottomTop - S(12), leftW, S(10));
+
+            int listTop = S(180);
+            int listH = Math.Max(S(120), bar.Top - S(8) - listTop);
+            lv.SetBounds(m, listTop, leftW, listH);
+
+            // 右栏详情
+            pic.SetBounds(detailX, S(36), dw, S(196));
+            lblTitle2.SetBounds(detailX, S(240), dw, S(40));
+            lblMeta.SetBounds(detailX, S(282), dw, S(18));
+            lblTags.SetBounds(detailX, S(302), dw, S(18));
+            lblWhere.SetBounds(detailX, S(322), dw, S(18));
+            int descTop = S(346);
+            txtDesc.SetBounds(detailX, descTop, dw, Math.Max(S(80), bottomTop - S(8) - descTop));
+            btnLang.SetBounds(detailX, btnY, S(88), bh);
+            btnOpen.SetBounds(detailX + S(96), btnY, S(120), bh);
+
+            // 列宽随左栏重算：标题吃掉剩余，其余定宽
+            int fixedW = S(58) + S(84) + S(70) + S(150) + S(4);
+            if (lv.Columns.Count == 5)
+                lv.Columns[0].Width = Math.Max(S(140), leftW - fixedW - S(24));
         }
 
         private void Ui(Action a)
@@ -1065,23 +1323,42 @@ namespace Installer
 
         private void FillList()
         {
+            filling = true;
             lv.BeginUpdate();
             try
             {
                 lv.Items.Clear();
                 foreach (WsItem it in items)
                 {
-                    ListViewItem li = new ListViewItem(it.Id);
-                    li.SubItems.Add(it.Title.Length == 0 ? "(无标题)" : it.Title);
+                    ListViewItem li = new ListViewItem(it.Title.Length == 0 ? "(无标题)" : it.Title);
+                    li.SubItems.Add(WsText.Compact(it.Subs));
+                    li.SubItems.Add(WsText.Ago(it.Updated));
                     li.SubItems.Add(it.Size > 0 ? Core.Human(it.Size) : "-");
-                    li.SubItems.Add(it.IsCollection ? it.State : (it.Note.Length > 0 ? it.Note : it.State));
+                    string st = it.IsCollection ? it.State : (it.Note.Length > 0 ? it.Note : it.State);
+                    li.SubItems.Add(st);
                     li.Tag = it;
+
                     if (it.IsCollection) li.ForeColor = Theme.Ink3;
                     else if (it.Note.Length > 0) li.ForeColor = Theme.Warn;
+
+                    // 默认一个都不勾：整页默认勾上会让「开始下载」一点就下一屏
+                    li.Checked = false;
+
+                    string tipText = "ID " + it.Id;
+                    if (it.Tags.Length > 0) tipText += "\r\n标签：" + it.Tags;
+                    if (it.Where.Length > 0) tipText += "\r\n会装到：" + it.Where;
+                    else tipText += "\r\n点一行，右边看介绍（自动翻中文）";
+                    li.ToolTipText = tipText;
+
                     lv.Items.Add(li);
                 }
             }
-            finally { lv.EndUpdate(); }
+            finally
+            {
+                lv.EndUpdate();
+                filling = false;
+            }
+            UpdatePickCount();
         }
 
         private void SetRowState(WsItem it, string s)
@@ -1092,10 +1369,195 @@ namespace Installer
                 foreach (ListViewItem li in lv.Items)
                 {
                     if (li.Tag != it) continue;
-                    li.SubItems[3].Text = s;
+                    li.SubItems[4].Text = s;
                     break;
                 }
             });
+        }
+
+        // ------------------------------------------------ 下载队列
+
+        /// <summary>全选 / 全不选：只勾真能下的（合集行、没直链的、已经下过的都跳过）。</summary>
+        private void SetAllChecked(bool on)
+        {
+            if (busy) return;
+            filling = true;
+            lv.BeginUpdate();
+            try
+            {
+                foreach (ListViewItem li in lv.Items)
+                {
+                    WsItem it = li.Tag as WsItem;
+                    if (it == null || it.IsCollection || it.Url.Length == 0) continue;
+                    li.Checked = on;
+                }
+            }
+            finally
+            {
+                lv.EndUpdate();
+                filling = false;
+            }
+            UpdatePickCount();
+        }
+
+        /// <summary>按钮文案跟着勾选数走：「开始下载」说清到底下几个。</summary>
+        private void UpdatePickCount()
+        {
+            int picked = 0;
+            foreach (ListViewItem li in lv.CheckedItems)
+            {
+                WsItem it = li.Tag as WsItem;
+                if (it != null && !it.IsCollection && it.Url.Length > 0 && !it.Ok) picked++;
+            }
+            int can = 0;
+            foreach (WsItem it in items)
+                if (!it.IsCollection && it.Url.Length > 0 && !it.Ok) can++;
+
+            btnStart.Enabled = can > 0 && !busy;
+            btnStart.Text = picked > 0 ? "下载勾选的 " + picked + " 个" : "开始下载";
+            btnRetry.Enabled = failed.Count > 0 && !busy;
+
+            if (!filling && !busy && can > 0 && picked == 0)
+                SetStatus("可下载 " + can + " 个：勾上要下的（不勾 = 全部下载）；点一行看右侧介绍。");
+        }
+
+        private void RetryFailed()
+        {
+            if (busy || failed.Count == 0) return;
+            foreach (WsItem it in failed) it.State = "待下载";
+            failed.Clear();
+            btnRetry.Enabled = false;
+            StartDownload(true);
+        }
+
+        // ------------------------------------------------ 详情面板
+
+        /// <summary>
+        /// 右侧详情：先上已经有的东西（标题 / 元信息 / 缓存译文），
+        /// 预览图和翻译各走后台 —— 网络慢的时候不能把界面卡在那儿等。
+        /// </summary>
+        private void FillDetail()
+        {
+            WsItem it = lv.SelectedItems.Count > 0 ? lv.SelectedItems[0].Tag as WsItem : null;
+            if (it == null) { ClearDetail(); return; }
+
+            detailItem = it;
+            int token = ++detailToken;                 // 旧线程回来时号不对就不动界面
+
+            lblTitle2.Text = it.Title.Length > 0 ? it.Title : "(无标题)";
+            string meta = "";
+            if (it.Subs > 0) meta += "订阅 " + WsText.Compact(it.Subs);
+            if (it.Updated > 0) meta += (meta.Length > 0 ? "  ·  " : "") + "更新 " + WsText.Ago(it.Updated);
+            if (it.Size > 0) meta += (meta.Length > 0 ? "  ·  " : "") + Core.Human(it.Size);
+            if (it.IsCollection) meta += (meta.Length > 0 ? "  ·  " : "") + "这是合集";
+            if (meta.Length == 0) meta = "物品 " + it.Id;
+            lblMeta.Text = meta;
+            lblTags.Text = it.Tags;
+            lblWhere.Text = it.Where.Length > 0 ? "会装到：" + it.Where : "";
+            btnOpen.Enabled = true;
+
+            string clean = WsText.Clean(it.Desc);
+            string cached = WsTranslate.ReadCache(it.Id, it.Updated);
+            txtDesc.Text = (showZh && cached != null) ? cached : (clean.Length > 0 ? clean : "（这个物品没有写介绍）");
+            btnLang.Text = showZh ? "看原文" : "看译文";
+            btnLang.Enabled = clean.Length > 0;
+
+            if (pic.Image != null) { Image old = pic.Image; pic.Image = null; old.Dispose(); }
+
+            if (sampleMode) return;                 // 截图自检：样例数据不联网，免得截图等网络
+
+            // 控件尺寸要在 UI 线程先取好：后台线程里读控件属性属于跨线程访问
+            int pw = pic.Width, ph = pic.Height;
+
+            Thread th = new Thread(delegate()
+            {
+                Image img = WsThumb.Load(it.Preview, it.Id, pw, ph);
+
+                string zh = null, err = null;
+                if (clean.Length > 0)
+                {
+                    zh = WsTranslate.ReadCache(it.Id, it.Updated);
+                    if (zh == null) zh = WsTranslate.Translate(it.Id, it.Updated, clean, out err);
+                }
+
+                Ui(delegate()
+                {
+                    if (token != detailToken) { if (img != null) img.Dispose(); return; }   // 已经切走
+                    if (img != null)
+                    {
+                        if (pic.Image != null) pic.Image.Dispose();
+                        pic.Image = img;
+                    }
+                    if (showZh && zh != null && zh.Length > 0) txtDesc.Text = zh;
+                    else if (showZh && err != null) SetStatus(err);
+                });
+            });
+            th.IsBackground = true;
+            th.Priority = ThreadPriority.BelowNormal;
+            th.Start();
+        }
+
+        private void ClearDetail()
+        {
+            detailItem = null;
+            detailToken++;
+            if (pic.Image != null) { Image old = pic.Image; pic.Image = null; old.Dispose(); }
+            lblTitle2.Text = "（左边选一条看介绍）";
+            lblMeta.Text = "";
+            lblTags.Text = "";
+            lblWhere.Text = "";
+            txtDesc.Text = "";
+            btnLang.Enabled = false;
+            btnOpen.Enabled = false;
+        }
+
+        private void OpenInBrowser()
+        {
+            string id = detailItem != null ? detailItem.Id : "";
+            if (id.Length == 0) return;
+            try
+            {
+                System.Diagnostics.Process.Start("https://steamcommunity.com/sharedfiles/filedetails/?id=" + id);
+            }
+            catch (Exception ex) { SetStatus("打不开浏览器：" + ex.Message); }
+        }
+
+        /// <summary>
+        /// 下载完认一下这些包改了什么：复用库里的识别结果，把「会装到哪」写回行提示和右栏。
+        /// 只做说明，不改任何文件 —— 「只装这个」还是回主界面的树上点，免得这里绕开单选取代的规则。
+        /// </summary>
+        private void Annotate(List<WsItem> done)
+        {
+            if (done == null || done.Count == 0) return;
+            try { Core.ScanMods(); }
+            catch (Exception ex) { Core.Log("WARN", "工坊下载后扫库失败: " + ex.Message); return; }
+
+            Dictionary<string, ModItem> byName = new Dictionary<string, ModItem>(StringComparer.OrdinalIgnoreCase);
+            foreach (ModItem m in Core.ModList)
+                if (!string.IsNullOrEmpty(m.Name) && !byName.ContainsKey(m.Name)) byName[m.Name] = m;
+
+            int hit = 0;
+            foreach (WsItem it in done)
+            {
+                if (string.IsNullOrEmpty(it.SavedAs)) continue;
+                ModItem m;
+                if (!byName.TryGetValue(it.SavedAs, out m)) continue;
+                hit++;
+                string where = m.Cat;
+                if (!string.IsNullOrEmpty(m.Sub)) where += " · " + m.Sub;
+                if (!string.IsNullOrEmpty(m.Subject)) where += " → " + m.Subject;
+                it.Where = where;
+                string shortWhere = m.Subject.Length > 0 ? m.Subject : m.Cat;
+                SetRowState(it, "已下载 · " + shortWhere);
+                foreach (ListViewItem li in lv.Items)
+                {
+                    if (li.Tag != it) continue;
+                    li.ToolTipText = "ID " + it.Id + "\r\n会装到：" + where;
+                    break;
+                }
+            }
+            Core.Log("INFO", "工坊：识别了 " + hit + "/" + done.Count + " 个下载物，写回「会装到哪」");
+            if (detailItem != null) lblWhere.Text = detailItem.Where.Length > 0 ? "会装到：" + detailItem.Where : "";
         }
 
         /// <summary>分类下拉 = 本地方案树的大类 + 位置。选中只负责填搜索词，不自动搜。</summary>
@@ -1234,28 +1696,52 @@ namespace Installer
             t.Start();
         }
 
-        private void StartDownload()
+        private void StartDownload() { StartDownload(false); }
+
+        /// <summary>retryOnly=true 时只跑上次失败的那几个（状态列里有原因，重试不用重新解析）。</summary>
+        private void StartDownload(bool retryOnly)
         {
             if (busy) return;
             List<WsItem> todo = new List<WsItem>();
-            // 有选中行就只下选中的：浏览模式一页 30 个结果，通常只想要其中几个。
-            // 一个都没选才退化成「全部可下载的」（粘贴模式下的老行为）。
-            if (lv.SelectedItems.Count > 0)
+            if (!retryOnly) failed.Clear();
+
+            if (retryOnly)
             {
-                foreach (ListViewItem li in lv.SelectedItems)
-                {
-                    WsItem it = li.Tag as WsItem;
-                    if (it != null && !it.IsCollection && it.Url.Length > 0 && !it.Ok) todo.Add(it);
-                }
+                foreach (WsItem it in failed)
+                    if (!it.IsCollection && it.Url.Length > 0) todo.Add(it);
             }
             else
             {
-                foreach (WsItem it in items)
-                    if (!it.IsCollection && it.Url.Length > 0 && !it.Ok) todo.Add(it);
+                // 勾选优先（这才是「下载队列」）：勾了就是要下这几个，哪怕没选中行。
+                // 一个都没勾 → 退到选中行 → 再退到「全部可下载的」（粘贴模式的老行为）。
+                HashSet<WsItem> picked = new HashSet<WsItem>();
+                foreach (ListViewItem li in lv.CheckedItems)
+                {
+                    WsItem w = li.Tag as WsItem;
+                    if (w != null) picked.Add(w);
+                }
+                if (picked.Count > 0)
+                {
+                    foreach (WsItem it in items)
+                        if (picked.Contains(it) && !it.IsCollection && it.Url.Length > 0 && !it.Ok) todo.Add(it);
+                }
+                else if (lv.SelectedItems.Count > 0)
+                {
+                    foreach (ListViewItem li in lv.SelectedItems)
+                    {
+                        WsItem it = li.Tag as WsItem;
+                        if (it != null && !it.IsCollection && it.Url.Length > 0 && !it.Ok) todo.Add(it);
+                    }
+                }
+                else
+                {
+                    foreach (WsItem it in items)
+                        if (!it.IsCollection && it.Url.Length > 0 && !it.Ok) todo.Add(it);
+                }
             }
             if (todo.Count == 0)
             {
-                SetStatus("没有可下载的物品：要么都下完了，要么都没有直链。");
+                SetStatus(retryOnly ? "上次失败的都已经下完了。" : "没有可下载的物品：要么都下完了，要么都没有直链。");
                 return;
             }
 
@@ -1274,6 +1760,7 @@ namespace Installer
             Thread t = new Thread(delegate()
             {
                 int ok = 0, fail = 0, skip = 0;
+                List<WsItem> done = new List<WsItem>();
                 for (int i = 0; i < todo.Count; i++)
                 {
                     if (cancel) break;
@@ -1322,12 +1809,15 @@ namespace Installer
                                 + "（游戏内名，工坊标题是「" + Clip(it.Title, 40) + "」）");
                             dest = Path.Combine(dir, rn);
                         }
+                        it.SavedAs = Path.GetFileName(dest);
+                        done.Add(it);
                         SetRowState(it, "已下载 " + Core.Human(it.Size) + (rn != null ? "，已改名 " + Clip(rn, 16) : ""));
                         Core.Log("OK", "工坊：已下载 " + it.Id + " → " + dest);
                     }
                     catch (Exception ex)
                     {
                         fail++;
+                        if (!failed.Contains(it)) failed.Add(it);
                         string why = ex.Message;
                         if (why.Length > 24) why = why.Substring(0, 24) + "…";
                         SetRowState(it, "失败：" + why);
@@ -1337,6 +1827,7 @@ namespace Installer
 
                 int okFinal = ok, failFinal = fail, skipFinal = skip;
                 bool cancelled = cancel;
+                List<WsItem> doneFinal = done;
                 Ui(delegate
                 {
                     busy = false;
@@ -1345,6 +1836,9 @@ namespace Installer
                     bar.Value = 0;
                     bar.Visible = false;
                     DownloadedCount += okFinal;
+                    Annotate(doneFinal);
+                    UpdatePickCount();
+                    btnStart.Text = "开始下载";
                     SetStatus((cancelled ? "已停止：" : "完成：") + "新下载 " + okFinal + " 个"
                             + (skipFinal > 0 ? "，已存在 " + skipFinal + " 个" : "")
                             + (failFinal > 0 ? "，失败 " + failFinal + " 个（原因见状态列）" : "")
@@ -1384,6 +1878,13 @@ namespace Installer
             a.Id = "3833236101";
             a.Title = "The After - Tank / Bloater (The Last Of Us)";
             a.Size = 45190588;
+            a.Subs = 12400;
+            a.Updated = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds - 86400 * 23;
+            a.Tags = "Tank · Bloater · 角色模型";
+            a.Desc = "[h1]The After[/h1]\n[b]Tank and Bloater[/b] replacement based on The Last of Us.\n\n"
+                   + "[list][*]Replaces both tank and boomer with clicker-style models\n"
+                   + "[*]Custom sounds included\n[*]Works with most server mods[/list]\n\n"
+                   + "Credits to the original ripper. Report bugs in the comments.";
             a.Url = "https://cdn.steamusercontent.com/ugc/x/";
             a.FileName = "myl4d2addons/tank bloater.vpk";
             a.State = "待下载";
@@ -1393,12 +1894,18 @@ namespace Installer
             b.Id = "3832308538";
             b.Title = "Chargers get staggered by blunt melee [vscript]";
             b.Size = 2622;
+            b.Subs = 860;
+            b.Updated = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds - 86400 * 120;
+            b.Tags = "vscript · 玩法";
+            b.Desc = "[b]Small vscript tweak[/b] that makes chargers flinch when hit with a blunt weapon.";
             b.Url = "https://cdn.steamusercontent.com/ugc/y/";
             b.FileName = "new folder (4).vpk";
             b.State = "已下载 3 KB";
             items.Add(b);
 
+            sampleMode = true;
             FillList();
+            if (lv.Items.Count > 1) lv.Items[1].Selected = true;     // 截图里右栏要有内容
             SetStatus("解析到 239 条（1 个合集展开 237 个子项），可下载 2 个，0 条拿不到直链。");
             btnStart.Enabled = true;
         }
