@@ -460,6 +460,10 @@ namespace Installer
             lblStatus.Text = n == 0 ? lblStatus.Text
                 : "已加载 " + n + " 个 · 第 1–" + pagesLoaded + " 页"
                   + (atEnd ? " · 到底了" : pagesLoaded < AutoPages ? " · 继续下滑自动加载" : " · 点底部继续");
+
+            // 底部提示条改高改矮都会影响墙的总高度，必须跟着重算 ——
+            // 少了这一步，提示文字就算写好了也会被控件边界裁掉（第一版就是这么不显示的）。
+            RelayoutWall();
         }
 
         private void RelayoutWall()
