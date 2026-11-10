@@ -47,6 +47,38 @@ jobs:
           path: L4D2Setup.exe
           if-no-files-found: error
 
+      # 只编过不等于跑得起来：布局自检要真的把 MainForm 建出来走一遍排版，
+      # 能抓到「按钮叠了 / 栏跑出窗口 / 新代码在构造期抛异常」这类编译期看不见的问题。
+      # 它不开窗口、不读 MOD 库、不需要游戏目录，几秒就完。
+      # 注意用 PowerShell：cmd 批处理不会等 GUI 程序退出，%errorlevel% 会失真。
+      # 先设成不阻塞（continue-on-error），观察一两轮绿了再把那行删掉转成硬门禁。
+      - name: 布局自检
+        continue-on-error: true
+        shell: powershell
+        run: |
+          & .\L4D2Setup.exe --layoutself
+          $code = $LASTEXITCODE
+          Write-Host "layoutself exit=$code"
+          if ($code -ne 0) { exit $code }
+
+      # 工坊解析是纯离线的（链接解析 / 文件名清理 / JSON 提取），一并跑一遍
+      - name: 工坊离线自检
+        continue-on-error: true
+        shell: powershell
+        run: |
+          & .\L4D2Setup.exe --workshopself
+          $code = $LASTEXITCODE
+          Write-Host "workshopself exit=$code"
+          if ($code -ne 0) { exit $code }
+
+      - name: 把自检日志一起带走
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-logs
+          path: _装机记录/
+          if-no-files-found: ignore
+
       - name: 打 tag 时发 Release
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash

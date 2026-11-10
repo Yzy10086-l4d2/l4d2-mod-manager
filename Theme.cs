@@ -27,7 +27,7 @@ namespace Installer
         public Color Accent, AccentHover, AccentDown, DangerHover, DangerDown;
         public Color Warn, Ok, Info;
         public Color RowOn, RowOff, RowGame;
-        public Color CardEdge, SegTrack, SegEdge, TrackOff, ThumbOn;
+        public Color CardEdge, SegTrack, SegEdge, TrackOff, TrackEdge, ThumbOn;
         public Color TreeBg, TreeSel, TreeHover, TreeBranch;   // 左侧方案树
 
         private static Color C(int r, int g, int b) { return Color.FromArgb(r, g, b); }
@@ -68,6 +68,7 @@ namespace Installer
             SegTrack = C(239, 239, 242),
             SegEdge = C(222, 222, 228),
             TrackOff = C(233, 233, 235),
+            TrackEdge = C(140, 145, 152),   // 对白卡 3.17:1：开关「关」态的边界要够 3:1（WCAG 1.4.11）
             ThumbOn = C(255, 255, 255),
             TreeBg = C(247, 249, 251),
             TreeSel = C(240, 243, 247),
@@ -90,7 +91,8 @@ namespace Installer
             LineSoft = C(42, 46, 53),
             Ink = C(236, 238, 241),
             Ink2 = C(167, 174, 184),
-            Ink3 = C(139, 147, 158),      // 对卡片约 5.2:1，仍过 WCAG AA
+            Ink3 = C(150, 158, 169),      // 对卡片 5.97:1；对选中行底(TreeSel) 4.61:1、对胶囊 5.04:1
+                                          // （原来 139,147,158 在选中行只有 4.02、胶囊 4.39，不到 AA 的 4.5）
             Primary = C(236, 238, 241),
             PrimaryHover = C(255, 255, 255),
             PrimaryDown = C(203, 208, 214),
@@ -111,6 +113,7 @@ namespace Installer
             SegTrack = C(36, 39, 45),
             SegEdge = C(54, 59, 67),
             TrackOff = C(58, 63, 71),
+            TrackEdge = C(110, 116, 124),   // 对卡片 3.42:1：轨道本身太暗，靠这一圈 1px 边交代「这是个可点的开关」
             ThumbOn = C(22, 25, 29),
         
             TreeBg = C(24, 26, 30),
@@ -302,6 +305,7 @@ namespace Installer
             add(prevPal.SegTrack, pal.SegTrack);
             add(prevPal.SegEdge, pal.SegEdge);
             add(prevPal.TrackOff, pal.TrackOff);
+            add(prevPal.TrackEdge, pal.TrackEdge);
             add(prevPal.ThumbOn, pal.ThumbOn);
             // 切回浅色时，「白」不能变成别的颜色。
             // 深色那套里 PrimaryHover 是纯白，于是映射表里会有一条「白 → 浅色主按钮悬停色」；
@@ -459,6 +463,7 @@ namespace Installer
         public static Color SegTrack { get { return pal.SegTrack; } }   // 分段控件底
         public static Color SegEdge { get { return pal.SegEdge; } }
         public static Color TrackOff { get { return pal.TrackOff; } }   // 开关·关
+        public static Color TrackEdge { get { return pal.TrackEdge; } } // 开关边线：轨道和卡片太接近时靠它交代边界
         public static Color ThumbOn { get { return pal.ThumbOn; } }     // 开关圆点
         public static readonly Font H1 = new Font("Microsoft YaHei UI", 16F, FontStyle.Bold, GraphicsUnit.Point);
         public static readonly Font RowTitle = new Font("Microsoft YaHei UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
@@ -1139,6 +1144,9 @@ namespace Installer
             using (GraphicsPath p = Theme.Round(r, Height / 2))
             {
                 using (SolidBrush b = new SolidBrush(track)) g.FillPath(b, p);
+                // 1px 边线跟着一起过渡：开的时候淡出（轨道已经是高对比的 Mark），关的时候交代边界
+                using (Pen edge = new Pen(Theme.Mix(Theme.TrackEdge, Theme.Mark, pos)))
+                    g.DrawPath(edge, p);
             }
 
             int d = Height - 6;

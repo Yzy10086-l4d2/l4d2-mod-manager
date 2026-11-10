@@ -46,6 +46,11 @@ namespace Installer
         private string schemeName = "";
         private ToolTip tips;
         private ProgressBar bar;
+        private Label lblPre;                    // 装机前的常驻校验条（替代「点了才弹」的三道框）
+        private readonly System.Windows.Forms.Timer preTimer = new System.Windows.Forms.Timer();  // 校验防抖
+        private bool preOk = true;               // 上一次校验的结论；初值 true = 首次校验前不拦人（和旧行为一致）
+        private bool closeWhenIdle;              // 装机中途请求退出：停在文件边界后再关窗口
+        private bool forceClose;                 // 已经确认过一次退出，收盘时不要再弹确认
         private TextBox txtLog;
         private readonly HashSet<string> checkedKeys = new HashSet<string>();
         // 展开了哪些套装（按 ModGroup.Key）：展开后每个 vpk 单独一行，可以只勾其中一个
@@ -121,7 +126,41 @@ namespace Installer
             };
             // 主窗口一关，桌面的浏览器窗口和本地服务都跟着收摊，
             // 别留一个孤儿窗口在那儿转圈（它轮询不到数据，看着像卡死）
-            FormClosing += delegate { CloseDesk(); };
+            FormClosing += delegate(object s, FormClosingEventArgs e)
+            {
+                if (forceClose) { CloseDesk(); return; }   // 已经问过一次了（装机停下后自动关），别再拦
+                // 长操作（装机/还原/导入）在跑时关窗口：后台线程随进程一起没，
+                // 文件留在半路上，manifest 也没写，下次启动判断不出该不该重装。
+                string busy = OpGuard.Current;
+                if (busy != null)
+                {
+                    if (closeWhenIdle) return;          // 已经请求停止了，再点一次 × = 直接退（不卡人）
+                    if (MessageBox.Show(this,
+                        "正在" + busy + "，还没结束。\r\n\r\n要停下来退出吗？停下后窗口会自己关。",
+                        "还没结束", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+                        MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                    { e.Cancel = true; return; }        // 默认是「不关」，接着装
+                    Work.CancelRequested = true;
+                    Core.Log("WARN", "用户在「" + busy + "」中途关窗口，已请求停止");
+                    if (busy == "装机")
+                    {
+                        // 等它停在文件边界上再退，别把半边 vpk 留在 addons 里
+                        closeWhenIdle = true;
+                        SetStatus("正在停止装机 · 停在当前文件后自动退出");
+                        e.Cancel = true;
+                        return;
+                    }
+                    return;                             // 别的流程没有停止点，只能硬退
+                }
+                else if (treeView != null && treeView.PendingCount > 0)
+                {
+                    if (MessageBox.Show(this,
+                        "有 " + treeView.PendingCount + " 处开关改动还没写进游戏。\r\n退出就丢了，确定退出？",
+                        "改动没保存", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
+                    { e.Cancel = true; return; }
+                }
+                CloseDesk();
+            };
         }
 
         private bool initializing = true;
@@ -214,6 +253,8 @@ namespace Installer
                         // 扫库期间用户选过目录：现在安全了，接着切
                         if (pendingRoot != null) { string pr = pendingRoot; pendingRoot = null; SwitchGameRoot(pr, "补切（扫库完成）"); }
                         ShowTree();                        // 启动第一屏是方案树；桌面要点按钮才开
+                        ProbeWritable(txtGame.Text.Trim());  // 后台探一次可写性，校验条才有话说
+                        QueuePrecheck();
                     });
                 }
                 catch (Exception ex) { Core.Log("FAIL", "初始化失败: " + ex.Message); }
@@ -295,6 +336,7 @@ namespace Installer
             int modeX = browseX - topGap - modeW;
             txtGame = new ComboBox(); txtGame.SetBounds(76, 18, modeX - 8 - 76, 24);
             txtGame.DropDownStyle = ComboBoxStyle.DropDown; Theme.Dress(txtGame); Controls.Add(txtGame);
+            txtGame.TextChanged += delegate { QueuePrecheck(); };   // 手输路径时底栏那句提示跟着变
             cboMode = new ComboBox(); cboMode.SetBounds(modeX, 18, modeW, 24);
             cboMode.DropDownStyle = ComboBoxStyle.DropDownList; Theme.Dress(cboMode);
             cboMode.Items.Add("U 盘模式"); cboMode.Items.Add("本地模式");
@@ -511,33 +553,55 @@ namespace Installer
             lblConflict.Click += delegate { ShowConflictDetail(); };
             gm.Controls.Add(lblConflict);
 
-            // ---- 底部动作区：主操作只有一个 ----
+            // ---- 底部动作区 ----
+            // 右侧只留「次要 + 主操作」两个；破坏性的「一键还原」挪到最左下角，
+            // 和主操作隔开近一个屏宽 —— 以前它跟「开始安装」同高同排只差 8px，
+            // 手滑一下就得读一段四行长的确认框，读多了确认就失效。
+            const int bwRestore = 96, bwSwitch = 116, bwOpen = 104, bwInstall = 112;
+            int rightEdge = W - Theme.M;
+            int xOpen = rightEdge - bwOpen;
+            int xSwitch = xOpen - Theme.S - bwSwitch;
+            int xInstall = xSwitch - Theme.S - bwInstall;
+
             btnInstall = new FlatButton(); btnInstall.Text = "开始安装"; btnInstall.Primary = true;
             btnInstall.AccessibleName = "开始安装所选组件和 MOD";
             btnInstall.Font = new Font(Theme.UI, FontStyle.Bold);
-            btnInstall.SetBounds(W - Theme.M - 104 - 8 - 96 - 8 - 116 - 8 - 112, CH - BottomBarH, 112, Theme.HP);
+            btnInstall.SetBounds(xInstall, CH - BottomBarH, bwInstall, Theme.HP);
             btnInstall.Click += delegate { DoInstall(); }; Controls.Add(btnInstall);
             btnSwitch = new FlatButton(); btnSwitch.Text = "管理已装 MOD";
-            btnSwitch.SetBounds(W - Theme.M - 104 - 8 - 96 - 8 - 116, CH - BottomBarH, 116, Theme.HP);
+            btnSwitch.SetBounds(xSwitch, CH - BottomBarH, bwSwitch, Theme.HP);
             btnSwitch.Click += delegate { DoSwitch(); }; Controls.Add(btnSwitch);
             btnRestore = new FlatButton(); btnRestore.Text = "一键还原"; btnRestore.Danger = true;
-            btnRestore.SetBounds(W - Theme.M - 104 - 8 - 96, CH - BottomBarH, 96, Theme.HP);
+            btnRestore.SetBounds(Theme.M, CH - BottomBarH, bwRestore, Theme.HP);
+            btnRestore.AccessibleName = "危险：移除本次安装写进去的文件";
             btnRestore.Click += delegate { DoRestore(); }; Controls.Add(btnRestore);
-            tips.SetToolTip(btnRestore, "危险操作：移除本次安装的平台文件和 MOD。执行前会再次确认。");
+            tips.SetToolTip(btnRestore, "危险操作：删掉装进游戏的文件。执行前会再次确认。\r\n故意放在最左下角，离「开始安装」最远的地方。");
             btnOpen = new FlatButton(); btnOpen.Text = "打开游戏目录";
-            btnOpen.SetBounds(W - Theme.M - 104, CH - BottomBarH, 104, Theme.HP);
+            btnOpen.SetBounds(xOpen, CH - BottomBarH, bwOpen, Theme.HP);
             btnOpen.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", txtGame.Text); } catch { } }; Controls.Add(btnOpen);
 
-            // 进度条和「停止剩余」跟按钮同排（左侧空着，正好用上），不再单独占一行 —— 底栏能矮一截
-            bar = new ProgressBar(); bar.SetBounds(Theme.M, CH - BottomBarH + 12, 440, 12); bar.Visible = false; Controls.Add(bar);
+            // 进度条和「停止剩余」跟着让位：起点从还原按钮右边开始
+            bar = new ProgressBar(); bar.SetBounds(Theme.M + bwRestore + Theme.G, CH - BottomBarH + 12, 360, 12); bar.Visible = false; Controls.Add(bar);
             btnCancel = new FlatButton();
             btnCancel.Text = "停止剩余";
-            btnCancel.SetBounds(Theme.M + 452, CH - BottomBarH + 6, 92, 24);
+            btnCancel.SetBounds(Theme.M + bwRestore + Theme.G + 368, CH - BottomBarH + 6, 92, 24);
             btnCancel.Visible = false;
             btnCancel.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             btnCancel.Click += delegate { RequestStopInstall(); };
             tips.SetToolTip(btnCancel, "在当前步骤或文件结束后停止后续安装。已经写入的文件会保留，不会自动回滚。");
             Controls.Add(btnCancel);
+
+            // 装机前的常驻校验条：把「目录不对 / 游戏在跑 / 什么都没勾」这三件事提前写在界面上，
+            // 别等点了「开始安装」再一个接一个弹框把人拦下来。装机和进度条抢同一块地方。
+            lblPre = new Label();
+            lblPre.SetBounds(Theme.M + bwRestore + Theme.G, CH - BottomBarH + 8, 420, 40);
+            lblPre.Font = Theme.UISmall;
+            lblPre.AutoSize = false;                 // 不设就按文字自动撑开，会盖到右边按钮上
+            lblPre.AutoEllipsis = true;
+            lblPre.TextAlign = ContentAlignment.MiddleLeft;
+            lblPre.BackColor = Color.Transparent;
+            lblPre.Visible = false;
+            Controls.Add(lblPre);
             lblStatus = new Label(); lblStatus.SetBounds(Theme.M, CH - 28, W - 2 * Theme.M, 20); lblStatus.Text = "就绪";
             lblStatus.ForeColor = Theme.Ink2; lblStatus.BackColor = Color.Transparent; Controls.Add(lblStatus);
 
@@ -559,17 +623,114 @@ namespace Installer
             txtLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             btnInstall.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             btnSwitch.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
-            btnRestore.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+            btnRestore.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;    // 左下角：和右边的主操作分开
             btnOpen.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             bar.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+            lblPre.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             btnCancel.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             lblStatus.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
 
             searchTimer.Interval = 250;
             searchTimer.Tick += delegate(object s2, EventArgs e2) { searchTimer.Stop(); RefreshMods(); };
+            // 任一组件勾选变化都刷新底栏校验条（只挂一次，原来的「勾相机自动勾平台」联动不受影响）
+            foreach (CheckBox cb in new CheckBox[] { chkL4N, chkDxvk, chkSkeeto, chkAsset, chkMqcam, chkCfg, chkLaunch })
+                if (cb != null) cb.CheckedChanged += delegate { QueuePrecheck(); };
+            // 校验条防抖：勾选会连着变，进程枚举和路径判断不用每敲一下就做一遍
+            preTimer.Interval = 220;
+            preTimer.Tick += delegate { preTimer.Stop(); RefreshPrecheck(); };
             SetDrawer(false);                  // 默认收起：整个窗口就是一张台面
             Resize += delegate { ApplyResponsive(); };
             ApplyResponsive();
+        }
+
+        /// <summary>请求重算校验条（防抖 220ms）。勾选、路径、模式变了都走这里。</summary>
+        private void QueuePrecheck()
+        {
+            if (preTimer == null) return;
+            preTimer.Stop();
+            preTimer.Start();
+        }
+
+        // 目录可写性：真去写三个临时文件，代价不小（游戏目录可能在 SMB 上），
+        // 所以只在「目录变了 / 装完」时后台探一次，校验条读缓存 —— 不在 UI 线程碰盘。
+        private string writeProbeFor;
+        private bool writeProbeOk = true;
+
+        private void ProbeWritable(string root)
+        {
+            string key = root ?? "";
+            if (key.Length == 0) return;
+            System.Threading.Thread th = new System.Threading.Thread(delegate()
+            {
+                bool ok;
+                try { ok = TestWritable(key); } catch { ok = false; }
+                SafeInvoke(delegate
+                {
+                    writeProbeFor = key;
+                    writeProbeOk = ok;
+                    QueuePrecheck();
+                });
+            });
+            th.IsBackground = true;
+            th.Priority = System.Threading.ThreadPriority.BelowNormal;
+            th.Start();
+        }
+
+        /// <summary>勾了几个环境组件（L4N / dxvk / Skeeto / 素材包 / MQCam / 参数 / 启动项）。</summary>
+        private int CheckedComponents()
+        {
+            int n = 0;
+            if (chkL4N != null && chkL4N.Checked) n++;
+            if (chkDxvk != null && chkDxvk.Checked) n++;
+            if (chkSkeeto != null && chkSkeeto.Checked) n++;
+            if (chkAsset != null && chkAsset.Checked) n++;
+            if (chkMqcam != null && chkMqcam.Checked) n++;
+            if (chkCfg != null && chkCfg.Checked) n++;
+            if (chkLaunch != null && chkLaunch.Checked) n++;
+            return n;
+        }
+
+        /// <summary>
+        /// 常驻校验：能提前算出来的阻塞条件直接写在界面上，主按钮跟着亮灭。
+        /// 只做便宜判定（File.Exists / 进程枚举 / 勾选数）；写盘检测要真写文件，
+        /// 留给 CollectInstallJob 在装机前做一次，不然每次勾选都往游戏目录写一遍又删一遍。
+        /// </summary>
+        private void RefreshPrecheck()
+        {
+            if (lblPre == null || btnInstall == null) return;
+            if (IsDisposed || Disposing) return;
+            // 后台正在重建 ModList / Catalog.Groups：这时候枚举必撞「集合已修改」
+            if (scanning || initializing) return;
+
+            string root = txtGame == null ? "" : txtGame.Text.Trim();
+            List<string> bad = new List<string>();
+            int picked = Selected().Count;
+            int comps = CheckedComponents();
+
+            if (!Core.TestGame(root)) bad.Add("游戏目录不对，没找到 left4dead2.exe");
+            else if (GameRunning()) bad.Add("游戏正在运行，先完全退出（不是最小化）");
+            else if (writeProbeFor == root && !writeProbeOk) bad.Add("游戏目录写不进去，试试以管理员身份运行");
+            if (picked == 0 && comps == 0) bad.Add("还没选任何 MOD 或组件");
+
+            preOk = bad.Count == 0;
+            bool busy = OpGuard.Current != null;
+            btnInstall.Enabled = preOk && !busy;
+
+            // 装机进行中进度条要这块地方，校验条自动让开（SetBusy 里也会收）
+            lblPre.Visible = !busy;
+            if (!lblPre.Visible) return;
+
+            if (preOk)
+            {
+                lblPre.ForeColor = Theme.Ok;
+                lblPre.Text = "● 可以开始安装";
+            }
+            else
+            {
+                lblPre.ForeColor = Theme.Accent;
+                string more = bad.Count > 1 ? "\r\n另有 " + (bad.Count - 1) + " 项：" + string.Join("；", bad.GetRange(1, bad.Count - 1).ToArray()) : "";
+                lblPre.Text = "● " + bad[0] + more;
+            }
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -667,7 +828,7 @@ namespace Installer
                 SafeInvoke(delegate()
                 {
                     scanning = false;
-                    btnInstall.Enabled = true;
+                    QueuePrecheck();            // 按钮亮不亮交给校验条算（模式变了勾选也可能变了）
                     RefreshMods();
                     RefreshConflicts();
                     if (treeView != null) RebuildViews();
@@ -1334,6 +1495,13 @@ namespace Installer
             more.DropDownItems.Add("删除这个 MOD", null, delegate { DeleteInTree(lv); });
             cms.Items.Add(more);
 
+            // 多选专用：只有选中 2 行以上才出现。选了 5 行却只删掉 1 行，比不许多选更糟
+            ToolStripSeparator multiSep = new ToolStripSeparator();
+            ToolStripMenuItem multiDel = new ToolStripMenuItem("删除选中的 MOD…", null,
+                delegate { DeleteSelectedInTree(lv); });
+            cms.Items.Add(multiSep);
+            cms.Items.Add(multiDel);
+
             // 空白处只保留建分支，不再弹出一排点了也没用的 MOD 操作。
             ToolStripMenuItem newOnly = new ToolStripMenuItem("新建分支…", null, delegate
             {
@@ -1347,18 +1515,93 @@ namespace Installer
                 ModGroup g = li == null ? null : li.Tag as ModGroup;
                 ModItem one = li == null ? null : li.Tag as ModItem;
                 bool group = g != null, row = group || one != null;
-                pick.Visible = group;
-                parts.Visible = group && g.IsSet;
-                toggle.Visible = group;
-                branch.Visible = group;
-                subNew.Visible = group && treeView != null && treeView.CurrentBranch != null;
-                take.Visible = group && treeView != null && treeView.InOpenBranch(g);
-                setCat.Visible = group;
-                reveal.Visible = row;
-                more.Visible = row;
-                newOnly.Visible = !row;
+                int picked = SelectedModFiles(lv).Count;
+                // 按「行」判断多选，不能按文件数：一个套装行本身就含好几个 vpk，
+                // 只选它一行时必须还是单条菜单（用这个替换 / 换部件都还在）
+                int rows = 0;
+                foreach (ListViewItem x in lv.SelectedItems)
+                    if (x.Tag is ModGroup || x.Tag is ModItem) rows++;
+                bool multi = rows > 1;                // 多选时只留批量那条，别让单条动作假装管了全部
+                pick.Visible = group && !multi;
+                parts.Visible = group && g.IsSet && !multi;
+                toggle.Visible = group && !multi;
+                branch.Visible = group && !multi;
+                subNew.Visible = group && !multi && treeView != null && treeView.CurrentBranch != null;
+                take.Visible = group && !multi && treeView != null && treeView.InOpenBranch(g);
+                setCat.Visible = group && !multi;
+                reveal.Visible = row && !multi;
+                more.Visible = row && !multi;
+                newOnly.Visible = !row && !multi;
+                multiDel.Text = "删除选中的 " + picked + " 个 MOD…";
+                multiDel.Visible = multi;
+                multiSep.Visible = multi;
             };
             return cms;
+        }
+
+        /// <summary>当前选中的行一共对应几个 vpk（套装行按它的部件数算）。多选菜单用它报数。</summary>
+        private static List<ModItem> SelectedModFiles(ListView lv)
+        {
+            List<ModItem> all = new List<ModItem>();
+            foreach (ListViewItem li in lv.SelectedItems)
+            {
+                ModGroup g = li.Tag as ModGroup;
+                ModItem one = li.Tag as ModItem;
+                if (g != null) all.AddRange(g.Parts);
+                else if (one != null) all.Add(one);
+            }
+            return all;
+        }
+
+        /// <summary>
+        /// 多选后批量删：文件真删，删完只重扫一次。判定和单条删除同一套
+        /// （压缩包里的、U 盘模式下游戏目录里的一律不碰），只是把所有不能删的先拦下来一次性说清。
+        /// </summary>
+        internal void DeleteSelectedInTree(ListView lv)
+        {
+            List<ModItem> files = SelectedModFiles(lv);
+            if (files.Count == 0) { MessageBox.Show("先选中要删的行。"); return; }
+
+            List<string> blocked = new List<string>();
+            List<ModItem> todo = new List<ModItem>();
+            foreach (ModItem it in files)
+            {
+                if (it.IsArchive) blocked.Add("「" + it.Name + "」在压缩包里");
+                else if (it.FromGame && !Core.IsLocal) blocked.Add("「" + it.Name + "」在游戏目录里（U 盘模式不动）");
+                else if (!todo.Contains(it)) todo.Add(it);
+            }
+            if (blocked.Count > 0)
+            {
+                // 一条都不删：半途删一半会导致「你以为删完了」，不如让人先看清楚
+                MessageBox.Show("这 " + blocked.Count + " 个删不了：\r\n\r\n  · "
+                    + string.Join("\r\n  · ", blocked.ToArray())
+                    + "\r\n\r\n压缩包里的请自己在资源管理器里处理；游戏目录里的把右上角切到「本地模式」再来。",
+                    "有几个删不了", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            long size = 0;
+            foreach (ModItem it in todo) size += it.Size;
+            if (MessageBox.Show("删除选中的 " + todo.Count + " 个 vpk（" + Core.Human(size) + "）？\r\n\r\n"
+                + "· 文件直接从磁盘删掉，删了就是没了\r\n"
+                + "· 只删文件，不改游戏里的 addonlist",
+                "确认批量删除", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+
+            int n = 0;
+            List<string> failed = new List<string>();
+            foreach (ModItem it in todo)
+            {
+                try { if (Work.DeleteMod(it) == null) { n++; checkedKeys.Remove(it.Key); } else failed.Add(it.Name); }
+                catch (Exception ex) { failed.Add(it.Name); Core.Log("WARN", "删除 " + it.Name + " 失败: " + ex.Message); }
+            }
+            Core.Log("OK", "批量删除 " + n + "/" + todo.Count + " 个 vpk");
+            Core.ScanMods();
+            RefreshMods();
+            RefreshConflicts();
+            if (treeView != null) { RebuildViews(); treeView.Sync(); }
+            SetStatus(failed.Count == 0
+                ? "已删除 " + n + " 个 vpk（" + Core.Human(size) + "）"
+                : "删了 " + n + " 个，" + failed.Count + " 个没删掉（见日志）");
         }
 
         /// <summary>右键「在当前分支下新建子分支…」：正在看哪个分支，就建在它下面。</summary>
@@ -1935,6 +2178,7 @@ namespace Installer
             lblSel.Text = string.Format("已选 {0} 个 MOD{1}  ·  {2}  ·  约 {3} 秒（按 {4:0} MB/s）", mods, files, Core.Human(total), (int)(total / (rate * 1048576.0)), rate);
             lblSel.ForeColor = sel.Count > 0 ? Theme.Ink : Theme.Ink3;
             UpdateSchemeLabel();
+            QueuePrecheck();          // 勾选变了，底栏那句「可以装 / 还不能装」跟着变
         }
 
         private void RefreshConflicts()
@@ -2087,6 +2331,8 @@ namespace Installer
             string root = (path == null ? "" : path.Trim().Trim('"').TrimEnd('\\'));
             if (root.Length == 0) return;
             txtGame.Text = root;
+            ProbeWritable(root);            // 换了目录，可写性要重新探一次（校验条读这个缓存）
+            QueuePrecheck();
             if (!Core.TestGame(root))
             {
                 Core.Log("WARN", source + "的目录里没有 left4dead2.exe：" + root);
@@ -2921,19 +3167,26 @@ namespace Installer
             btnPanel.Left = Dpi.S(panelX);
             if (btnWorkshop != null) btnWorkshop.Left = Dpi.S(wsX);
 
-            // 底部（按钮整组贴右下）
+            // 底部：右边一组（工具 + 次要 + 主操作），「一键还原」单独钉在左下角
             btnOpen.Left = Dpi.S(W - Theme.M - 104);
-            btnRestore.Left = Dpi.S(W - Theme.M - 104 - 8 - 96);
-            btnSwitch.Left = Dpi.S(W - Theme.M - 104 - 8 - 96 - 8 - 116);
-            btnInstall.Left = Dpi.S(W - Theme.M - 104 - 8 - 96 - 8 - 116 - 8 - 112);
+            btnSwitch.Left = Dpi.S(W - Theme.M - 104 - 8 - 116);
+            btnInstall.Left = Dpi.S(W - Theme.M - 104 - 8 - 116 - 8 - 112);
+            btnRestore.Left = Dpi.S(Theme.M);
+            btnRestore.Width = Dpi.S(96);
             lblStatus.Width = Dpi.S(W - 2 * Theme.M);
-            // 进度条和「停止剩余」现在跟按钮同一行（左边），两个都得让开：进度条占完剩下的宽度，
-            // 停止按钮紧接在它右边。原来进度条一直拉到按钮左边，把停止按钮整个压在底下。
+            // 进度条 / 停止按钮 / 校验条 都从还原按钮右边起步（三者互斥显示，共用同一块）
             {
-                int barW = Math.Max(200,
-                    (W - Theme.M - 104 - 8 - 96 - 8 - 116 - 8 - 112) - Theme.M - 8 - 92 - 8);
+                int preLeft = Theme.M + 96 + Theme.G;
+                int barW = Math.Max(160,
+                    (W - Theme.M - 104 - 8 - 116 - 8 - 112) - preLeft - 8 - 92 - 8);
+                bar.Left = Dpi.S(preLeft);
                 bar.Width = Dpi.S(barW);
-                btnCancel.Left = Dpi.S(Theme.M + barW + 8);
+                btnCancel.Left = Dpi.S(preLeft + barW + 8);
+                if (lblPre != null)
+                {
+                    lblPre.Left = Dpi.S(preLeft);
+                    lblPre.Width = Dpi.S(Math.Max(200, barW + 8 + 92));
+                }
             }
 
             ResumeLayout(true);
@@ -2961,12 +3214,18 @@ namespace Installer
                 string tag = "LAYOUT " + (int)Math.Round(factor * 100) + "%：";
                 int m = Dpi.S(Theme.M);
 
-                // 底部四个按钮从右往左排：位置必须严格递减，最左的不能压进左边距，最右的不能出窗
-                FlatButton[] bottom = new FlatButton[] { btnOpen, btnRestore, btnSwitch, btnInstall };
+                // 底部右侧三连从右往左排：位置必须严格递减，最左的不能压进左边距，最右的不能出窗
+                FlatButton[] bottom = new FlatButton[] { btnOpen, btnSwitch, btnInstall };
                 if (btnOpen.Left + Dpi.S(104) > W - m + 1) { bad++; Core.Log("FAIL", tag + "「打开」按钮出窗"); }
                 for (int i = 1; i < bottom.Length; i++)
                     if (bottom[i].Left >= bottom[i - 1].Left) { bad++; Core.Log("FAIL", tag + "底部按钮顺序错：" + bottom[i].Text); }
                 if (btnInstall.Left < m + Dpi.S(200)) { bad++; Core.Log("FAIL", tag + "底部按钮把进度条挤没了"); }
+                // 「一键还原」必须留在左下角、和主操作隔开一大截（就是怕手滑点错的那条）
+                if (Math.Abs(btnRestore.Left - m) > Dpi.S(2)) { bad++; Core.Log("FAIL", tag + "「一键还原」不在左下角"); }
+                if (btnInstall.Left - (btnRestore.Left + btnRestore.Width) < Dpi.S(300))
+                { bad++; Core.Log("FAIL", tag + "「一键还原」离「开始安装」太近：" + (btnInstall.Left - btnRestore.Left - btnRestore.Width) + "px"); }
+                if (bar.Left < btnRestore.Left + btnRestore.Width)
+                { bad++; Core.Log("FAIL", tag + "进度条压住了「一键还原」"); }
                 // 进度条 / 停止按钮 / 主按钮 三者同一行，从左到右必须严格排开，谁都不许压谁
                 if (bar.Left + bar.Width > btnCancel.Left)
                 { bad++; Core.Log("FAIL", tag + "进度条压住了「停止剩余」"); }
@@ -3481,6 +3740,7 @@ namespace Installer
             if (longOpName == null) return;
             OpGuard.Exit(longOpName);
             longOpName = null;
+            QueuePrecheck();          // 长操作结束后按钮该亮回亮、该灭回灭
         }
 
         private void SetBusy(bool busy)
@@ -3488,13 +3748,16 @@ namespace Installer
             // 这个方法会被后台线程调用，必须回到 UI 线程再改控件
             SafeInvoke(delegate
             {
-                btnInstall.Enabled = !busy;
+                // 空闲时不要无条件点亮：前置条件没满足就保持灰的（刷新校验条会按最新状态重算）
+                btnInstall.Enabled = !busy && preOk;
                 btnRestore.Enabled = !busy;
                 btnSwitch.Enabled = !busy;
                 btnFind.Enabled = !busy;
                 btnBrowse.Enabled = !busy;
                 // 空闲时不摆一条空进度条：深色主题下它是一道白条，看着像没画完
                 if (bar != null) bar.Visible = busy;
+                // 进度条和校验条共用这块地方：一个亮另一个就得让开
+                if (lblPre != null) lblPre.Visible = !busy;
             });
         }
 
@@ -3546,7 +3809,9 @@ namespace Installer
                 MessageBox.Show("游戏还开着，先完全退出再还原。", "游戏正在运行");
                 return;
             }
-            if (MessageBox.Show("彻底还原：删掉 L4N / Skeeto / MQCam / dxvk 写进去的文件，并删掉本次铺进 addons 的 MOD。\r\n\r\n注意：原版 exe / addonlist / autoexec 没有备份了，需要原版请用 Steam 校验文件。\r\n\r\n确定？", "确认彻底还原", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+            if (MessageBox.Show("删掉装进游戏的文件（L4N / Skeeto / MQCam / dxvk 和本次铺的 MOD）。\r\n\r\n"
+                + "原版 exe、addonlist、autoexec 没有备份，需要原版请用 Steam 校验文件。\r\n\r\n确定还原？",
+                "确认彻底还原", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
             Log("--- 彻底还原 ---");
             try
             {
@@ -3786,14 +4051,19 @@ namespace Installer
         /// <summary>收勾选、做装机前的所有确认。返回 null = 用户取消或校验没过（提示已经给过）。</summary>
         private InstallJob CollectInstallJob(string root)
         {
+            // 「目录不对 / 游戏在跑 / 什么都没勾」这三件事在底栏校验条上常驻显示，按钮也跟着灰掉；
+            // 能走到这里基本只剩竞态（比如刚把游戏启动起来）。竞态就刷新那条提示，不再弹长文案。
             if (!TestWritable(root))
             {
-                MessageBox.Show("这个游戏目录写不进去（可能只读、被占用或权限不足）。\r\n可以试试以管理员身份运行，或换一个有写权限的目录。", "目录不可写");
+                writeProbeFor = root; writeProbeOk = false;
+                QueuePrecheck();
+                MessageBox.Show("游戏目录写不进去（可能只读、被占用或权限不足）。\r\n试试以管理员身份运行，或换一个可写的目录。", "目录不可写");
                 return null;
             }
             if (GameRunning())
             {
-                MessageBox.Show("游戏还开着。先把《求生之路2》完全退出（不是最小化），否则 exe 和 dll 被占用，装不进去。", "游戏正在运行");
+                QueuePrecheck();
+                SetStatus("游戏正在运行，装不进去 · 先完全退出游戏");
                 return null;
             }
 
@@ -3819,7 +4089,11 @@ namespace Installer
             Core.StrictVerify = chkStrict.Checked;
 
             if (!j.L4N && !j.Dxvk && !j.Skeeto && !j.Mqcam && j.Sel.Count == 0 && !j.Launch && !j.Asset && !j.Cfg)
-            { MessageBox.Show("什么都没勾。"); return null; }
+            {
+                QueuePrecheck();
+                SetStatus("还没选任何 MOD 或组件 · 左上「装什么」勾一项，或树上选个位置");
+                return null;
+            }
 
             if (j.Sel.Count >= 2)
             {
@@ -3993,6 +4267,8 @@ namespace Installer
                     btnCancel.Enabled = true;
                     btnCancel.Text = "停止剩余";
                     ExitLongOp();
+                    // 用户中途点过 ×：现在停在文件边界上了，替他关掉窗口（不再问第二遍）
+                    if (closeWhenIdle) { closeWhenIdle = false; forceClose = true; BeginInvoke(new MethodInvoker(Close)); }
                 });
                 // 不再无条件改回“就绪”：失败、部分完成、完成都应留在状态栏上，
                 // 这是用户离开安装按钮后唯一能确认结果的常驻反馈。
@@ -4141,12 +4417,8 @@ namespace Installer
         private void OfferLaunchGame(InstallJob j)
         {
             bool go = MessageBox.Show(
-                "装好了。\r\n\r\n现在启动游戏吗？\r\n\r\n"
-                + "启动就是校验 —— 不用跑两遍：\r\n"
-                + "· 起游戏后顺带盯 2 分钟的崩溃记录\r\n"
-                + "· 没崩 → 这次装的没问题，游戏留着直接玩\r\n"
-                + "· 崩了 → 弹提示，说明这次至少有一个坏包\r\n\r\n"
-                + "全程不改任何文件。不想现在玩就选「否」，游戏不会开。",
+                "装好了。现在启动一次游戏吗？\r\n\r\n"
+                + "启动会顺带盯 2 分钟崩溃记录，全程不改任何文件；崩了会弹提示，说明这次至少有一个坏包。",
                 "完成 · 启动游戏", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
             if (!go) return;
             Core.Log("STEP", "启动游戏（同时盯崩溃记录，不再二次启动）");

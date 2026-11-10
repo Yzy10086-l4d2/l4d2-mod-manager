@@ -1143,7 +1143,9 @@ namespace Installer
             ListView v = new ListView();
             v.View = View.Details;
             v.FullRowSelect = true;
-            v.MultiSelect = false;
+            // 多选：未归类那 19 个要靠一条条拖就太慢了。选中多行时右键菜单给
+            // 「一起指定位置 / 一起删除」，单选时的点击行为（换 MOD、翻开关）一个字没改。
+            v.MultiSelect = true;
             v.BorderStyle = BorderStyle.None;
             v.BackColor = Theme.Surface;
             v.ForeColor = Theme.Ink;
@@ -1956,6 +1958,9 @@ namespace Installer
         {
             if (lblFoot != null && s != null) lblFoot.Text = s;
         }
+
+        /// <summary>攒着还没写进 addonlist 的开关改动有几处（关窗口前靠它拦一下，别让改动默默丢掉）。</summary>
+        internal int PendingCount { get { return pending.Count; } }
 
         internal int Unmatched { get { return unmatched; } }
 
