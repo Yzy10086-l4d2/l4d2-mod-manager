@@ -1190,11 +1190,10 @@ namespace Installer
             lblPicHint.Text = "（左边选一条看介绍）";
             lblPicHint.TextAlign = ContentAlignment.MiddleCenter;
             lblPicHint.Font = Theme.UISmall;
-            lblPicHint.ForeColor = Theme.Ink3;
-            lblPicHint.BackColor = Theme.SurfaceAlt;
+            lblPicHint.ForeColor = Theme.Ink2;
+            lblPicHint.BackColor = Color.Transparent;
             lblPicHint.AutoSize = false;
-            Controls.Add(lblPicHint);
-            lblPicHint.BringToFront();
+            pic.Controls.Add(lblPicHint);           // 挂在 pic 里，父控件总会把它画在自己的图上面
 
             lblTitle2.Font = Theme.UIBold;
             lblTitle2.ForeColor = Theme.Ink;
@@ -1308,8 +1307,7 @@ namespace Installer
 
             // 右栏详情
             pic.SetBounds(detailX, S(36), dw, S(196));
-            lblPicHint.SetBounds(detailX, S(36), dw, S(196));
-            lblPicHint.BringToFront();
+            lblPicHint.SetBounds(0, 0, pic.Width, pic.Height);   // 子控件坐标：相对 pic
             lblTitle2.SetBounds(detailX, S(240), dw, S(40));
             lblMeta.SetBounds(detailX, S(282), dw, S(18));
             lblTags.SetBounds(detailX, S(302), dw, S(18));
