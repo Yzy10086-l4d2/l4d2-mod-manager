@@ -44,8 +44,11 @@ namespace Installer
         private readonly FlatButton btnSearch = new FlatButton();
         private readonly FlatButton btnList = new FlatButton();
         private readonly FlatButton btnClose = new FlatButton();
-        private readonly FlatButton btnTop = new FlatButton();     // 回到顶部（追加模式下「上一页」没意义）
-        private readonly FlatButton btnMore = new FlatButton();    // 加载更多 / 已到底
+        private readonly FlatButton btnTop = new FlatButton();       // 回到顶部
+        private readonly FlatButton btnPrevPage = new FlatButton();  // 上一页（替换式定位）
+        private readonly FlatButton btnNextPage = new FlatButton();  // 下一页（替换式定位）
+        private readonly TextBox txtJump = new TextBox();            // 输入页数回车直达
+        private readonly Label lblJump = new Label();                // 「页」
         private readonly Label lblStatus = new Label();
         private readonly Label lblCat = new Label();
 
@@ -247,10 +250,37 @@ namespace Installer
             btnTop.Click += delegate { GoTop(); };
             Controls.Add(btnTop);
 
-            btnMore.Text = "加载更多";
-            btnMore.Enabled = false;
-            btnMore.Click += delegate { LoadMore(); };
-            Controls.Add(btnMore);
+            // 页码导航：滑动是流式浏览，跳页是精确定位 —— 两种都要
+            btnPrevPage.Text = "◀ 上一页";
+            btnPrevPage.Enabled = false;
+            btnPrevPage.Click += delegate { if (page > 1) DoSearch(page - 1); };
+            Controls.Add(btnPrevPage);
+
+            btnNextPage.Text = "下一页 ▶";
+            btnNextPage.Enabled = false;
+            btnNextPage.Click += delegate { DoSearch(page + 1); };
+            Controls.Add(btnNextPage);
+
+            txtJump.Width = 48;
+            txtJump.TextAlign = HorizontalAlignment.Center;
+            Theme.Dress(txtJump);
+            txtJump.AccessibleName = "跳到第几页";
+            txtJump.KeyDown += delegate(object s2, KeyEventArgs e2)
+            {
+                if (e2.KeyCode != Keys.Enter) return;
+                int p;
+                if (int.TryParse(txtJump.Text.Trim(), out p) && p >= 1) DoSearch(p);
+                else txtJump.Text = page.ToString();
+                e2.Handled = true;
+                e2.SuppressKeyPress = true;
+            };
+            Controls.Add(txtJump);
+
+            lblJump.Text = "页";
+            lblJump.Font = Theme.UISmall;
+            lblJump.ForeColor = Theme.Ink2;
+            lblJump.AutoSize = false;
+            Controls.Add(lblJump);
 
             FormClosing += delegate { cancel = true; };
             // 滚轮要能落在卡片墙上：WM_MOUSEWHEEL 只发给有焦点的控件，
@@ -301,9 +331,13 @@ namespace Installer
 
             // 底部状态 + 翻页
             int by = H - bottom + S(6);
+            // 右侧从右往左：回到顶部 | 页 | 页码框 | 下一页 | 上一页
             btnTop.SetBounds(W - m - S(84), by, S(84), S(30));
-            btnMore.SetBounds(W - m - S(84) - S(8) - S(96), by, S(96), S(30));
-            lblStatus.SetBounds(m, by + S(6), Math.Max(S(160), (W - m - S(84) - S(8) - S(96) - S(24)) - m), S(18));
+            lblJump.SetBounds(W - m - S(84) - S(8) - S(18), by + S(8), S(18), S(18));
+            txtJump.SetBounds(W - m - S(84) - S(8) - S(18) - S(6) - S(48), by + S(2), S(48), S(26));
+            btnNextPage.SetBounds(W - m - S(84) - S(8) - S(18) - S(6) - S(48) - S(8) - S(74), by, S(74), S(30));
+            btnPrevPage.SetBounds(W - m - S(84) - S(8) - S(18) - S(6) - S(48) - S(8) - S(74) - S(6) - S(74), by, S(74), S(30));
+            lblStatus.SetBounds(m, by + S(6), Math.Max(S(130), btnPrevPage.Left - S(8) - m), S(18));
 
             // 详情页内部
             // 大图高度跟着窗口走：窗口矮的时候（最小 940×600）固定 300 会把正文挤成十几像素、
@@ -411,7 +445,9 @@ namespace Installer
 
             busy = true;
             btnSearch.Enabled = false;
-            btnMore.Enabled = false;
+            btnPrevPage.Enabled = false;
+            btnNextPage.Enabled = false;
+            txtJump.Enabled = false;
             if (!append) lblStatus.Text = "正在搜工坊…";
             if (append)
             {
@@ -501,8 +537,10 @@ namespace Installer
                 grid.FooterClickable = true;
             }
 
-            btnMore.Text = atEnd ? "已到底" : "加载更多";
-            btnMore.Enabled = !atEnd && !busy;
+            btnPrevPage.Enabled = page > 1 && !busy;
+            btnNextPage.Enabled = !busy;
+            txtJump.Enabled = !busy;
+            if (!busy) txtJump.Text = page.ToString();
             lblStatus.Text = n == 0 ? lblStatus.Text
                 : "已加载 " + n + " 个 · 第 1–" + pagesLoaded + " 页"
                   + (atEnd ? " · 到底了" : pagesLoaded < AutoPages ? " · 继续下滑自动加载" : " · 点底部继续");
@@ -583,7 +621,10 @@ namespace Installer
             detailToken++;
             // 翻页和「第 N 页」是卡片墙的东西，回详情页时不该跟着亮
             btnTop.Visible = true;
-            btnMore.Visible = true;
+            btnPrevPage.Visible = true;
+            btnNextPage.Visible = true;
+            txtJump.Visible = true;
+            lblJump.Visible = true;
             lblStatus.Visible = true;
             grid.Relayout();
             host.Relayout();
@@ -599,7 +640,10 @@ namespace Installer
             detail.Visible = true;
             detail.BringToFront();
             btnTop.Visible = false;         // 详情页是一屏独立页面，翻页按钮属于卡片墙
-            btnMore.Visible = false;
+            btnPrevPage.Visible = false;
+            btnNextPage.Visible = false;
+            txtJump.Visible = false;
+            lblJump.Visible = false;
             lblStatus.Visible = false;
 
             lblTitle.Text = it.Title.Length > 0 ? it.Title : "(无标题)";

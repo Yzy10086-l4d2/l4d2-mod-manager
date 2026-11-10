@@ -29,6 +29,11 @@ namespace Installer
         private readonly object gate = new object();   // imgs / pending / queue 共用：跨线程读写必须同一把锁
         private Thread worker;
         private int hover = -1;
+        // 卡片位图缓存：每张卡渲染一次成位图，滚动/重绘时只贴图。
+        // 没有它，每次滚一格要把可见的十几张卡全部现场重画（圆角路径 + 图片裁切 + 两段
+        // WordBreak 文字排版），这就是滚动发卡/卡顿的主因。
+        private readonly Dictionary<string, Bitmap> cardCache = new Dictionary<string, Bitmap>(StringComparer.Ordinal);
+        private int cacheW = -1;                // 缓存生成时的卡宽：宽度变了全部作废
         private int cols = 1, cardW = 240, cardH = 200, gap = 14, imgH = 135;
         private int lastW = -1;
 
@@ -98,6 +103,7 @@ namespace Installer
             hover = -1;
             nearRow = -1;
             SkeletonCount = 0;
+            ClearCardCache();
             lock (gate)
             {
                 foreach (Image im in imgs.Values) if (im != null) im.Dispose();
@@ -157,11 +163,34 @@ namespace Installer
             cardW = (w - gap * (cols - 1)) / cols;
             imgH = cardW * 9 / 16;
             cardH = imgH + Dpi.S(8) + Dpi.S(40) + Dpi.S(18);
+            if (cardW != cacheW) ClearCardCache();      // 卡宽变了，旧位图全作废
             int rows = (TotalCount + cols - 1) / cols;
             int footH = FooterText.Length > 0 ? Dpi.S(64) : 0;
             int h = Math.Max(Dpi.S(60), rows * (cardH + gap) + gap + footH);
             if (Height != h) Height = h;
             Invalidate();
+        }
+
+        private void ClearCardCache()
+        {
+            foreach (Bitmap b in cardCache.Values) if (b != null) b.Dispose();
+            cardCache.Clear();
+            cacheW = -1;
+        }
+
+        /// <summary>单卡缓存失效 + 只重画那一格（缩略图到达 / 标记已下载用，别全墙重绘）。</summary>
+        private void InvalidateCardById(string id)
+        {
+            cardCache.Remove(id);
+            for (int i = 0; i < items.Count; i++)
+                if (items[i].Id == id) { Invalidate(CardRect(i)); return; }
+        }
+
+        /// <summary>预扫/本地标记：把某个 ID 标成已下载并刷新那一格。</summary>
+        public void MarkDownloaded(string id)
+        {
+            if (!DownloadedIds.Add(id)) return;
+            InvalidateCardById(id);
         }
 
         protected override void OnResize(EventArgs e)
@@ -348,21 +377,50 @@ namespace Installer
             WsItem it = items[i];
             bool hot = i == hover;
 
-            using (GraphicsPath p = Theme.Round(r, Dpi.S(10)))
-            {
-                using (SolidBrush b = new SolidBrush(Theme.Surface)) g.FillPath(b, p);
-                using (Pen pen = new Pen(hot ? Theme.Accent : Theme.CardEdge))
-                    g.DrawPath(pen, p);
-            }
+            // 卡片主体走位图缓存：渲染一次，之后每帧只贴图
+            Bitmap b = GetCardBitmap(it);
+            if (b != null) g.DrawImage(b, r.Location);
 
-            Rectangle ir = new Rectangle(r.X + 1, r.Y + 1, r.Width - 2, imgH);
+            // 边框现场画（悬停高亮是易变状态，不进缓存）
+            using (GraphicsPath p = Theme.Round(r, Dpi.S(10)))
+            using (Pen pen = new Pen(hot ? Theme.Accent : Theme.CardEdge))
+                g.DrawPath(pen, p);
+        }
+
+        /// <summary>取一张卡的缓存位图；没有就现场渲染并缓存。</summary>
+        private Bitmap GetCardBitmap(WsItem it)
+        {
+            if (cardW != cacheW) ClearCardCache();
+            Bitmap b;
+            if (cardCache.TryGetValue(it.Id, out b) && b != null) return b;
+
+            int w = Math.Max(1, cardW), h = Math.Max(1, cardH);
+            b = new Bitmap(w, h);
+            using (Graphics g = Graphics.FromImage(b))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                PaintCard(g, it, w, h);
+            }
+            cardCache[it.Id] = b;
+            if (cardCache.Count > 400) ClearCardCache();    // 防涨：翻太多页时整体重来
+            return b;
+        }
+
+        /// <summary>把一张卡画到 (0,0) 起点的 w×h 画布上（供缓存与预览共用）。边框不在这里画。</summary>
+        private void PaintCard(Graphics g, WsItem it, int w, int h)
+        {
+            using (GraphicsPath p = Theme.Round(new Rectangle(0, 0, w, h), Dpi.S(10)))
+            using (SolidBrush b = new SolidBrush(Theme.Surface))
+                g.FillPath(b, p);
+
+            Rectangle ir = new Rectangle(1, 1, w - 2, imgH);
             Image img = ThumbOf(it.Id);
             if (img != null)
             {
                 // 等比填满并居中裁切：封面比例五花八门，直接拉伸会变形
                 double k = Math.Max((double)ir.Width / img.Width, (double)ir.Height / img.Height);
-                int w = (int)(img.Width * k), h = (int)(img.Height * k);
-                Rectangle dst = new Rectangle(ir.X + (ir.Width - w) / 2, ir.Y + (ir.Height - h) / 2, w, h);
+                int iw = (int)(img.Width * k), ih = (int)(img.Height * k);
+                Rectangle dst = new Rectangle(ir.X + (ir.Width - iw) / 2, ir.Y + (ir.Height - ih) / 2, iw, ih);
                 Region old = g.Clip;
                 g.SetClip(ir);
                 g.DrawImage(img, dst);
@@ -377,7 +435,7 @@ namespace Installer
             }
 
             int ty = ir.Bottom + Dpi.S(6);
-            Rectangle tr = new Rectangle(r.X + Dpi.S(10), ty, r.Width - Dpi.S(20), Dpi.S(36));
+            Rectangle tr = new Rectangle(Dpi.S(10), ty, w - Dpi.S(20), Dpi.S(36));
             TextRenderer.DrawText(g, it.Title.Length == 0 ? "(无标题)" : it.Title, Theme.RowTitle, tr, Theme.Ink,
                 TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 
@@ -388,7 +446,7 @@ namespace Installer
             bool owned = DownloadedIds.Contains(it.Id);
             if (owned) meta += (meta.Length > 0 ? "  ·  " : "") + "已下载";
             TextRenderer.DrawText(g, meta, Theme.UISmall,
-                new Rectangle(r.X + Dpi.S(10), tr.Bottom, r.Width - Dpi.S(20), Dpi.S(16)),
+                new Rectangle(Dpi.S(10), tr.Bottom, w - Dpi.S(20), Dpi.S(16)),
                 owned ? Theme.Ok : Theme.Ink3,
                 TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
         }
@@ -449,7 +507,7 @@ namespace Installer
                             if (img != null) imgs[it.Id] = img;
                             else imgs[it.Id] = null;      // 记成「下过了但没有」，别无限重试
                         }
-                        try { BeginInvoke(new MethodInvoker(Invalidate)); }
+                        try { BeginInvoke(new MethodInvoker(delegate { InvalidateCardById(it.Id); })); }
                         catch { return; }
                     }
                 });
