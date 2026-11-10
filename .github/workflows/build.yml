@@ -44,8 +44,18 @@ jobs:
             /reference:System.IO.Compression.FileSystem.dll ^
             /resource:desk\index.html,desk.html ^
             /resource:desk\three.min.js,three.js ^
-            @srcs.rsp
-          if errorlevel 1 exit /b 1
+            @srcs.rsp > build.log 2>&1
+          set RC=%ERRORLEVEL%
+          type build.log
+          rem 把编译错误转成 GitHub 注解：失败原因直接显示在提交 / PR 页上，不用登进来翻日志
+          findstr /c:"error CS" build.log > build-err.log
+          for /f "usebackq delims=" %%L in ("build-err.log") do echo ::error::%%L
+          if %RC% NEQ 0 (
+            echo [X] compile failed, exit %RC%
+            exit /b 1
+          )
+          del build.log
+          del build-err.log
           del srcs.rsp
           dir L4D2Setup.exe
 
