@@ -56,6 +56,13 @@ namespace Installer
         /// <summary>骨架屏：>0 时在真实卡片后面铺这么多张占位卡（搜索中 / 翻页中）。</summary>
         public int SkeletonCount;
 
+        /// <summary>
+        /// 一面空墙时的说明（没搜到 / 搜索失败）。以前空态什么都不画，
+        /// 用户只看到一片背景色，分不清是「没结果」还是「还在加载」。
+        /// </summary>
+        public string EmptyText = "";
+        public string EmptyHint = "";
+
         /// <summary>本地库里已经下载过的工坊 ID —— 卡片标「已下载」用，打开窗口时预扫 idmap 填进来。</summary>
         public readonly HashSet<string> DownloadedIds = new HashSet<string>(StringComparer.Ordinal);
 
@@ -102,6 +109,8 @@ namespace Installer
             hover = -1;
             nearRow = -1;
             SkeletonCount = 0;
+            EmptyText = "";
+            EmptyHint = "";
             Pulse.Forget(this);
             ClearCardCache();
             lock (gate)
@@ -170,6 +179,10 @@ namespace Installer
             int rows = (TotalCount + cols - 1) / cols;
             int footH = FooterText.Length > 0 ? Dpi.S(64) : 0;
             int h = Math.Max(Dpi.S(60), rows * (cardH + gap) + gap + footH);
+            // 一面空墙：撑到宿主可视区那么高，居中那句说明才有地方落 ——
+            // 否则控件只有 60px 高，文字画在 300px 处直接被裁掉（第一版就是这样，一片空白）。
+            if (rows == 0 && EmptyText.Length > 0 && Parent != null && Parent.ClientSize.Height > h)
+                h = Parent.ClientSize.Height;
             if (Height != h) Height = h;
             Invalidate();
         }
@@ -246,6 +259,8 @@ namespace Installer
         {
             int rows = (TotalCount + cols - 1) / cols;
             int y = gap + rows * (cardH + gap);
+            // 一面空墙时没有卡片撑着，提示条会浮在顶上；贴到底部才像"这页没内容，可以重试"
+            if (rows == 0 && Height > Dpi.S(200)) y = Height - Dpi.S(56);
             return new Rectangle(gap, y, Math.Max(0, Width - gap * 2), Dpi.S(48));
         }
 
@@ -311,9 +326,24 @@ namespace Installer
                 else DrawCard(g, i, r);
             }
 
+            if (items.Count == 0 && SkeletonCount == 0 && EmptyText.Length > 0) DrawEmpty(g, top, viewH);
+
             DrawFooter(g, top, viewH);
             QueueVisible(top, viewH);
             CheckNearEnd(top, viewH);
+        }
+
+        /// <summary>空墙说明：居中一段话。分「没搜到」和「搜索失败」两种，调用方只给文字。</summary>
+        private void DrawEmpty(Graphics g, int top, int viewH)
+        {
+            int cy = top + Math.Max(Dpi.S(80), viewH / 2);
+            Rectangle r = new Rectangle(Dpi.S(24), cy - Dpi.S(30), Math.Max(1, Width - Dpi.S(48)), Dpi.S(28));
+            TextRenderer.DrawText(g, EmptyText, Theme.RowTitle, r, Theme.Ink2,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+            if (EmptyHint.Length > 0)
+                TextRenderer.DrawText(g, EmptyHint, Theme.UISmall,
+                    new Rectangle(r.X, r.Bottom + Dpi.S(6), r.Width, Dpi.S(20)), Theme.Ink3,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.NoPrefix);
         }
 
         /// <summary>底部那一行：加载更多 / 正在加载 / 已到底。滚到看不见就不画。</summary>
@@ -364,8 +394,8 @@ namespace Installer
                 using (Pen pen = new Pen(Theme.CardEdge)) g.DrawPath(pen, p);
             }
             Rectangle ir = new Rectangle(r.X + 1, r.Y + 1, r.Width - 2, imgH);
-            using (SolidBrush b = new SolidBrush(Theme.SurfaceAlt)) g.FillRectangle(b, ir);
-            using (SolidBrush b = new SolidBrush(Theme.Chip))
+            using (SolidBrush b = new SolidBrush(Theme.SkeletonFill)) g.FillRectangle(b, ir);
+            using (SolidBrush b = new SolidBrush(Theme.SkeletonBar))
             {
                 int tx = r.X + Dpi.S(10);
                 int w = r.Width - Dpi.S(20);

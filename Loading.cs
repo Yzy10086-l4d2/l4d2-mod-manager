@@ -270,7 +270,7 @@ namespace Installer
         {
             using (GraphicsPath p = Theme.Round(card, Dpi.S(10)))
             {
-                using (SolidBrush b = new SolidBrush(Theme.Chip)) g.FillPath(b, p);
+                using (SolidBrush b = new SolidBrush(Theme.SkeletonFill)) g.FillPath(b, p);
                 using (Pen pen = new Pen(Theme.CardEdge)) g.DrawPath(pen, p);
             }
 
@@ -278,7 +278,7 @@ namespace Installer
             int tx = card.X + Dpi.S(14);
             int w = card.Width - Dpi.S(28);
             int[] parts = new int[] { 58, 40, 26 };
-            using (SolidBrush b = new SolidBrush(Theme.ChipDown))
+            using (SolidBrush b = new SolidBrush(Theme.SkeletonBar))
             {
                 int y = card.Y + Dpi.S(14);
                 for (int i = 0; i < parts.Length; i++)

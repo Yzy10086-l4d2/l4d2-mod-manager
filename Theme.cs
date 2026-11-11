@@ -141,6 +141,20 @@ namespace Installer
         public static Color Bg { get { return pal.Bg; } }                    // 窗口底
         public static Color Surface { get { return pal.Surface; } }          // 卡片
         public static Color SurfaceAlt { get { return pal.SurfaceAlt; } }
+
+        /// <summary>
+        /// 骨架占位专用两档灰。不直接借 SurfaceAlt / Chip：那两个为了「不抢眼」只差 2% 明度，
+        /// 铺成一面墙时和背景几乎同色，看着像白板 —— 占位块必须看得出形状，才能说明「在加载」。
+        /// </summary>
+        public static Color SkeletonFill
+        {
+            get { return pal.IsDark ? Color.FromArgb(46, 50, 58) : Color.FromArgb(232, 236, 242); }
+        }
+
+        public static Color SkeletonBar
+        {
+            get { return pal.IsDark ? Color.FromArgb(62, 67, 77) : Color.FromArgb(213, 220, 229); }
+        }
         public static Color BtnHover { get { return pal.BtnHover; } }
         public static Color BtnDown { get { return pal.BtnDown; } }
         // 浅灰胶囊按钮（iOS 的 gray tinted 次要操作）

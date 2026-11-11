@@ -2005,6 +2005,11 @@ namespace Installer
                 Application.DoEvents();
                 Application.DoEvents();
                 Shot(f, "gallery-skeleton");
+                // 空态：没搜到 / 搜索失败时应该有说明，不是一片背景色
+                f.EmptyForTest("搜索失败", "The operation has timed out");
+                Application.DoEvents();
+                Application.DoEvents();
+                Shot(f, "gallery-empty");
                 f.Close();
             }
         }

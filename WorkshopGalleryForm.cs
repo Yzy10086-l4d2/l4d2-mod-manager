@@ -68,6 +68,8 @@ namespace Installer
         private int searchGen;              // 搜索条件代数：换条件后，在途的预取作废
         private WsItem detailItem;
         private int page = 1;
+        private int retryPage;              // 上次搜索失败的页码，>0 表示底部提示是「重试」而不是「加载更多」
+        private bool retryAppend;           // 重试的是追加页（已有卡片要留着）还是首屏
         private volatile bool busy;
         private volatile bool cancel;
         private int detailToken;
@@ -163,11 +165,22 @@ namespace Installer
             grid.NearEnd += delegate
             {
                 if (sampleMode) return;               // 样例没有下一页，别去真搜
-                if (busy || atEnd) return;
+                if (busy || atEnd || retryPage > 0) return;   // 上次失败了：等用户点「重试」，别自作主张往下翻
                 if (pagesLoaded < AutoPages) LoadMore();
                 else UpdateFooter();
             };
-            grid.FooterClicked += delegate { LoadMore(); };
+            grid.FooterClicked += delegate
+            {
+                if (retryPage > 0)
+                {
+                    int p = retryPage;
+                    bool app = retryAppend;
+                    retryPage = 0;
+                    LoadPage(p, app);      // 失败了点一下就是重试那一页，不往后跳
+                    return;
+                }
+                LoadMore();
+            };
 
             // ---- 详情页 ----
             detail.BackColor = Theme.Bg;
@@ -416,6 +429,7 @@ namespace Installer
         {
             if (busy) return;
             searchGen++;                       // 换条件：在途的预取全部作废
+            retryPage = 0;
             prefetched = null;
             seenIds.Clear();
             atEnd = false;
@@ -493,9 +507,20 @@ namespace Installer
                     btnSearch.Enabled = true;
                     if (err != null)
                     {
-                        grid.FooterText = "";
-                        RelayoutWall();
+                        // 失败必须撤骨架：留着一墙占位卡继续扫光，用户会以为还在搜，其实连接早断了。
+                        // 底部换成可点的「重试」，点一下重搜这一页，不往后跳。
+                        grid.HideSkeleton();
+                        retryPage = p;
+                        retryAppend = append;
+                        btnPrevPage.Enabled = page > 1;
+                        btnNextPage.Enabled = grid.Items.Count > 0;
+                        txtJump.Enabled = true;
+                        grid.EmptyText = "搜索失败";
+                        grid.EmptyHint = (err ?? "").Replace("\r", " ").Replace("\n", " ");
+                        grid.FooterText = "点这里重试";
+                        grid.FooterClickable = true;
                         lblStatus.Text = "搜索失败：" + err;
+                        RelayoutWall();
                         return;
                     }
 
@@ -509,13 +534,19 @@ namespace Installer
                     pagesLoaded = append ? pagesLoaded + 1 : 1;
 
                     grid.HideSkeleton();
+                    retryPage = 0;
                     if (append) grid.AppendItems(fresh);
                     else { grid.SetItems(fresh); ShowGallery(); host.ScrollTo(0); }
 
                     UpdateFooter();
                     KickPrefetch();
                     if (grid.Items.Count == 0)
+                    {
                         lblStatus.Text = "没搜到。换个词试试，或把「分类」切到「全部物品」。";
+                        grid.EmptyText = "没搜到";
+                        grid.EmptyHint = "换个词试试，或把「分类」切到「全部物品」";
+                        grid.Invalidate();
+                    }
                 });
             });
             t.IsBackground = true;
@@ -804,6 +835,12 @@ namespace Installer
             cancel = false;
             btnGet.Enabled = false;
             lblState.Text = "正在下载…";
+            // 下载是有明确进度的，别用不确定的跑马灯：切成实进度条，百分比同时写在左边
+            barLoad.Style = ProgressBarStyle.Continuous;
+            barLoad.Minimum = 0;
+            barLoad.Maximum = 100;
+            barLoad.Value = 0;
+            barLoad.Visible = true;
 
             Thread t = new Thread(delegate()
             {
@@ -813,7 +850,11 @@ namespace Installer
                     Workshop.Download(it, dest, delegate(long got, long total)
                     {
                         int pct = total > 0 ? (int)Math.Min(100, got * 100 / total) : 0;
-                        Ui(delegate() { lblState.Text = "正在下载 " + pct + "%  ·  " + Core.Human(got) + " / " + Core.Human(total); });
+                        Ui(delegate()
+                        {
+                            lblState.Text = "正在下载 " + pct + "%  ·  " + Core.Human(got) + " / " + Core.Human(total);
+                            try { if (pct >= 0 && pct <= 100) barLoad.Value = pct; } catch { }
+                        });
                     });
                     string rn = Workshop.RenameToAddonTitle(dest);
                     if (rn != null) dest = Path.Combine(dir, rn);
@@ -822,6 +863,7 @@ namespace Installer
                     Ui(delegate()
                     {
                         busy = false;
+                        EndDownBar();
                         btnGet.Enabled = true;
                         grid.DownloadedIds.Add(it.Id);
                         grid.Invalidate();
@@ -834,6 +876,7 @@ namespace Installer
                     Ui(delegate()
                     {
                         busy = false;
+                        EndDownBar();
                         btnGet.Enabled = true;
                         lblState.Text = "下载失败：" + ex.Message;
                     });
@@ -842,6 +885,14 @@ namespace Installer
             });
             t.IsBackground = true;
             t.Start();
+        }
+
+        /// <summary>下载收尾：进度条退回「不确定进度」形态，交给 DetailBusy 决定显不显示。</summary>
+        private void EndDownBar()
+        {
+            barLoad.Style = ProgressBarStyle.Marquee;
+            barLoad.MarqueeAnimationSpeed = 30;
+            barLoad.Visible = detailLoading > 0 && !sampleMode;
         }
 
         private void OpenInBrowser()
@@ -981,6 +1032,20 @@ namespace Installer
             grid.FooterText = "";                   // 真实流程里 DoSearch 会清掉底部提示，截图也照做
             grid.FooterClickable = false;
             lblStatus.Text = "正在搜工坊…（骨架态截图）";
+        }
+
+        /// <summary>自检用：只留空墙 + 一句说明（验证「没搜到 / 搜索失败」的空态不是一片空白）。</summary>
+        internal void EmptyForTest(string title, string hint)
+        {
+            ShowGallery();
+            grid.SetItems(new List<WsItem>());
+            grid.ShowSkeleton(0);
+            grid.EmptyText = title;
+            grid.EmptyHint = hint;
+            grid.FooterText = "点这里重试";
+            grid.FooterClickable = true;
+            lblStatus.Text = "搜索失败：The operation has timed out（空态截图）";
+            RelayoutWall();
         }
 
         /// <summary>自检用：直接把墙滚到指定位置（验证滚动是否真的移动内容），并把关键几何打进日志。</summary>
