@@ -38,14 +38,22 @@ namespace Installer
         private readonly ToolTip tip;
 
         // 沿用原来那块画板的暖色：这是「看板」，不跟浅色/深色表单主题走
-        private static readonly Color BoardTop = Color.FromArgb(40, 30, 21);
-        private static readonly Color BoardBot = Color.FromArgb(11, 7, 4);
-        private static readonly Color Ink1 = Color.FromArgb(240, 230, 211);
-        private static readonly Color Ink2 = Color.FromArgb(168, 155, 133);
-        private static readonly Color Ink3 = Color.FromArgb(122, 112, 96);
-        private static readonly Color Accent = Color.FromArgb(224, 138, 74);
-        private static readonly Color Good = Color.FromArgb(111, 191, 139);
-        private static readonly Color Amber = Color.FromArgb(226, 176, 96);
+        // 配色跟着 Theme 走：以前这里是写死的暖棕色，切到主界面（冷灰）像换了个软件。
+        // 用属性而不是 static readonly —— 静态字段只在类第一次用到时求值一次，换主题不刷新。
+        private static Color BoardTop { get { return Theme.Bg; } }
+        private static Color BoardBot { get { return Theme.IsDark ? Color.FromArgb(12, 14, 17) : Color.FromArgb(247, 248, 250); } }
+        private static Color Ink1 { get { return Theme.Ink; } }
+        private static Color Ink2 { get { return Theme.Ink2; } }
+        private static Color Ink3 { get { return Theme.Ink3; } }
+        private static Color Accent { get { return Theme.Accent; } }
+        private static Color Good { get { return Theme.Ok; } }
+        private static Color Amber { get { return Theme.Warn; } }
+
+        /// <summary>半透明的前景色：深色主题铺白、浅色主题铺黑，替代原来固定的暖白。</summary>
+        private static Color Wash(int a)
+        {
+            return Theme.IsDark ? Color.FromArgb(a, 255, 255, 255) : Color.FromArgb(Math.Min(255, a * 3 / 2), 20, 24, 30);
+        }
 
         private readonly Font fTitle = new Font("Microsoft YaHei", 15.5f, FontStyle.Bold);
         private readonly Font fBig = new Font("Microsoft YaHei", 14f, FontStyle.Bold);
@@ -194,7 +202,7 @@ namespace Installer
                 p.AddEllipse(cx - rx, cy - ry, rx * 2, ry * 2);
                 using (PathGradientBrush pb = new PathGradientBrush(p))
                 {
-                    pb.CenterColor = Color.FromArgb(24, 120, 78, 44);
+                    pb.CenterColor = Wash(24);
                     pb.SurroundColors = new Color[] { Color.FromArgb(0, 0, 0, 0) };
                     g.FillPath(pb, p);
                 }
@@ -235,7 +243,7 @@ namespace Installer
             }
             float by = 58f;
             using (GraphicsPath p = Round(new RectangleF(bx, by, bw, 5f), 2.5f))
-            using (SolidBrush b = new SolidBrush(Color.FromArgb(26, 255, 240, 215)))
+            using (SolidBrush b = new SolidBrush(Wash(26)))
                 g.FillPath(b, p);
             float fill = Math.Max(0f, Math.Min(1f, pct)) * bw;
             if (fill > 3f)
@@ -291,7 +299,7 @@ namespace Installer
                 // 覆盖率细条
                 float trackW = r.Width - 28f, ty = r.Y + r.Height - 11f;
                 using (GraphicsPath p = Round(new RectangleF(r.X + 14f, ty, trackW, 3f), 1.5f))
-                using (SolidBrush b = new SolidBrush(Color.FromArgb(20, 255, 240, 215)))
+                using (SolidBrush b = new SolidBrush(Wash(20)))
                     g.FillPath(b, p);
                 float k = c.Total == 0 ? 0f : (float)c.On / c.Total;
                 float fw = trackW * k;
@@ -322,7 +330,7 @@ namespace Installer
                     SizeF sz = g.MeasureString(hd.Text, fSmall);
                     g.DrawString(hd.Text, fSmall, b, OvLayout.DetailX + 2f, hd.Y + 3f);
                     float lx = OvLayout.DetailX + 2f + sz.Width + 10f;
-                    using (Pen pen = new Pen(Color.FromArgb(16, 255, 240, 215), 1f))
+                    using (Pen pen = new Pen(Wash(16), 1f))
                         g.DrawLine(pen, lx, hd.Y + 11f, OvLayout.DetailX + OvLayout.DetailW, hd.Y + 11f);
                 }
             }
@@ -352,7 +360,7 @@ namespace Installer
             RectangleF r = new RectangleF(OvLayout.ListX, dragPos.Y - src.H * 0.5f, OvLayout.ListW, src.H);
             using (GraphicsPath p = Round(r, 8f))
             {
-                using (SolidBrush b = new SolidBrush(Color.FromArgb(236, 46, 35, 24)))
+                using (SolidBrush b = new SolidBrush(Theme.SurfaceAlt))
                     g.FillPath(b, p);
                 using (Pen pen = new Pen(Color.FromArgb(230, Accent), 1.6f))
                     g.DrawPath(pen, p);
@@ -379,7 +387,7 @@ namespace Installer
 
             if (hot)
                 using (GraphicsPath p = Round(r, 7f))
-                using (SolidBrush b = new SolidBrush(Color.FromArgb(14, 255, 240, 215)))
+                using (SolidBrush b = new SolidBrush(Wash(14)))
                     g.FillPath(b, p);
 
             // 已装用左边那个绿点标，不再画竖条 —— 彩色竖边框在列表行上是廉价信号
@@ -444,13 +452,13 @@ namespace Installer
             bool on = s.HasMod;
             using (GraphicsPath p = Round(track, 9f))
             {
-                using (SolidBrush b = new SolidBrush(on ? Color.FromArgb(185, Good) : Color.FromArgb(20, 255, 240, 215)))
+                using (SolidBrush b = new SolidBrush(on ? Color.FromArgb(185, Good) : Wash(20)))
                     g.FillPath(b, p);
-                using (Pen pen = new Pen(on ? Color.FromArgb(220, Good) : Color.FromArgb(48, 255, 240, 215), 1f))
+                using (Pen pen = new Pen(on ? Color.FromArgb(220, Good) : Wash(48), 1f))
                     g.DrawPath(pen, p);
             }
             float kx = on ? track.Right - 15f : track.X + 2f;
-            using (SolidBrush b = new SolidBrush(on ? Color.FromArgb(250, 22, 18, 12) : Color.FromArgb(190, 226, 216, 196)))
+            using (SolidBrush b = new SolidBrush(on ? Theme.Bg : Theme.Ink2))
                 g.FillEllipse(b, kx, track.Y + 2f, 14f, 14f);
         }
 
@@ -478,10 +486,10 @@ namespace Installer
             float y = OvLayout.DetailY + (viewH - h) * t;
             float x = OvLayout.DetailX + OvLayout.DetailW + 10f;
             using (GraphicsPath p = Round(new RectangleF(x, OvLayout.DetailY, 3.5f, viewH), 1.75f))
-            using (SolidBrush b = new SolidBrush(Color.FromArgb(14, 255, 240, 215)))
+            using (SolidBrush b = new SolidBrush(Wash(14)))
                 g.FillPath(b, p);
             using (GraphicsPath p = Round(new RectangleF(x, y, 3.5f, h), 1.75f))
-            using (SolidBrush b = new SolidBrush(Color.FromArgb(70, 255, 240, 215)))
+            using (SolidBrush b = new SolidBrush(Wash(70)))
                 g.FillPath(b, p);
         }
 
@@ -495,14 +503,14 @@ namespace Installer
             float y = OvLayout.ListY + (viewH - h) * t;
             float x = OvLayout.ListX + OvLayout.ListW + 6f;
             using (GraphicsPath p = Round(new RectangleF(x, y, 3.5f, h), 1.75f))
-            using (SolidBrush b = new SolidBrush(Color.FromArgb(60, 255, 240, 215)))
+            using (SolidBrush b = new SolidBrush(Wash(60)))
                 g.FillPath(b, p);
         }
 
         private void Hint(Graphics g)
         {
             string s = "开关＝装 / 不装（装回上一次那个）　·　点名字＝换一个　·　拖或右键大类＝换顺序　·　←→ 进出明细，空格开关";
-            using (SolidBrush b = new SolidBrush(Color.FromArgb(96, 200, 186, 162)))
+            using (SolidBrush b = new SolidBrush(Wash(96)))
                 g.DrawString(s, fSmall, b,
                     new RectangleF(OvLayout.SidePad, ClientSize.Height - 26f,
                                    ClientSize.Width - OvLayout.SidePad * 2f, 18f));

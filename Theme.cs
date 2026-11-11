@@ -79,7 +79,7 @@ namespace Installer
         public static readonly Palette Dark = new Palette
         {
             IsDark = true,
-            Bg = C(18, 20, 23),
+            Bg = C(15, 17, 20),          // 再压暗一档：卡片和画布的亮度差拉开了，才有"浮起来"的层级
             Surface = C(30, 33, 38),
             SurfaceAlt = C(36, 39, 45),
             BtnHover = C(42, 46, 53),
@@ -464,16 +464,40 @@ namespace Installer
         public const int S = 8;
         public const int H = 32;   // 普通控件高（桌面端最小可点目标，也是列表行高）
         public const int HP = 36;  // 主操作高
-        public const int R = 6;    // 控件圆角
+        public const int R = 8;    // 控件圆角
         public const int RowH = 32;      // 列表行高：与控件高同一档
         public const int ExtraW = 340;   // 方案树右半「可叠加的扩展」栏定宽
         public const int SideMin = 900;  // 右半够这个宽才并排，否则退回上下堆叠
 
         // 参照 iOS 26（Liquid Glass）的「分组列表」：卡片圆角 + 组标题在卡片外 + 内缩分隔线。
         // 触控端的 44pt 点击目标在桌面上按 26–32px 收敛；留白仍按 8 的倍数走。
-        public const int CardR = 10;     // 卡片圆角
+        public const int CardR = 12;     // 卡片圆角
         public const int CardPad = 16;   // 卡片内边距
         public static Color CardEdge { get { return pal.CardEdge; } }
+
+        /// <summary>卡片顶部的 1px 高光：深色下让卡片"有厚度"，浅色下几乎看不见（白卡不需要高光）。</summary>
+        public static Color SurfaceHi
+        {
+            get { return pal.IsDark ? Color.FromArgb(16, 255, 255, 255) : Color.FromArgb(0, 255, 255, 255); }
+        }
+
+        /// <summary>卡片投影：浅色下才用（深色的层级靠亮度差，投影会被背景吃掉，反而显脏）。</summary>
+        public static Color CardShadow
+        {
+            get { return pal.IsDark ? Color.FromArgb(0, 0, 0, 0) : Color.FromArgb(14, 0, 0, 0); }
+        }
+
+        /// <summary>顶栏底色：比画布略深/略亮一档，让"标题栏"和内容区分开，不再靠一条线硬切。</summary>
+        public static Color TopBar
+        {
+            get { return pal.IsDark ? Color.FromArgb(24, 27, 32) : Color.FromArgb(255, 255, 255); }
+        }
+
+        /// <summary>底栏（开始安装那一排）底色，和顶栏成对。</summary>
+        public static Color BottomBar
+        {
+            get { return pal.IsDark ? Color.FromArgb(22, 25, 30) : Color.FromArgb(252, 252, 253); }
+        }
         public static Color SegTrack { get { return pal.SegTrack; } }   // 分段控件底
         public static Color SegEdge { get { return pal.SegEdge; } }
         public static Color TrackOff { get { return pal.TrackOff; } }   // 开关·关
@@ -934,11 +958,29 @@ namespace Installer
             g.Clear(Parent != null ? Parent.BackColor : Theme.Bg);
 
             Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
+
+            // 投影先画：只在浅色主题可见。深色下卡片靠"比画布亮一档"分层，
+            // 再压一层黑只会让边缘发脏。
+            if (Theme.CardShadow.A > 0)
+            {
+                using (GraphicsPath sp = Theme.Round(new Rectangle(0, 2, Width - 1, Height - 1), Theme.CardR))
+                using (Pen sh = new Pen(Theme.CardShadow, 2f))
+                    g.DrawPath(sh, sp);
+            }
+
             using (GraphicsPath p = Theme.Round(r, Theme.CardR))
             {
                 using (SolidBrush b = new SolidBrush(Theme.Surface)) g.FillPath(b, p);
                 using (Pen pen = new Pen(Theme.CardEdge)) g.DrawPath(pen, p);
             }
+
+            // 顶部高光：段在圆角以内，像光从上方擦过卡片边缘
+            if (Theme.SurfaceHi.A > 0)
+            {
+                using (Pen hi = new Pen(Theme.SurfaceHi))
+                    g.DrawLine(hi, Theme.CardPad, 1, Width - Theme.CardPad, 1);
+            }
+
             foreach (int y in seps)
             {
                 using (Pen pen = new Pen(Theme.Line))

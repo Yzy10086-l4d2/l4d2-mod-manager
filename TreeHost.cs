@@ -459,6 +459,26 @@ namespace Installer
             int sk = treeView == null ? 0 : treeView.SlotCheckedCount;
             string tail = treeView != null && treeView.Unmatched > 0 ? " · " + treeView.Unmatched + " 个未归类" : "";
             gMod.Caption = "方案树 · " + sc + " 个位置 · 已选 " + sk + tail;
+
+            if (lblLibInfo != null)
+            {
+                string lib = Core.IsLocal ? "游戏 addons" : "U 盘库";
+                int n = Core.ModList == null ? 0 : Core.ModList.Count;
+                string last = "还没装过";
+                string run = (Core.Cfg.LastRun ?? "").Trim();
+                if (run.Length > 0)
+                {
+                    // 完整日期时间贴在这儿太长（会盖过真正有用的库/数量），压成「今天 07:36 装过」
+                    int sp = run.IndexOf(' ');
+                    if (sp > 0 && run.Length >= sp + 6)
+                    {
+                        string day = run.Substring(0, sp), hm = run.Substring(sp + 1, 5);
+                        last = (day == DateTime.Now.ToString("yyyy-MM-dd") ? "今天 " + hm : day.Substring(Math.Max(0, day.Length - 5)) + " " + hm) + " 装过";
+                    }
+                    else last = run;
+                }
+                lblLibInfo.Text = lib + " · " + n + " 个 MOD · " + last;
+            }
         }
     }
 }

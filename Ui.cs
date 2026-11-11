@@ -18,6 +18,7 @@ namespace Installer
         private FlatButton btnWorkshop;           // 顶部：从创意工坊导入
         private bool drawerOpen;                  // 左栏（装什么 / 安装选项 / 日志）是否展开
         private FlatButton btnLogToggle;          // 左栏「显示日志 / 收起日志」
+        private Label lblLibInfo;                 // 左栏底部一行库信息，别让下半屏空着
         private bool logOpen;                     // 日志卡片展开（默认收起：排错才看，不该常驻）
         private CheckBox chkL4N, chkSkeeto, chkAsset, chkMqcam, chkDxvk, chkLaunch, chkCfg, chkSwap, chkStrict;
         private RadioButton rdSkip, rdOver;
@@ -94,6 +95,7 @@ namespace Installer
             ClientSize = new Size(Math.Min(w0, wa.Width - Dpi.S(20)), Math.Min(h0, wa.Height - Dpi.S(20)));
             Font = Theme.UI;
             DoubleBuffered = true;
+            SetStyle(ControlStyles.ResizeRedraw, true);   // 顶栏/底栏那两条线要跟着尺寸重画
             KeyPreview = true;
             StartPosition = FormStartPosition.CenterScreen;
             BuildUi();
@@ -319,6 +321,30 @@ namespace Installer
             lblStatus.Text = "⚠ U 盘包不齐：缺 " + string.Join("、", miss.ToArray()) + "（详见日志）";
         }
 
+        /// <summary>
+        /// 顶栏 / 底栏各一条分界线，再在顶栏下面压 3px 递减阴影。
+        /// 以前上下两条和内容同色，整窗像一张大平板；有了这两条，标题栏和操作栏才"浮"出来。
+        /// 不铺底色是有意的：按钮按 Parent.BackColor 清屏，铺了底会在按钮位置挖出色块。
+        /// </summary>
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            Graphics g = e.Graphics;
+            int W = ClientSize.Width, H = ClientSize.Height;
+            int top = Dpi.S(56);
+
+            using (Pen pen = new Pen(Theme.Line)) g.DrawLine(pen, 0, top - 1, W, top - 1);
+            for (int i = 0; i < 3; i++)
+            {
+                int a = Theme.IsDark ? 30 - i * 9 : 12 - i * 4;
+                if (a <= 0) break;
+                using (Pen p2 = new Pen(Color.FromArgb(a, 0, 0, 0))) g.DrawLine(p2, 0, top + i, W, top + i);
+            }
+
+            int bottom = H - Dpi.S(BottomBarH);
+            using (Pen pen = new Pen(Theme.Line)) g.DrawLine(pen, 0, bottom, W, bottom);
+        }
+
         private void BuildUi()
         {
             BackColor = Theme.Bg;
@@ -334,7 +360,7 @@ namespace Installer
             int rightW = W - Theme.M - rightX;
 
             // ---- 顶部：游戏目录 ----
-            Label l1 = new Label(); l1.Text = "游戏目录"; l1.SetBounds(Theme.M, 20, 56, 20); Theme.Dress(l1); Controls.Add(l1);
+            Label l1 = new Label(); l1.Text = "游戏目录"; l1.SetBounds(Theme.M, 20, 60, 20); Theme.Dress(l1); l1.Font = Theme.UISmall; l1.ForeColor = Theme.Ink3; Controls.Add(l1);
             const int modeW = 104;
             const int findW = 76;
             const int browseW = 76;
@@ -350,7 +376,7 @@ namespace Installer
             int findX = viewX - topGap - findW;
             int browseX = findX - topGap - browseW;
             int modeX = browseX - topGap - modeW;
-            txtGame = new ComboBox(); txtGame.SetBounds(76, 18, modeX - 8 - 76, 24);
+            txtGame = new ComboBox(); txtGame.SetBounds(80, 18, modeX - 8 - 80, 24);
             txtGame.DropDownStyle = ComboBoxStyle.DropDown; Theme.Dress(txtGame); Controls.Add(txtGame);
             txtGame.TextChanged += delegate { QueuePrecheck(); };   // 手输路径时底栏那句提示跟着变
             cboMode = new ComboBox(); cboMode.SetBounds(modeX, 18, modeW, 24);
@@ -359,8 +385,8 @@ namespace Installer
             cboMode.SelectedIndexChanged += delegate { OnModeChanged(); };
             tips.SetToolTip(cboMode, "U 盘模式：所选主库是主，装 MOD = 从库里复制到游戏。\r\n游戏目录里和库里同名同大小的那份会合并显示（标「已装」），不再重复列。\r\n本地模式：只看游戏目录 addons，不扫主库和附加目录；删除 = 从游戏里卸掉（文件真删）。");
             Controls.Add(cboMode);
-            btnBrowse = new FlatButton(); btnBrowse.Text = "浏览…"; btnBrowse.SetBounds(browseX, 16, browseW, Theme.H); btnBrowse.Click += delegate { BrowseGame(); }; Controls.Add(btnBrowse);
-            btnFind = new FlatButton(); btnFind.Text = "自动找"; btnFind.SetBounds(findX, 16, findW, Theme.H); btnFind.Click += delegate { FindGame(); }; Controls.Add(btnFind);
+            btnBrowse = new FlatButton(); btnBrowse.Soft = true; btnBrowse.Text = "浏览…"; btnBrowse.SetBounds(browseX, 16, browseW, Theme.H); btnBrowse.Click += delegate { BrowseGame(); }; Controls.Add(btnBrowse);
+            btnFind = new FlatButton(); btnFind.Soft = true; btnFind.Text = "自动找"; btnFind.SetBounds(findX, 16, findW, Theme.H); btnFind.Click += delegate { FindGame(); }; Controls.Add(btnFind);
             // 工坊导入：入口放顶栏而不是藏在设置里 —— 这是「往库里加东西」的主路径之一
             btnWorkshop = new FlatButton(); btnWorkshop.Text = "工坊";
             btnWorkshop.SetBounds(wsX, 16, wsW, Theme.H);
@@ -378,13 +404,13 @@ namespace Installer
             Controls.Add(btnSettings);
 
             // 总览 / 方案树：同一份数据的两种看法，按钮上写的是「点了会去哪种」
-            btnView = new FlatButton(); btnView.Text = "总览";
+            btnView = new FlatButton(); btnView.Soft = true; btnView.Text = "总览";
             btnView.SetBounds(viewX, 16, viewW, Theme.H);
             btnView.Click += delegate { ToggleView(); };
             tips.SetToolTip(btnView, "套装总览：这套里每个位置装的是哪个 MOD，一眼看完。\r\n左边点大类，右边列这个类的位置和已装的 MOD；没装的灰着，库里没有的空心点。\r\n点开关直接开/关，点名字就地换 MOD，拖大类改顺序；点一行回方案树改那个位置。再点一下回到方案树。");
             Controls.Add(btnView);
 
-            btnPanel = new FlatButton(); btnPanel.Text = "面板";
+            btnPanel = new FlatButton(); btnPanel.Soft = true; btnPanel.Text = "面板";
             btnPanel.SetBounds(panelX, 16, panelW, Theme.H);
             btnPanel.Click += delegate
             {
@@ -484,7 +510,7 @@ namespace Installer
             // 日志是排错才看的东西：常驻的话左栏一半高度都被它占着，把「装什么 / 安装选项」
             // 挤到上面一小块。收起来只留一个切换按钮，点了才展开；高度由 ApplyResponsive 算。
             Section gl = new Section();
-            gl.Caption = "日志"; gl.SetBounds(Theme.M, 438, leftW, 220); gl.Visible = false; Controls.Add(gl);
+            gl.Caption = "日志"; gl.SetBounds(Theme.M, 478, leftW, 200); gl.Visible = false; Controls.Add(gl);
             FlatButton btnLog = new FlatButton(); btnLog.Text = "打开日志"; btnLog.SetBounds(leftW - 12 - 68, 1, 68, 24); btnLog.Font = Theme.UISmall; btnLog.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", Core.LogDir); } catch { } }; gl.Controls.Add(btnLog);
             txtLog = new TextBox();
             txtLog.SetBounds(12, 30, leftW - 24, 170);
@@ -498,10 +524,22 @@ namespace Installer
             btnLogToggle = new FlatButton();
             btnLogToggle.Text = "显示日志 ▾";
             btnLogToggle.Font = Theme.UISmall;
-            btnLogToggle.SetBounds(Theme.M, 438, leftW, Theme.H);
+            btnLogToggle.Soft = true;                 // 整栏大白按钮太抢眼，像个误放的主操作
+            btnLogToggle.SetBounds(Theme.M, 438, 132, Theme.H);
             btnLogToggle.Click += delegate { SetLogOpen(!logOpen); };
             tips.SetToolTip(btnLogToggle, "安装日志：什么时候开始、每个文件复制到哪、哪一步跳过了。\r\n平时收起来，出问题再展开。");
             Controls.Add(btnLogToggle);
+
+            // 左栏底部这行信息：以前下面大半屏是空的，看着像漏画了东西；
+            // 放一行「库 · 多少个 · 上次装机」既填了空白，又是有用的上下文。
+            lblLibInfo = new Label();
+            lblLibInfo.Font = Theme.UISmall;
+            lblLibInfo.ForeColor = Theme.Ink3;
+            lblLibInfo.AutoSize = false;
+            lblLibInfo.AutoEllipsis = true;
+            lblLibInfo.TextAlign = ContentAlignment.MiddleLeft;
+            lblLibInfo.BackColor = Color.Transparent;
+            Controls.Add(lblLibInfo);
 
             // ---- 右栏：MOD 库 ----
             // 只有一屏：方案树。左边是「能替换的东西」的位置，右边是它的候选。
@@ -575,18 +613,18 @@ namespace Installer
             // 右侧只留「次要 + 主操作」两个；破坏性的「一键还原」挪到最左下角，
             // 和主操作隔开近一个屏宽 —— 以前它跟「开始安装」同高同排只差 8px，
             // 手滑一下就得读一段四行长的确认框，读多了确认就失效。
-            const int bwRestore = 96, bwSwitch = 116, bwOpen = 104, bwInstall = 112;
+            const int bwRestore = 96, bwSwitch = 124, bwOpen = 112, bwInstall = 132;
             int rightEdge = W - Theme.M;
             int xOpen = rightEdge - bwOpen;
             int xSwitch = xOpen - Theme.S - bwSwitch;
             int xInstall = xSwitch - Theme.S - bwInstall;
 
-            btnInstall = new FlatButton(); btnInstall.Text = "开始安装"; btnInstall.Primary = true;
+            btnInstall = new FlatButton(); btnInstall.Text = "开始安装 →"; btnInstall.Primary = true;
             btnInstall.AccessibleName = "开始安装所选组件和 MOD";
             btnInstall.Font = new Font(Theme.UI, FontStyle.Bold);
             btnInstall.SetBounds(xInstall, CH - BottomBarH, bwInstall, Theme.HP);
             btnInstall.Click += delegate { DoInstall(); }; Controls.Add(btnInstall);
-            btnSwitch = new FlatButton(); btnSwitch.Text = "管理已装 MOD";
+            btnSwitch = new FlatButton(); btnSwitch.Soft = true; btnSwitch.Text = "管理已装 MOD";
             btnSwitch.SetBounds(xSwitch, CH - BottomBarH, bwSwitch, Theme.HP);
             btnSwitch.Click += delegate { DoSwitch(); }; Controls.Add(btnSwitch);
             btnRestore = new FlatButton(); btnRestore.Text = "一键还原"; btnRestore.Danger = true;
@@ -594,7 +632,7 @@ namespace Installer
             btnRestore.AccessibleName = "危险：移除本次安装写进去的文件";
             btnRestore.Click += delegate { DoRestore(); }; Controls.Add(btnRestore);
             tips.SetToolTip(btnRestore, "危险操作：删掉装进游戏的文件。执行前会再次确认。\r\n故意放在最左下角，离「开始安装」最远的地方。");
-            btnOpen = new FlatButton(); btnOpen.Text = "打开游戏目录";
+            btnOpen = new FlatButton(); btnOpen.Soft = true; btnOpen.Text = "打开游戏目录";
             btnOpen.SetBounds(xOpen, CH - BottomBarH, bwOpen, Theme.HP);
             btnOpen.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", txtGame.Text); } catch { } }; Controls.Add(btnOpen);
 
@@ -1839,6 +1877,45 @@ namespace Installer
         }
 
         /// <summary>诊断截图：把「读取中」的骨架占位截一张（--loadshot），确认扫光位置/排版在真机上成立。</summary>
+        /// <summary>
+        /// 诊断截图：主界面（方案树 / 总览 / 收起左栏各一张）。
+        /// 改视觉时全靠这几张对照，不然只能凭印象说"好像好看了"。
+        /// </summary>
+        internal void MainShot()
+        {
+            for (int i = 0; i < 200 && !Ready; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(20); }
+            for (int i = 0; i < 8; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(80); }
+            // MAINLIGHT=1 时先切浅色再截 —— 改视觉要两套主题都看，深色好看不代表浅色也成立
+            bool light = Environment.GetEnvironmentVariable("MAINLIGHT") == "1";
+            string tag = light ? "-light" : "";
+            if (light)
+            {
+                Theme.SetMode(ThemeMode.Light);
+                Theme.ApplyToOpenForms();
+                Application.DoEvents();
+                Application.DoEvents();
+            }
+
+            Shot(this, "main" + tag);
+            SetDrawer(false);
+            Application.DoEvents();
+            Application.DoEvents();
+            Shot(this, "main-nodrawer" + tag);
+            SetDrawer(true);
+            Application.DoEvents();
+            ShowOverview();
+            Application.DoEvents();
+            Application.DoEvents();
+            Shot(this, "main-overview" + tag);
+            if (light)
+            {
+                Theme.SetMode(ThemeMode.Dark);
+                Theme.ApplyToOpenForms();
+                Application.DoEvents();
+            }
+            Core.Log("INFO", "MAIN 截图完成" + (light ? "（浅色）" : ""));
+        }
+
         internal void LoadingShot()
         {
             for (int i = 0; i < 200 && !Ready; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(20); }
@@ -3420,15 +3497,20 @@ namespace Installer
                 // 左栏纵向：两张卡高度由内容定死（装什么 222 / 安装选项 144），
                 // 日志切换按钮贴左栏底部，日志在它上方展开、吃掉中间那片空白，收起时高度归零。
                 // 以前日志是常驻的 CH-438-BottomBarH，窗口一高它就把左栏一半占了。
-                int btnLogTop = H - BottomBarH - Theme.H;
-                int logH = Math.Min(300, Math.Max(0, btnLogTop - Theme.S - 438 - Theme.H - Theme.S));
+                // 左栏底部成组：日志按钮 + 一行库信息，都贴底但留 16px。
+                // 试过让按钮紧跟「安装选项」，结果中间空出一块、底部也空 —— 上密下疏比"中间漏一块"自然。
+                int infoTop = H - BottomBarH - 24;
+                const int btnLogTop = 438;                  // 紧跟「安装选项」卡片
+                int logTop = btnLogTop + Theme.H + Theme.S;
+                int logH = Math.Max(0, infoTop - Theme.S - logTop);
                 if (btnLogToggle != null)
                 {
                     btnLogToggle.Top = Dpi.S(btnLogTop);
-                    btnLogToggle.Width = Dpi.S(leftW);
+                    btnLogToggle.Width = Dpi.S(132);
                     btnLogToggle.Visible = drawerOpen;
                 }
-                gLog.Top = Dpi.S(btnLogTop - Theme.S - logH);
+                // 日志在按钮下方展开：收起时那片是留白，展开时正好被日志填满，两种状态都不空
+                gLog.Top = Dpi.S(logTop);
                 gLog.Height = Dpi.S(logOpen ? logH : 0);
                 gLog.Visible = drawerOpen && logOpen;
                 txtLog.Height = Dpi.S(logOpen ? Math.Max(60, logH - 34) : 0);
@@ -3442,6 +3524,11 @@ namespace Installer
                 bar.Top = Dpi.S(H - BottomBarH + 12);
                 btnCancel.Top = Dpi.S(H - BottomBarH + 6);
                 lblStatus.Top = Dpi.S(H - 28);
+                if (lblLibInfo != null)
+                {
+                    lblLibInfo.SetBounds(Dpi.S(Theme.M + 8), Dpi.S(infoTop), Dpi.S(leftW - 16), Dpi.S(18));
+                    lblLibInfo.Visible = drawerOpen;
+                }
             }
 
             txtSearch.Width = Dpi.S(rightW - 126);
