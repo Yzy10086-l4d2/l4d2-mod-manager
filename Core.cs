@@ -703,7 +703,7 @@ namespace Installer
         /// <summary>
         /// 把写完的临时文件换成正式文件。
         /// 目标已存在时先用 File.Replace（一次系统调用换名，保留原文件的属性，exFAT 上也成立）；
-        /// 它失败就退回「删旧的 + 改名」—— 只有到这一步才碰正式文件，中途出错不会留下半截 vpk。
+        /// 它失败就把旧文件改名成 .old 留一手，再移新文件 —— 全程不删旧文件，断在中间也能退回去。
         /// </summary>
         public static void Swap(string tmp, string dst)
         {
@@ -711,14 +711,45 @@ namespace Installer
             string first;
             try { File.Replace(tmp, dst, null, true); return; }
             catch (Exception ex) { first = ex.Message; }
+
             // 这个卷不支持整体换名（少见），或者目标正被别的程序占着。
-            // 删不掉就让异常抛出去 —— 上层会如实报失败，旧文件也还在。
-            File.Delete(dst);
-            File.Move(tmp, dst);
+            // 早先是 File.Delete(dst) → File.Move(tmp, dst)：两步之间断电 / 拔盘 / 强退，
+            // 旧文件已经没了、新文件还没到位，用户手里就是一个文件都不剩。
+            // 现在先把旧文件挪到同目录的 .old-xxxx，新文件落位成功后才删它；失败就把 .old 挪回来。
+            string bak = dst + ".old-" + Guid.NewGuid().ToString("N").Substring(0, 6);
+            bool oldMoved = false;
+            try
+            {
+                File.Move(dst, bak);
+                oldMoved = true;
+                File.Move(tmp, dst);
+            }
+            catch (Exception ex)
+            {
+                if (oldMoved)
+                {
+                    try
+                    {
+                        // 新文件可能已经落到 dst 上（极少见），先清掉占位再把旧文件挪回去
+                        if (File.Exists(dst)) File.Delete(dst);
+                        File.Move(bak, dst);
+                        oldMoved = false;
+                    }
+                    catch (Exception back)
+                    {
+                        Log("FAIL", "换名失败后旧文件没能挪回原位，已保留在 " + bak + ": " + back.Message);
+                    }
+                }
+                throw new IOException("覆盖写入失败，旧文件仍保留（" + (oldMoved ? bak : dst) + "）：" + ex.Message, ex);
+            }
+            // 新文件已经完整落位，旧的那份这时候才可以删；删不掉也只是留个 .old，不影响使用
+            try { if (File.Exists(bak)) File.Delete(bak); }
+            catch (Exception ex) { Log("WARN", "旧文件暂未删除（可手动清理）: " + bak + "，" + ex.Message); }
+
             if (!_swapFallbackTold)
             {
                 _swapFallbackTold = true;
-                Log("INFO", "覆盖写改用「先删后换」: " + first);
+                Log("INFO", "覆盖写改用「旧文件改名保留 + 移入新文件」: " + first);
             }
         }
 

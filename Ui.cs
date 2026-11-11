@@ -867,7 +867,11 @@ namespace Installer
         private string TweakName()
         {
             string s2 = cboTweak == null ? null : (cboTweak.SelectedItem as string);
-            if (s2 == null || s2 == "(不套用)") return "";
+            if (s2 == null) return "";
+            s2 = s2.Trim();
+            // 下拉第一项的字面量就是「不套用」。之前拿它跟「(不套用)」比，永远不相等，
+            // 选「不套用」时会把字面量当成存档名，装机时反而去搬 autoexec.cfg。
+            if (s2.Length == 0 || s2 == "不套用" || s2 == "(不套用)") return "";
             return s2;
         }
 
@@ -3982,9 +3986,11 @@ namespace Installer
                 MessageBox.Show("游戏还开着，先完全退出再还原。", "游戏正在运行");
                 return;
             }
-            if (MessageBox.Show("删掉装进游戏的文件（L4N / Skeeto / MQCam / dxvk 和本次铺的 MOD）。\r\n\r\n"
+            if (MessageBox.Show("删掉装进游戏的文件（L4N / Skeeto / MQCam / dxvk 和装机记录里的 MOD）。\r\n\r\n"
+                + "平台文件删除前会尽量备份到 _装机记录\\还原备份；备份失败的文件会保留不删。\r\n"
                 + "原版 exe、addonlist、autoexec 没有备份，需要原版请用 Steam 校验文件。\r\n\r\n确定还原？",
-                "确认彻底还原", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+                "确认彻底还原", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
             Log("--- 彻底还原 ---");
             try
             {
@@ -4211,6 +4217,10 @@ namespace Installer
             public List<string> Failed = new List<string>();
             /// <summary>这次新写进 addons 的文件名，最后写还原清单用。</summary>
             public List<string> Added = new List<string>();
+            /// <summary>这次实际装成功的平台组件（L4N / Dxvk / Skeeto / Asset / Mqcam），还原时只删这些。</summary>
+            public List<string> Platform = new List<string>();
+            /// <summary>addonlist 的开关是否已经写入（取消时别把已写好的开关又改掉）。</summary>
+            public bool SwitchesWritten;
             public int StepDone, StepTotal;
             public volatile bool Canceled;
         }
@@ -4374,22 +4384,26 @@ namespace Installer
                 {
                     Core.Log("STEP", "装 L4N");
                     BeginStep(j, "正在装 L4N…");
-                    if (!Work.InstallL4N(j.Root, delegate(int done, int total) { SetBar(total > 0 ? done * 1000 / total : 0); }))
-                        j.Failed.Add("L4N 平台");
+                    bool l4nOk = Work.InstallL4N(j.Root, delegate(int done, int total) { SetBar(total > 0 ? done * 1000 / total : 0); });
+                    if (!l4nOk) j.Failed.Add("L4N 平台");
+                    // 中途停止时 L4N 可能已经写了一部分，也记进去，让「一键还原」能清理（删前有备份）
+                    if (l4nOk || Work.CancelRequested) j.Platform.Add("L4N");
                     if (Work.CancelRequested) j.Canceled = true;
                 }
                 if (!j.Canceled && j.Dxvk)
                 {
                     Core.Log("STEP", "装 dxvk");
                     BeginStep(j, "正在装 dxvk…");
-                    if (!Work.InstallDxvk(j.Root)) j.Failed.Add("dxvk 防闪退");
+                    if (Work.InstallDxvk(j.Root)) j.Platform.Add("Dxvk");
+                    else j.Failed.Add("dxvk 防闪退");
                     if (Work.CancelRequested) j.Canceled = true;
                 }
                 if (!j.Canceled && j.Skeeto)
                 {
                     Core.Log("STEP", "装 Skeeto");
                     BeginStep(j, "正在装 Skeeto…");
-                    if (!Work.InstallSkeeto(j.Root)) j.Failed.Add("Skeeto 增强框架");
+                    if (Work.InstallSkeeto(j.Root)) j.Platform.Add("Skeeto");
+                    else j.Failed.Add("Skeeto 增强框架");
                     if (Work.CancelRequested) j.Canceled = true;
                 }
                 if (!j.Canceled && j.Asset)
@@ -4398,6 +4412,7 @@ namespace Installer
                     BeginStep(j, "正在复制素材包…");
                     j.AssetName = Work.InstallAssetPack(j.Root);
                     if (j.AssetName == null) j.Failed.Add("Skeeto 素材包");
+                    else j.Platform.Add("Asset");
                     if (Work.CancelRequested) j.Canceled = true;
                 }
                 if (!j.Canceled && j.Cfg) InstallCfgStep(j);
@@ -4405,7 +4420,8 @@ namespace Installer
                 {
                     Core.Log("STEP", "装 MQCam");
                     BeginStep(j, "正在装 MQCam…");
-                    if (!Work.InstallMqcam(j.Root)) j.Failed.Add("MQCam 相机");
+                    if (Work.InstallMqcam(j.Root)) j.Platform.Add("Mqcam");
+                    else j.Failed.Add("MQCam 相机");
                     if (Work.CancelRequested) j.Canceled = true;
                 }
                 if (!j.Canceled && (j.Sel.Count > 0 || j.Swap || j.AssetName != null))
@@ -4421,7 +4437,7 @@ namespace Installer
                     if (Work.CancelRequested) j.Canceled = true;
                 }
 
-                if (j.Canceled || Work.CancelRequested) { ReportInstallCanceled(); return; }
+                if (j.Canceled || Work.CancelRequested) { ReportInstallCanceled(j); return; }
                 FinishInstall(j);
             }
             catch (Exception ex)
@@ -4516,6 +4532,7 @@ namespace Installer
                 SetStatus("正在切换 MOD 开关…");
                 int onN, offN, keepN;
                 Work.SwitchAddons(j.Root, j.Sel, j.AssetName, out onN, out offN, out keepN);
+                j.SwitchesWritten = true;
                 return;
             }
             Dictionary<string, bool> st = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
@@ -4523,23 +4540,65 @@ namespace Installer
             if (j.AssetName != null) st[j.AssetName] = true;
             if (st.Count == 0) return;
             AddonList.Write(j.Root, st);
+            j.SwitchesWritten = true;
             Core.Log("OK", "启用状态已写入");
         }
 
-        private void ReportInstallCanceled()
+        private void ReportInstallCanceled(InstallJob j)
         {
-            SetStatus("已停止 · 已复制文件保留，开关未写入");
-            Core.Log("WARN", "安装已停止：没有继续后续步骤，也没有改 addonlist；已写入的文件保留。");
+            int copied = j == null ? 0 : j.Added.Count;
+            SetStatus(copied > 0 ? "已停止 · 已复制文件待处理" : "已停止 · 后续步骤未继续");
+            Core.Log("WARN", "安装已停止：没有继续后续步骤；已写入的 " + copied + " 个 MOD 文件保留。");
             SafeBeginInvoke(delegate()
             {
-                bool summary = MessageBox.Show(
-                    "安装已停止。\r\n\r\n"
-                    + "· 已经写完的文件保留在游戏目录里\r\n"
-                    + "· 后续组件没有继续安装\r\n"
-                    + "· addonlist 的开关没有改动\r\n\r\n"
-                    + "这不是“还原”。要清理，请用「一键还原」或手动处理。\r\n"
-                    + "需要继续时，可以再点一次「开始装」。",
-                    "安装已停止", MessageBoxButtons.OK, MessageBoxIcon.Information) == DialogResult.OK;
+                if (j != null && (j.Added.Count > 0 || j.Platform.Count > 0))
+                {
+                    // 先把本次写的记进还原清单：不管用户选删还是留，都不至于变成“谁都找不到”的孤儿文件。
+                    Work.WriteManifest(j.Root, j.Added, j.Platform);
+                }
+                if (j != null && j.Added.Count > 0)
+                {
+                    bool remove = MessageBox.Show(
+                        "安装已停止。\r\n\r\n"
+                        + "· 已经复制完的 " + j.Added.Count + " 个 MOD 文件还在游戏目录里\r\n"
+                        + "· 后续组件没有继续安装\r\n\r\n"
+                        + "要现在删掉这 " + j.Added.Count + " 个文件吗？\r\n"
+                        + "选「否」会保留文件、记入还原清单，并把它们的开关先设为关闭。",
+                        "安装已停止",
+                        MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+                        MessageBoxDefaultButton.Button2) == DialogResult.Yes;
+                    if (remove)
+                    {
+                        List<string> cleared = Work.RemoveAddedFiles(j.Root, j.Added);
+                        Work.ForgetManifest(j.Root, cleared);
+                        SetStatus("已停止 · 已删除本次复制 " + cleared.Count + " 个文件");
+                        Core.Log("OK", "取消安装：已删除本次复制的 " + cleared.Count + " 个文件");
+                    }
+                    else
+                    {
+                        if (!j.SwitchesWritten)
+                        {
+                            Dictionary<string, bool> off = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+                            foreach (string n in j.Added) off[n] = false;
+                            try { AddonList.Write(j.Root, off); }
+                            catch (Exception ex) { Core.Log("WARN", "取消安装后关闭开关失败: " + ex.Message); }
+                        }
+                        SetStatus("已停止 · 文件已保留，可在「一键还原」里清理");
+                        Core.Log("WARN", "取消安装：本次复制的 " + j.Added.Count + " 个文件已记入还原清单"
+                            + (j.SwitchesWritten ? "（开关已写入，未改动）" : "，开关先设为关闭"));
+                    }
+                }
+                else
+                {
+                    MessageBox.Show(
+                        "安装已停止。\r\n\r\n"
+                        + "· 还没有复制完的 MOD 文件\r\n"
+                        + "· 后续组件没有继续安装\r\n"
+                        + (j != null && j.Platform.Count > 0
+                            ? "· 已写入的平台组件已记入还原清单，可用「一键还原」清理\r\n" : "")
+                        + "\r\n需要继续时，可以再点一次「开始装」。",
+                        "安装已停止", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
                 try { Core.ScanMods(); } catch { }
                 RefreshMods();
                 RefreshConflicts(true);
@@ -4551,7 +4610,7 @@ namespace Installer
         {
             Core.Log("STEP", "逐项核对");
             Work.Verify(j.Root);
-            Work.WriteManifest(j.Root, j.Added);
+            Work.WriteManifest(j.Root, j.Added, j.Platform);
             if (j.Failed.Count == 0)
             {
                 SetStatus("完成");

@@ -1112,22 +1112,66 @@ namespace Installer
         public static List<string> FullRestore(string gameRoot)
         {
             List<string> report = new List<string>();
+
+            string mf = Path.Combine(Core.LogDir, "最近一次.ini");
+            List<ManifestSection> sections = ReadManifest(mf);
+            ManifestSection mine = SectionFor(sections, gameRoot, false);
+
+            // 只删「装机记录里确实装过的」平台组件。以前是照着安装包清单无条件删，
+            // 用户自己放的 d3d9.dll / vpk 也会被带走；现在先看记录，老记录没有组件信息才退回包清单（有备份兜底）。
             List<string> targets = new List<string>();
-            targets.AddRange(L4NFiles());
-            targets.AddRange(PackageFiles(Path.Combine(Core.PkgDir, "Skeeto\\Skeeto")));
-            string vpk = Core.FirstFile(Path.Combine(Core.PkgDir, "Skeeto\\素材包"), "*.vpk");
-            if (vpk != null) targets.Add("left4dead2\\addons\\" + Path.GetFileName(vpk));
-            targets.Add("d3d9.dll");
-            targets.Add("dxvk.conf");
-            targets.Add("bin\\neko\\mqcore\\mqcam.dll");
-            targets.Add("bin\\neko\\mqcore\\mqcam.ini");
-            targets.Add("bin\\neko\\mqcore\\mqcam_state.ini");
+            // 本版本写的记录一定带 Schema；没有 Schema 行的就是 ≤2.58.1 留下的老记录。
+            // 光看「Platform 为空」分不出这两种，会新记录当老记录处理、照包清单乱删。
+            bool precise = mine != null && mine.Schema >= ManifestSchema;
+            bool recorded = precise && mine.Platform.Count > 0;
+            if (recorded)
+            {
+                foreach (string comp in mine.Platform)
+                {
+                    string c = (comp ?? "").Trim();
+                    if (string.Equals(c, "L4N", StringComparison.OrdinalIgnoreCase))
+                        targets.AddRange(L4NFiles());
+                    else if (string.Equals(c, "Dxvk", StringComparison.OrdinalIgnoreCase))
+                    {
+                        targets.Add("d3d9.dll");
+                        targets.Add("dxvk.conf");
+                    }
+                    else if (string.Equals(c, "Skeeto", StringComparison.OrdinalIgnoreCase))
+                        targets.AddRange(PackageFiles(Path.Combine(Core.PkgDir, "Skeeto\\Skeeto")));
+                    else if (string.Equals(c, "Asset", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string vpk = Core.FirstFile(Path.Combine(Core.PkgDir, "Skeeto\\素材包"), "*.vpk");
+                        if (vpk != null) targets.Add("left4dead2\\addons\\" + Path.GetFileName(vpk));
+                    }
+                    else if (string.Equals(c, "Mqcam", StringComparison.OrdinalIgnoreCase))
+                        targets.Add("bin\\neko\\mqcore\\mqcam.dll");
+                }
+            }
+            else if (mine != null && !precise)
+            {
+                // 老记录：有本目录的清单，但没有 Schema/Platform 字段（升级前装的）。
+                // 分不清哪些组件是本工具装的，只能按包清单清理；删前逐个备份，备份失败就保留。
+                targets.AddRange(L4NFiles());
+                targets.AddRange(PackageFiles(Path.Combine(Core.PkgDir, "Skeeto\\Skeeto")));
+                string vpk = Core.FirstFile(Path.Combine(Core.PkgDir, "Skeeto\\素材包"), "*.vpk");
+                if (vpk != null) targets.Add("left4dead2\\addons\\" + Path.GetFileName(vpk));
+                targets.Add("d3d9.dll");
+                targets.Add("dxvk.conf");
+                targets.Add("bin\\neko\\mqcore\\mqcam.dll");
+            }
+            else if (mine == null && File.Exists(mf))
+                Core.Log("WARN", "装机记录属于另一个游戏目录，跳过平台文件删除: " + mf);
+            // 新记录且 Platform 为空 = 本次装机确实没勾任何平台组件，平台文件一个都不动。
+            // 注意：mqcam.ini / mqcam_state.ini 是用户自己调的相机参数，不在还原删除范围里。
 
             HashSet<string> uniq = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             // 删掉的那些 vpk 名：还要从 addonlist 里摘掉登记。
             // 不摘的话下次装回同名 MOD，会继承上次那条「0 = 关闭」，装上却玩不到。
             List<string> goneAddons = new List<string>();
-            int del = 0;
+            // 平台文件是按包清单删的，分不清“工具装的”和“用户自己放的”。
+            // 删之前先整份备份；备份失败就保留不删，宁可还原不彻底，也不能把用户文件弄丢。
+            string backupRoot = Path.Combine(Core.LogDir, "还原备份", DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+            int del = 0, backed = 0, backupFail = 0, delFail = 0;
             foreach (string rel in targets)
             {
                 if (string.IsNullOrEmpty(rel)) continue;
@@ -1138,13 +1182,30 @@ namespace Installer
                 if (!Core.IsUnder(gameRoot, full)) { Core.Log("WARN", "包清单里有越界路径，已跳过: " + key); continue; }
                 try
                 {
-                    if (File.Exists(full)) { File.Delete(full); del++; }
+                    if (File.Exists(full))
+                    {
+                        if (!BackupBeforeDelete(full, key, backupRoot))
+                        {
+                            backupFail++;
+                            Core.Log("WARN", "备份失败，保留未删: " + key);
+                            continue;
+                        }
+                        backed++;
+                        File.Delete(full);
+                        del++;
+                    }
                     if (key.StartsWith("left4dead2\\addons\\", StringComparison.OrdinalIgnoreCase))
                         goneAddons.Add(Path.GetFileName(key));
                 }
-                catch (Exception ex) { Core.Log("WARN", "删除 " + key + " 失败: " + ex.Message); }
+                catch (Exception ex) { delFail++; Core.Log("WARN", "删除 " + key + " 失败: " + ex.Message); }
             }
-            report.Add("删掉平台文件 " + del + " 个（L4N / Skeeto / 素材包 / dxvk / MQCam）");
+            report.Add("删掉平台文件 " + del + " 个"
+                + (recorded ? "（按装机记录里的组件）"
+                   : (mine == null ? "（没有本目录的装机记录，平台文件未动）"
+                      : (precise ? "（记录里本次没有装平台组件）" : "（老记录没有组件信息，按安装包清单）")))
+                + (delFail > 0 ? "，失败 " + delFail + " 个（详见日志）" : ""));
+            if (backed > 0) report.Add("删除前已备份 " + backed + " 个文件到 " + backupRoot);
+            if (backupFail > 0) report.Add("有 " + backupFail + " 个文件备份失败，已保留未删");
 
             foreach (string d in new string[] { "bin\\neko\\mqcore", "bin\\neko", "Skeeto", "skeeto_kbact", "skeeto_update" })
             {
@@ -1156,20 +1217,15 @@ namespace Installer
                 catch { }
             }
 
-            string mf = Path.Combine(Core.LogDir, "最近一次.ini");
             List<string> added = new List<string>();
-            if (File.Exists(mf))
-            {
-                foreach (string raw in File.ReadAllLines(mf, Encoding.UTF8))
-                {
-                    string t = raw.Trim();
-                    if (t.StartsWith("Added=")) added.Add(t.Substring(6));
-                }
-            }
+            if (mine != null) added.AddRange(mine.Added);
+            else if (File.Exists(mf))
+                Core.Log("WARN", "装机记录属于另一个游戏目录，跳过 MOD 删除: " + mf);
 
             string l4d2 = Path.Combine(gameRoot, "left4dead2");
             string addons = Path.Combine(l4d2, "addons");
             int moved = 0, bad = 0, failed = 0;
+            List<string> kept = new List<string>();
             foreach (string a in added)
             {
                 // 装机记录是纯文本，可能被手改过：只认「直接躺在 addons 下的单个文件名」。
@@ -1189,7 +1245,21 @@ namespace Installer
                     if (File.Exists(p)) { File.Delete(p); moved++; }
                     goneAddons.Add(name);
                 }
-                catch (Exception ex) { failed++; Core.Log("WARN", "删除 " + name + " 失败: " + ex.Message); }
+                catch (Exception ex) { failed++; kept.Add(name); Core.Log("WARN", "删除 " + name + " 失败: " + ex.Message); }
+            }
+            // 记录里已经删掉/本来就不存在的条目也一并摘掉，免得下次手放同名文件被误删。
+            if (mine != null)
+            {
+                mine.Added = kept;
+                // 平台文件都处理干净了才清组件记录；有删不掉/备份失败的留着，下次还原还能重试。
+                if (backupFail == 0 && delFail == 0)
+                {
+                    mine.Platform.Clear();
+                    // 老记录这次已经按包清单清过一遍了，升级成明记录：下次还原不再「不知道装了什么就照单全删」。
+                    mine.Schema = ManifestSchema;
+                }
+                try { SaveManifest(mf, sections); }
+                catch (Exception ex) { Core.Log("WARN", "更新装机记录失败: " + ex.Message); }
             }
             // 删掉的文件在 addonlist 里留了一条指向空气的开关：游戏读不到文件不会报错，
             // 但同一名字下次装回来时，这条旧的 0 会把它默默关掉。既然文件是我们删的，登记一起摘。
@@ -1203,11 +1273,34 @@ namespace Installer
                 catch (Exception ex) { Core.Log("WARN", "还原时清理 addonlist 失败: " + ex.Message); }
             }
             if (added.Count > 0)
-                report.Add("本次铺的 MOD 已删除 " + moved + " 个"
+                report.Add("装机记录里的 MOD 已删除 " + moved + " 个"
                     + (failed > 0 ? "，失败 " + failed + " 个（详见日志）" : "")
                     + (bad > 0 ? "，跳过可疑记录 " + bad + " 条" : ""));
+            else
+                report.Add("没有找到属于当前游戏目录的 MOD 装机记录，MOD 文件未动");
             report.Add("原版 exe / addonlist / autoexec 没有备份可还原，需要原版请用 Steam 校验文件");
             return report;
+        }
+
+        /// <summary>
+        /// 还原前把要删的文件复制到 _装机记录\还原备份\时间戳\ 下。
+        /// 只做大小校验：还原是用户明确点的，备份失败就保留原文件，不拿“哈希算不出”当理由硬删。
+        /// </summary>
+        private static bool BackupBeforeDelete(string src, string rel, string backupRoot)
+        {
+            try
+            {
+                string dst = Path.Combine(backupRoot, (rel ?? "").TrimStart('\\'));
+                string dir = Path.GetDirectoryName(dst);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                File.Copy(src, dst, true);
+                return new FileInfo(dst).Length == new FileInfo(src).Length;
+            }
+            catch (Exception ex)
+            {
+                Core.Log("WARN", "还原备份失败 " + rel + ": " + ex.Message);
+                return false;
+            }
         }
 
         private static List<string> PackageFiles(string pkgDir)
@@ -1405,22 +1498,239 @@ namespace Installer
         // 脚本库冲突已并入 ConflictCheck.DeepAll：同一批 vpk 只解析一遍
 
         // ---------- 装机记录 ----------
+        // 一份记录里可以有多段：每段对应一个游戏目录。以前只写最后一段，第二次装机就把
+        // 第一次的记录覆盖了，「一键还原」只能删最后一批。现在按 GameRoot 分段合并。
+        /// <summary>
+        /// 装机记录格式版本。0 = 老记录（没有 Schema 行，也分不清平台组件装没装），
+        /// 2 = 带 Platform= 明细的新记录。靠它把「一个新记录，本次没勾平台组件」和
+        /// 「一条老记录，压根不知道装了什么」分清楚 —— 否则前者会被当成后者，还原时
+        /// 照着安装包清单把用户自己放的 d3d9.dll / dxvk.conf 也带走。
+        /// </summary>
+        private const int ManifestSchema = 2;
+
+        private sealed class ManifestSection
+        {
+            public string Root = "";
+            public string Time = "";
+            public int Schema;                     // 0 = 老记录；ManifestSchema = 新记录
+            public List<string> Added = new List<string>();
+            /// <summary>
+            /// 这次实际装成功的平台组件（L4N / Dxvk / Skeeto / Asset / Mqcam）。
+            /// 还原时只按这里删，不再无条件照包清单删一遍 —— 免得把用户自己放的 d3d9.dll / vpk 也删了。
+            /// Schema &gt;= 2 时「列表为空」就是「一个都没装」；Schema == 0 时才退回按包清单删（有备份兜底）。
+            /// </summary>
+            public List<string> Platform = new List<string>();
+        }
+
+        private static string NormRoot(string root)
+        {
+            string s = (root ?? "").Trim().Trim('"');
+            if (s.Length == 0) return "";
+            try { s = Path.GetFullPath(s); } catch { }
+            return s.TrimEnd('\\');
+        }
+
+        private static bool SameRoot(string a, string b)
+        {
+            return string.Equals(NormRoot(a), NormRoot(b), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static List<ManifestSection> ReadManifest(string path)
+        {
+            List<ManifestSection> list = new List<ManifestSection>();
+            try
+            {
+                if (!File.Exists(path)) return list;
+                ManifestSection cur = null;
+                foreach (string raw in File.ReadAllLines(path, Encoding.UTF8))
+                {
+                    string t = (raw ?? "").Trim();
+                    if (t.Length == 0) continue;
+                    if (t.StartsWith("GameRoot=", StringComparison.OrdinalIgnoreCase))
+                    {
+                        cur = new ManifestSection();
+                        cur.Root = t.Substring("GameRoot=".Length).Trim();
+                        if (NormRoot(cur.Root).Length > 0) list.Add(cur);
+                        continue;
+                    }
+                    if (cur == null) continue;
+                    if (t.StartsWith("Schema=", StringComparison.OrdinalIgnoreCase))
+                    {
+                        int sc;
+                        if (int.TryParse(t.Substring("Schema=".Length).Trim(), out sc)) cur.Schema = sc;
+                    }
+                    else if (t.StartsWith("Time=", StringComparison.OrdinalIgnoreCase))
+                        cur.Time = t.Substring("Time=".Length).Trim();
+                    else if (t.StartsWith("Platform=", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string comp = t.Substring("Platform=".Length).Trim();
+                        if (comp.Length > 0) cur.Platform.Add(comp);
+                    }
+                    else if (t.StartsWith("Added=", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string name = Path.GetFileName(t.Substring("Added=".Length).Trim());
+                        if (name.Length > 0) cur.Added.Add(name);
+                    }
+                }
+            }
+            catch (Exception ex) { Core.Log("WARN", "读装机记录失败: " + ex.Message); }
+            return list;
+        }
+
+        private static ManifestSection SectionFor(List<ManifestSection> sections, string root, bool create)
+        {
+            ManifestSection hit = null;
+            for (int i = sections.Count - 1; i >= 0; i--)
+                if (SameRoot(sections[i].Root, root)) { hit = sections[i]; break; }
+            if (hit == null && create)
+            {
+                hit = new ManifestSection();
+                hit.Root = NormRoot(root);
+                hit.Schema = ManifestSchema;    // 本版本新建的段落自带组件明细语义
+                sections.Add(hit);
+            }
+            return hit;
+        }
+
+        private static void SaveManifest(string path, List<ManifestSection> sections)
+        {
+            // 旧文件可能有重复段（手改/并发写），写回前按根目录合并一遍。
+            List<ManifestSection> merged = new List<ManifestSection>();
+            foreach (ManifestSection s in sections)
+            {
+                if (s == null || NormRoot(s.Root).Length == 0) continue;
+                // 这里不能用 SectionFor(create:true)：它会顺手把新段标成 Schema=2，
+                // 合并老记录时就等于偷偷升了级，还原会以为「平台组件一个都没装」。
+                ManifestSection m = null;
+                for (int i = merged.Count - 1; i >= 0; i--)
+                    if (SameRoot(merged[i].Root, s.Root)) { m = merged[i]; break; }
+                if (m == null)
+                {
+                    m = new ManifestSection();
+                    m.Root = NormRoot(s.Root);
+                    merged.Add(m);
+                }
+                if (s.Schema > m.Schema) m.Schema = s.Schema;
+                if (!string.IsNullOrEmpty(s.Time)) m.Time = s.Time;
+                HashSet<string> have = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (string a in m.Added) have.Add(a);
+                foreach (string a in s.Added)
+                    if (!string.IsNullOrEmpty(a) && have.Add(a)) m.Added.Add(a);
+                HashSet<string> haveP = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (string c in m.Platform) haveP.Add(c);
+                foreach (string c in s.Platform)
+                    if (!string.IsNullOrEmpty(c) && haveP.Add(c)) m.Platform.Add(c);
+            }
+
+            StringBuilder sb = new StringBuilder();
+            foreach (ManifestSection s in merged)
+            {
+                sb.AppendLine("GameRoot=" + s.Root);
+                // Schema 显式写出来：老记录保持 0，还原时才敢退回「按包清单」这条老路。
+                sb.AppendLine("Schema=" + s.Schema);
+                sb.AppendLine("Time=" + (string.IsNullOrEmpty(s.Time)
+                    ? DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") : s.Time));
+                foreach (string c in s.Platform) sb.AppendLine("Platform=" + c);
+                foreach (string a in s.Added) sb.AppendLine("Added=" + a);
+                sb.AppendLine();
+            }
+            Core.WriteAllTextAtomic(path, sb.ToString(), new UTF8Encoding(true));
+        }
+
         public static void WriteManifest(string gameRoot, List<string> added)
+        {
+            WriteManifest(gameRoot, added, null);
+        }
+
+        public static void WriteManifest(string gameRoot, List<string> added, List<string> platform)
         {
             try
             {
-                StringBuilder sb = new StringBuilder();
-                sb.AppendLine("GameRoot=" + gameRoot);
-                sb.AppendLine("Time=" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
-                foreach (string a in added)
+                string path = Path.Combine(Core.LogDir, "最近一次.ini");
+                List<ManifestSection> sections = ReadManifest(path);
+                ManifestSection sec = SectionFor(sections, gameRoot, true);
+                sec.Time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+
+                HashSet<string> have = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (string n in sec.Added) have.Add(n);
+                if (added != null)
                 {
-                    string name = Path.GetFileName((a ?? "").Trim());
-                    // 只记文件名：这份记录后面会被「一键还原」逐行拿来删文件，不能写进任何带路径的东西
-                    if (name.Length > 0) sb.AppendLine("Added=" + name);
+                    foreach (string a in added)
+                    {
+                        string name = Path.GetFileName((a ?? "").Trim());
+                        // 只记文件名：这份记录后面会被「一键还原」逐行拿来删文件，不能写进任何带路径的东西
+                        if (name.Length > 0 && have.Add(name)) sec.Added.Add(name);
+                    }
                 }
-                Core.WriteAllTextAtomic(Path.Combine(Core.LogDir, "最近一次.ini"), sb.ToString(), new UTF8Encoding(true));
+                HashSet<string> haveP = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (string c in sec.Platform) haveP.Add(c);
+                if (platform != null)
+                {
+                    foreach (string c in platform)
+                    {
+                        string comp = (c ?? "").Trim();
+                        if (comp.Length > 0 && haveP.Add(comp)) sec.Platform.Add(comp);
+                    }
+                }
+                SaveManifest(path, sections);
             }
             catch (Exception ex) { Core.Log("WARN", "装机记录写失败: " + ex.Message); }
+        }
+
+        /// <summary>从当前游戏目录的记录里摘掉这些文件名（取消安装后删掉了本次复制的文件时用）。</summary>
+        public static void ForgetManifest(string gameRoot, List<string> names)
+        {
+            try
+            {
+                if (names == null || names.Count == 0) return;
+                string path = Path.Combine(Core.LogDir, "最近一次.ini");
+                if (!File.Exists(path)) return;
+                List<ManifestSection> sections = ReadManifest(path);
+                ManifestSection sec = SectionFor(sections, gameRoot, false);
+                if (sec == null) return;
+                HashSet<string> drop = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (string n in names)
+                {
+                    string name = Path.GetFileName((n ?? "").Trim());
+                    if (name.Length > 0) drop.Add(name);
+                }
+                sec.Added.RemoveAll(delegate(string s) { return drop.Contains(s); });
+                SaveManifest(path, sections);
+            }
+            catch (Exception ex) { Core.Log("WARN", "更新装机记录失败: " + ex.Message); }
+        }
+
+        /// <summary>
+        /// 取消安装时用：删掉本次已经完整复制到 addons 的文件，返回真正清掉（或本来就不在）的名字。
+        /// 只认直接躺在 addons 下的单个文件名，路径越界/带分隔符的一律不碰。
+        /// </summary>
+        public static List<string> RemoveAddedFiles(string gameRoot, List<string> names)
+        {
+            List<string> cleared = new List<string>();
+            if (names == null || names.Count == 0) return cleared;
+            string addons = Path.Combine(Path.Combine(gameRoot, "left4dead2"), "addons");
+            List<string> gone = new List<string>();
+            foreach (string a in names)
+            {
+                string name = (a ?? "").Trim();
+                if (name.Length == 0) continue;
+                if (name.IndexOfAny(new char[] { '\\', '/', ':' }) >= 0 || name.IndexOf("..", StringComparison.Ordinal) >= 0) continue;
+                string p = Path.Combine(addons, name);
+                if (!Core.IsUnder(addons, p)) continue;
+                try
+                {
+                    if (File.Exists(p)) File.Delete(p);
+                    cleared.Add(name);
+                    gone.Add(name);
+                }
+                catch (Exception ex) { Core.Log("WARN", "删除本次复制文件失败 " + name + ": " + ex.Message); }
+            }
+            if (gone.Count > 0)
+            {
+                try { AddonList.Remove(gameRoot, gone); }
+                catch (Exception ex) { Core.Log("WARN", "取消安装后清理 addonlist 失败: " + ex.Message); }
+            }
+            return cleared;
         }
 
         // ---------- 自测：写/删的底线（在真正放数据的那个卷上跑） ----------
@@ -1589,7 +1899,9 @@ namespace Installer
                         {
                             Core.ScanMods();
                             seen[idx] = Core.ModList.Count;
-                            if (seen[idx] <= 0) System.Threading.Interlocked.Increment(ref raceErrors);
+                            // 空库时扫出 0 条是正确结果，不是「扫成半截」；只有本来有库却扫空了才算问题。
+                            // （CI 的干净 runner 就是空库，以前这条会把它判成失败，只能挂 continue-on-error。）
+                            if (seen[idx] <= 0 && baseline > 0) System.Threading.Interlocked.Increment(ref raceErrors);
                         }
                         catch (Exception exs)
                         {
@@ -1901,7 +2213,9 @@ namespace Installer
                     Dictionary<string, bool> swOff = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
                     swOff[ghost] = false;                            // 先登记成「关闭」
                     AddonList.Write(tmp, swOff);
-                    File.WriteAllText(Path.Combine(Core.LogDir, "最近一次.ini"), "Added=" + ghost + "\r\n", new UTF8Encoding(true));
+                    File.WriteAllText(Path.Combine(Core.LogDir, "最近一次.ini"),
+                        "GameRoot=" + tmp + "\r\nTime=" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
+                        + "\r\nAdded=" + ghost + "\r\n", new UTF8Encoding(true));
 
                     FullRestore(tmp);
 
@@ -1916,6 +2230,101 @@ namespace Installer
                     Core.Cfg.Mode = savedMode;
                     Core.Cfg.GameRoot = savedGame;
                     Core.LogDir = savedLog;
+                }
+
+                // 装机记录按游戏目录分段：第二次装不能覆盖第一次的清单；
+                // 还原只删本目录的记录，平台文件只删记录过的组件（mqcam.ini 是用户相机设置，永远不删）。
+                string tmpB = Path.Combine(Path.GetTempPath(), "l4d2-manifest-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+                try
+                {
+                    string addonsB = Path.Combine(Path.Combine(tmpB, "left4dead2"), "addons");
+                    Directory.CreateDirectory(addonsB);
+                    Core.Cfg.Mode = "local";
+                    Core.Cfg.GameRoot = tmp;
+                    Core.LogDir = Path.Combine(tmp, "_装机记录");
+                    Directory.CreateDirectory(Core.LogDir);
+
+                    File.WriteAllText(Path.Combine(addons, "第一段.vpk"), "x");
+                    File.WriteAllText(Path.Combine(addons, "第二段.vpk"), "x");
+                    File.WriteAllText(Path.Combine(addonsB, "别的目录.vpk"), "x");
+                    // 记录里只有 Dxvk：d3d9.dll 该删，没记录的 mqcam.dll / mqcam.ini 都不该动
+                    File.WriteAllText(Path.Combine(tmp, "d3d9.dll"), "x");
+                    string mqDir = Path.Combine(tmp, "bin\\neko\\mqcore");
+                    Directory.CreateDirectory(mqDir);
+                    File.WriteAllText(Path.Combine(mqDir, "mqcam.dll"), "x");
+                    File.WriteAllText(Path.Combine(mqDir, "mqcam.ini"), "x");
+
+                    WriteManifest(tmp, new List<string> { "第一段.vpk" }, new List<string> { "Dxvk" });
+                    WriteManifest(tmpB, new List<string> { "别的目录.vpk" }, new List<string> { "Mqcam" });
+                    WriteManifest(tmp, new List<string> { "第二段.vpk" }, null);
+
+                    string mf = Path.Combine(Core.LogDir, "最近一次.ini");
+                    string text = File.ReadAllText(mf, Encoding.UTF8);
+                    bool twoA = text.Contains("第一段.vpk") && text.Contains("第二段.vpk");
+                    bool hasB = text.Contains("别的目录.vpk");
+                    if (!twoA) { bad++; Console.WriteLine("[FAIL] 同一目录两次装的清单没合并"); }
+                    if (!hasB) { bad++; Console.WriteLine("[FAIL] 第二次装把另一个目录的记录覆盖了"); }
+
+                    FullRestore(tmp);
+                    bool aGone = !File.Exists(Path.Combine(addons, "第一段.vpk"))
+                              && !File.Exists(Path.Combine(addons, "第二段.vpk"));
+                    bool bAlive = File.Exists(Path.Combine(addonsB, "别的目录.vpk"));
+                    bool dllGone = !File.Exists(Path.Combine(tmp, "d3d9.dll"));
+                    bool camKept = File.Exists(Path.Combine(mqDir, "mqcam.dll"))
+                                && File.Exists(Path.Combine(mqDir, "mqcam.ini"));
+                    if (!aGone) { bad++; Console.WriteLine("[FAIL] 本目录记录里的 MOD 没删干净"); }
+                    if (!bAlive) { bad++; Console.WriteLine("[FAIL] 还原动了别的游戏目录"); }
+                    if (!dllGone) { bad++; Console.WriteLine("[FAIL] 记录过的 dxvk 文件没删"); }
+                    if (!camKept) { bad++; Console.WriteLine("[FAIL] 没记录的 mqcam 文件或用户相机设置被删了"); }
+                    bool bStillRecorded = File.ReadAllText(mf, Encoding.UTF8).Contains("别的目录.vpk");
+                    if (!bStillRecorded) { bad++; Console.WriteLine("[FAIL] 还原后把另一个目录的记录弄丢了"); }
+                    bool schemaWritten = text.Contains("Schema=2");
+                    if (!schemaWritten) { bad++; Console.WriteLine("[FAIL] 新记录没写 Schema=2，还原时会被当成老记录"); }
+                    Console.WriteLine("ADDON 装机记录分段：同目录合并=" + twoA + "，另一目录保留=" + hasB
+                        + "，还原只删本目录=" + (aGone && bAlive) + "，只删记录过的组件=" + (dllGone && camKept)
+                        + "，Schema=" + schemaWritten);
+
+                    // 只装 MOD、没勾平台组件的新记录：还原绝不能按包清单去删用户自己放的 d3d9/dxvk/mqcam。
+                    // 这是「Platform 为空」与「老记录不知道装了什么」必须分开的原因。
+                    string tmpC = Path.Combine(Path.GetTempPath(), "l4d2-manifest-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+                    try
+                    {
+                        string addonsC = Path.Combine(Path.Combine(tmpC, "left4dead2"), "addons");
+                        Directory.CreateDirectory(addonsC);
+                        Core.Cfg.GameRoot = tmpC;
+                        Core.LogDir = Path.Combine(tmpC, "_装机记录");
+                        Directory.CreateDirectory(Core.LogDir);
+                        File.WriteAllText(Path.Combine(addonsC, "只装MOD.vpk"), "x");
+                        File.WriteAllText(Path.Combine(tmpC, "d3d9.dll"), "x");
+                        File.WriteAllText(Path.Combine(tmpC, "dxvk.conf"), "x");
+                        string mqC = Path.Combine(tmpC, "bin\\neko\\mqcore");
+                        Directory.CreateDirectory(mqC);
+                        File.WriteAllText(Path.Combine(mqC, "mqcam.dll"), "x");
+
+                        WriteManifest(tmpC, new List<string> { "只装MOD.vpk" }, null);   // 2 参重载 = 本次没有平台组件
+                        FullRestore(tmpC);
+
+                        bool modGone = !File.Exists(Path.Combine(addonsC, "只装MOD.vpk"));
+                        bool userKept = File.Exists(Path.Combine(tmpC, "d3d9.dll"))
+                                     && File.Exists(Path.Combine(tmpC, "dxvk.conf"))
+                                     && File.Exists(Path.Combine(mqC, "mqcam.dll"));
+                        if (!modGone) { bad++; Console.WriteLine("[FAIL] 只装 MOD 的记录：还原没删掉那个 vpk"); }
+                        if (!userKept) { bad++; Console.WriteLine("[FAIL] 只装 MOD 的记录：还原把用户自己的 d3d9/dxvk/mqcam 删了"); }
+                        Console.WriteLine("ADDON 只装MOD的还原：MOD已删=" + modGone + "，用户平台文件未被碰=" + userKept);
+                    }
+                    finally
+                    {
+                        Core.Cfg.GameRoot = savedGame;
+                        Core.LogDir = savedLog;
+                        try { Directory.Delete(tmpC, true); } catch { }
+                    }
+                }
+                finally
+                {
+                    Core.Cfg.Mode = savedMode;
+                    Core.Cfg.GameRoot = savedGame;
+                    Core.LogDir = savedLog;
+                    try { Directory.Delete(tmpB, true); } catch { }
                 }
 
                 // 批量导入：*.7z 也要收 —— 识别、装机、冲突检查都支持 7z，只有「导入」原来只扫 rar/zip，

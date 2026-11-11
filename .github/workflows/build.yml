@@ -7,8 +7,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+# 最小权限：跑测试的作业只需要读代码；写权限只给发布作业（见文件末尾的 release job）。
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -59,29 +60,28 @@ jobs:
           del srcs.rsp
           dir L4D2Setup.exe
 
-      # 只编过不等于跑得起来：布局自检要真的把 MainForm 建出来走一遍排版，
-      # 能抓到「按钮叠了 / 栏跑出窗口 / 新代码在构造期抛异常」这类编译期看不见的问题。
-      # 它不开窗口、不读 MOD 库、不需要游戏目录，几秒就完。
-      # 注意用 PowerShell：cmd 批处理不会等 GUI 程序退出，%errorlevel% 会失真。
-      # 先设成不阻塞（continue-on-error），观察一两轮绿了再把那行删掉转成硬门禁。
-      - name: 布局自检
-        continue-on-error: true
+      # 只编过不等于跑得起来：这些自检会真的把 MainForm 建出来、跑排版、跑识别/去重/启动项/
+      # 方案树/工坊解析，能抓到「按钮叠了 / 新代码在构造期抛异常 / 改名规则改坏了」这类
+      # 编译期看不见的问题。
+      # 全部做硬门禁：以前挂了 continue-on-error，自检失败也能发 Release，等于没检。
+      # 只放与环境无关的几条；需要真实 MOD 库的 --addonself 交给本地跑（空库会自己 SKIP）。
+      - name: 离线自检（硬门禁）
         shell: powershell
         run: |
-          & .\L4D2Setup.exe --layoutself
-          $code = $LASTEXITCODE
-          Write-Host "layoutself exit=$code"
-          if ($code -ne 0) { exit $code }
-
-      # 工坊解析是纯离线的（链接解析 / 文件名清理 / JSON 提取），一并跑一遍
-      - name: 工坊离线自检
-        continue-on-error: true
-        shell: powershell
-        run: |
-          & .\L4D2Setup.exe --workshopself
-          $code = $LASTEXITCODE
-          Write-Host "workshopself exit=$code"
-          if ($code -ne 0) { exit $code }
+          $tests = @('--workshopself', '--recogself', '--dupself', '--tweakself', '--launchself', '--treeself', '--layoutself', '--safeself')
+          $bad = @()
+          foreach ($t in $tests) {
+            Write-Host "=== $t ==="
+            & .\L4D2Setup.exe $t
+            $code = $LASTEXITCODE
+            Write-Host "$t exit=$code"
+            if ($code -ne 0) { $bad += "$t(exit $code)" }
+          }
+          if ($bad.Count -gt 0) {
+            Write-Host "::error::离线自检失败: $($bad -join ', ')"
+            exit 1
+          }
+          Write-Host "全部离线自检通过"
 
       # 顺序是有讲究的：自检和日志必须在「传产物」之前。
       # 产物服务抽风（实测卡过 5 分钟）不该把自检结果一起埋掉，那是唯一能证明代码跑得起来的东西。
@@ -93,8 +93,8 @@ jobs:
           path: _装机记录/
           if-no-files-found: ignore
 
-      # 产物只是方便下载的副本：传失败不该把整条流水线判死，exe 本地 build.bat 随时能出；
-      # 打 tag 发 Release 用的是 runner 上那个文件，不依赖这里。
+      # 产物只是方便下载的副本：传失败不该把整条流水线判死，exe 本地 build.bat 随时能出。
+      # 打 tag 时发布作业会重新取这份产物；取不到就发不出去，那本来就该失败。
       - name: 上传构建产物
         continue-on-error: true
         uses: actions/upload-artifact@v4
@@ -103,22 +103,47 @@ jobs:
           path: L4D2Setup.exe
           if-no-files-found: error
 
-      - name: 打 tag 时发 Release
-        if: startsWith(github.ref, 'refs/tags/')
+  # 发布单独成一个作业：只有它需要 contents: write，代码检查和 PR 构建都拿不到写权限。
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 取构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: L4D2Setup
+
+      - name: 发 Release（可重复执行）
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -e
+          ls -l L4D2Setup.exe
           sha=$(sha256sum L4D2Setup.exe | cut -d' ' -f1)
           echo "$sha  L4D2Setup.exe" > L4D2Setup.exe.sha256
           # 有些受限网络（公司代理 / 沙箱）会按 1 MB 截断单次下载，1.6 MB 的 exe 永远下不完。
           # 顺手切一份 900 KB 的分片一起发：拿不到整包时按分片取、拼回来、对 sha256。
           split -b 900000 -d -a 1 L4D2Setup.exe L4D2Setup.part
           ls -l L4D2Setup.part*
-          gh release create "${GITHUB_REF_NAME}" \
-            --title "${GITHUB_REF_NAME}" \
-            --notes "由 GitHub Actions 自动编译，与源码同一提交。
-          SHA256 见 L4D2Setup.exe.sha256。
+
+          # 说明写成一个多行字符串：不用 heredoc，避免缩进把整段变成 Markdown 代码块。
+          notes="由 GitHub Actions 自动编译，与源码同一提交。
+
+          SHA256：$sha（见 L4D2Setup.exe.sha256）
           如果整包下载被网络截断，可用 L4D2Setup.part* 分片按序号拼接：cat L4D2Setup.part* > L4D2Setup.exe"
-          gh release upload "${GITHUB_REF_NAME}" L4D2Setup.exe L4D2Setup.exe.sha256 L4D2Setup.part* --clobber
+
+          # 幂等：同一个 tag 重跑时不再「Release 已存在就失败」，也不再需要强推 tag 绕过。
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "[i] Release $TAG 已存在，更新说明与资产"
+            gh release edit "$TAG" --notes "$notes"
+          else
+            echo "[i] 创建 Release $TAG"
+            gh release create "$TAG" --title "$TAG" --notes "$notes"
+          fi
+          gh release upload "$TAG" L4D2Setup.exe L4D2Setup.exe.sha256 L4D2Setup.part* --clobber

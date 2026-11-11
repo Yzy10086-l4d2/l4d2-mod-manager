@@ -215,9 +215,26 @@ namespace Installer
                 if (treeView.SlotCount == 0) Core.ScanMods();
                 treeView.Rebuild();
 
-                bool side;
-                string r = treeView.LayoutProbe(out side);
+                // 库里一个 MOD 都没有（CI 的干净 runner 就是这种）：没有「带扩展的位置」可量，
+                // 与其把一个环境问题报成排版失败，不如明确跳过 —— 否则这条自检永远只能挂
+                // continue-on-error，等于没做门禁。
+                if (treeView.SlotCount == 0)
+                {
+                    Core.Log("INFO", "TRI 跳过：库里没有 MOD，量不了并排布局（需要带扩展的位置）");
+                    Console.WriteLine("tripane skipped: 库里没有 MOD");
+                    return 0;
+                }
+
+                bool side, measurable;
+                string r = treeView.LayoutProbe(out side, out measurable);
                 Core.Log("INFO", "TRI " + r);
+                if (!measurable)
+                {
+                    // 库里没有「带扩展的位置」（干净 runner、或本地一个 MOD 都没装）时量不了，
+                    // 这是环境不足，不是排版坏了：明确跳过，才能把这条自检当 CI 硬门禁。
+                    Console.WriteLine("tripane skipped: 库里没有带扩展的位置");
+                    return 0;
+                }
                 if (!side)
                 {
                     bad++;

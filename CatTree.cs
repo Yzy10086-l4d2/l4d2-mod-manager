@@ -3690,14 +3690,16 @@ namespace Installer
         /// 自检：拿一个带扩展的位置跑一遍真实布局，回报右半是并排还是堆叠、两栏几何对不对。
         /// 走的是 LayoutSelf 本身，不是另写一份算法；测完把选中恢复成原样。
         /// </summary>
-        internal string LayoutProbe(out bool side)
+        internal string LayoutProbe(out bool side, out bool measurable)
         {
             side = false;
+            measurable = false;
             string saved = selKey;
             Slot target = null;
             foreach (Slot s in slots)
                 if (s != null && s.Extras.Count > 0) { target = s; break; }
             if (target == null) return "库里没有带扩展的位置";
+            measurable = true;
 
             selKey = target.Key;
             FillDetail();
