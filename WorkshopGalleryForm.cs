@@ -773,6 +773,9 @@ namespace Installer
                 txtDesc.Text = WsText.ToDisplay(detailZh);
             else if (detailClean.Length > 0)
                 txtDesc.Text = WsText.ToDisplay(detailClean);
+            else if (!sampleMode && !detailItem.DetailsLoaded)
+                // 全文还在路上：别写「没有写介绍」，那是在说这个 MOD 没内容，其实是还没读到
+                txtDesc.Text = WsText.ToDisplay("正在读取介绍…");
             else
                 txtDesc.Text = WsText.ToDisplay("（这个物品没有写介绍）");
             try { txtDesc.SelectionStart = 0; txtDesc.SelectionLength = 0; } catch { }

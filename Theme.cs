@@ -466,6 +466,7 @@ namespace Installer
         public static Color TrackEdge { get { return pal.TrackEdge; } } // 开关边线：轨道和卡片太接近时靠它交代边界
         public static Color ThumbOn { get { return pal.ThumbOn; } }     // 开关圆点
         public static readonly Font H1 = new Font("Microsoft YaHei UI", 16F, FontStyle.Bold, GraphicsUnit.Point);
+        public static readonly Font H2 = new Font("Microsoft YaHei UI", 12F, FontStyle.Bold, GraphicsUnit.Point);   // 加载/空态标题
         public static readonly Font RowTitle = new Font("Microsoft YaHei UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
 
         /// <summary>只在颜色变化上做很短的过渡；系统开启高对比度或用户选择减少动效时直接切到终态。</summary>

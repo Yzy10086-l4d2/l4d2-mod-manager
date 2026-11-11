@@ -291,6 +291,8 @@ namespace Installer
             treeView.BringToFront();
             treeView.Rebuild();
             UpdateModCaption();
+            // 树是后加进来的，会盖在加载占位上：还在扫就把占位顶回去
+            if (lblLoading != null && lblLoading.Visible) lblLoading.BringToFront();
         }
 
         /// <summary>切回方案树（台面右键 / 顶部「视图」按钮都走它）。</summary>
@@ -408,11 +410,27 @@ namespace Installer
             if (treeView != null) treeView.Rebuild();
         }
 
-        private void DropLoading()        {
+        /// <summary>收起加载占位。保留实例：切模式 / 换目录 / 重扫时还要再用。</summary>
+        private void DropLoading()
+        {
             if (lblLoading == null) return;
-            viewHost.Controls.Remove(lblLoading);
-            lblLoading.Dispose();
-            lblLoading = null;
+            lblLoading.HideLoad();
+        }
+
+        /// <summary>
+        /// 显示加载占位。full=true 铺满右栏（内容还空着，给骨架）；
+        /// full=false 只在顶部给一条走动的进度带（已经有内容，别遮住）。
+        /// </summary>
+        internal void ShowLoading(string title, string hint, bool full)
+        {
+            if (lblLoading == null) return;
+            lblLoading.ShowLoad(title, hint, full);
+        }
+
+        internal void HideLoading()
+        {
+            if (lblLoading == null) return;
+            lblLoading.HideLoad();
         }
 
         private void EnsureTree()

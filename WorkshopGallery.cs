@@ -102,6 +102,7 @@ namespace Installer
             hover = -1;
             nearRow = -1;
             SkeletonCount = 0;
+            Pulse.Forget(this);
             ClearCardCache();
             lock (gate)
             {
@@ -123,6 +124,7 @@ namespace Installer
             items.AddRange(more);
             hover = -1;
             SkeletonCount = 0;
+            Pulse.Forget(this);
             nearRow = -1;                       // 行数变了，允许再报一次「快到底」
             Relayout();
             ScrollHost h = Parent as ScrollHost;
@@ -135,6 +137,7 @@ namespace Installer
         {
             SkeletonCount = Math.Max(0, n);
             hover = -1;
+            if (SkeletonCount > 0) Pulse.Watch(this); else Pulse.Forget(this);
             Relayout();
             ScrollHost h = Parent as ScrollHost;
             if (h != null) h.Relayout();
@@ -146,6 +149,7 @@ namespace Installer
         {
             if (SkeletonCount == 0) return;
             SkeletonCount = 0;
+            Pulse.Forget(this);
             Relayout();
             ScrollHost h = Parent as ScrollHost;
             if (h != null) h.Relayout();
@@ -351,7 +355,7 @@ namespace Installer
             catch { }
         }
 
-        /// <summary>骨架卡：灰底封面块 + 三条占位灰条。没有内容、点不了，只负责告诉用户「在加载」。</summary>
+        /// <summary>骨架卡：灰底封面块 + 三条占位灰条，再加一道扫光。没有内容、点不了，只负责告诉用户「在加载」。</summary>
         private void DrawSkeletonCard(Graphics g, Rectangle r)
         {
             using (GraphicsPath p = Theme.Round(r, Dpi.S(10)))
@@ -369,6 +373,14 @@ namespace Installer
                 g.FillRectangle(b, tx, ir.Bottom + Dpi.S(27), (int)(w * 0.46), Dpi.S(11));
                 g.FillRectangle(b, tx, ir.Bottom + Dpi.S(46), (int)(w * 0.3), Dpi.S(9));
             }
+            // 扫光：静态骨架看起来像"卡住了"，一道走动的光才像"在加载"
+            Region old = g.Clip;
+            using (GraphicsPath p = Theme.Round(r, Dpi.S(10)))
+            {
+                g.SetClip(p);
+                Pulse.PaintSheen(g, r);
+            }
+            g.Clip = old;
         }
 
         private void DrawCard(Graphics g, int i, Rectangle r)

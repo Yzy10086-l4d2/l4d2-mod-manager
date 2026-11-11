@@ -34,7 +34,7 @@ namespace Installer
         private TextBox txtSearch;
         private Button btnSaveProfile, btnApplyProfile;
         private Panel viewHost;                  // 右栏：方案树就嵌在这里
-        private Label lblLoading;                // 启动读取期间的提示，读完第一屏就撤
+        private LoadingPane lblLoading;          // 读取/重扫期间的骨架占位，平时藏着
         private CatTree treeView;                // 方案树：按「能替换的东西」看，一个位置只留一个 MOD
         private Label lblSel, lblStatus, lblConflict;
         // 底栏总高（设计值）：按钮行 36 + 间距 12 + 状态栏 20 + 触底 8。
@@ -207,6 +207,8 @@ namespace Installer
         private void BeginInit()
         {
             lblStatus.Text = Core.IsLocal ? "正在扫描游戏目录…" : "正在读取 U 盘…";
+            ShowLoading(Core.IsLocal ? "正在扫描游戏目录…" : "正在读取 U 盘上的 MOD 库…",
+                "第一次启动或刚更新完可能要等几秒，别急着关", true);
             bool needFind = !Core.TestGame(txtGame.Text);
             System.Threading.Thread th = new System.Threading.Thread(delegate()
             {
@@ -253,6 +255,7 @@ namespace Installer
                         scanning = false;
                         initializing = false;
                         ShowPackStatus(packs, packOk);
+                        HideLoading();                     // 数据到了，撤骨架
                         // 扫库期间用户选过目录：现在安全了，接着切
                         if (pendingRoot != null) { string pr = pendingRoot; pendingRoot = null; SwitchGameRoot(pr, "补切（扫库完成）"); }
                         ShowTree();                        // 启动第一屏是方案树；桌面要点按钮才开
@@ -260,7 +263,17 @@ namespace Installer
                         QueuePrecheck();
                     });
                 }
-                catch (Exception ex) { Core.Log("FAIL", "初始化失败: " + ex.Message); }
+                catch (Exception ex)
+                {
+                    Core.Log("FAIL", "初始化失败: " + ex.Message);
+                    SafeInvoke(delegate
+                    {
+                        // 不能一直转圈：给一个明确的终态，并指下一步怎么做
+                        if (lblLoading != null)
+                            lblLoading.ShowMessage("读取失败", "详见日志；可以点「自动找」或切一下工作模式重试");
+                        SetStatus("读取失败：详见日志");
+                    });
+                }
 
                 // 扫完再补「游戏里显示的名字」：老缓存里没有这一列，压缩包里的包还得解包才读得到。
                 // 放后台慢慢来，一次只读一个包，有人装机时自动让开。自检不跑，免得把套件拖成几分钟。
@@ -539,16 +552,13 @@ namespace Installer
             };
             gm.Controls.Add(viewHost);
 
-            // 启动读取提示：扫库没完成前树区是空的，不放这句用户会以为程序坏了
-            lblLoading = new Label();
+            // 读取占位：扫库没完成前树区是空的，给骨架屏而不是一句干等的提示 ——
+            // 至少让人看出"在加载"，而不是程序卡死了。
+            lblLoading = new LoadingPane();
             lblLoading.Dock = DockStyle.Fill;
-            lblLoading.BackColor = Theme.Surface;
-            lblLoading.Font = Theme.UIBold;
-            lblLoading.ForeColor = Theme.Ink2;
-            lblLoading.TextAlign = ContentAlignment.MiddleCenter;
-            lblLoading.Text = "正在读取 U 盘上的 MOD 库…\r\n第一次启动或刚更新完可能要等几秒，别急着关";
             viewHost.Controls.Add(lblLoading);
-            lblLoading.BringToFront();
+            lblLoading.ShowLoad("正在读取 U 盘上的 MOD 库…",
+                "第一次启动或刚更新完可能要等几秒，别急着关", true);
 
             lblSel = new Label(); lblSel.SetBounds(12, modH - 64, rightW - 24, 18); lblSel.Text = "已选 0 个"; lblSel.Font = Theme.UISmall; Theme.Dress(lblSel); gm.Controls.Add(lblSel);
             lblConflict = new Label();
@@ -832,6 +842,8 @@ namespace Installer
             btnInstall.Enabled = false;
             scanning = true;
             StartScanWatch();
+            ShowLoading(want == "local" ? "正在按「本地模式」重扫游戏目录…" : "正在按「U 盘模式」重扫库…",
+                "重扫期间不会改动任何文件", treeView == null || treeView.SlotCount == 0);
             System.Threading.Thread th = new System.Threading.Thread(delegate()
             {
                 bool ok = true;
@@ -840,6 +852,7 @@ namespace Installer
                 SafeInvoke(delegate()
                 {
                     scanning = false;
+                    HideLoading();
                     if (!ok)
                     {
                         // 扫描失败时别把用户留在「配置已经切了、界面还是旧数据」的错位状态：
@@ -1825,6 +1838,62 @@ namespace Installer
             UpdateModCaption();
         }
 
+        /// <summary>诊断截图：把「读取中」的骨架占位截一张（--loadshot），确认扫光位置/排版在真机上成立。</summary>
+        internal void LoadingShot()
+        {
+            for (int i = 0; i < 200 && !Ready; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(20); }
+            // Ready 是在初始化末尾那串 UI 更新之前置位的：先把手头排队的 ShowTree 跑完，
+            // 否则它会把刚铺上的骨架一起收掉，截出来是一张"已经加载好"的图。
+            for (int i = 0; i < 6; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(80); }
+            ShowLoading("正在读取 U 盘上的 MOD 库…", "第一次启动或刚更新完可能要等几秒，别急着关", true);
+            Application.DoEvents();
+            // 等扫光走到中段再截，否则截到的是起点那一帧（看不出有没有动效）
+            for (int i = 0; i < 8; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(120); }
+            try
+            {
+                using (Bitmap b = new Bitmap(ClientSize.Width, ClientSize.Height))
+                {
+                    DrawToBitmap(b, new Rectangle(0, 0, b.Width, b.Height));
+                    b.Save(System.IO.Path.Combine(Core.LogDir, "loading.png"), System.Drawing.Imaging.ImageFormat.Png);
+                }
+                // 自绘控件的真容：直接调它的 Render 画进图里（DrawToBitmap 抓不到自绘控件）
+                if (lblLoading != null)
+                {
+                    using (Bitmap p = new Bitmap(Math.Max(1, lblLoading.Width), Math.Max(1, lblLoading.Height)))
+                    using (Graphics pg = Graphics.FromImage(p))
+                    {
+                        lblLoading.Render(pg);
+                        p.Save(System.IO.Path.Combine(Core.LogDir, "loading_pane.png"), System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    // 细条形态（已有内容、只是在重扫）单独存一张
+                    ShowLoading("正在按新游戏目录重扫…", @"c:\storygames\8007\steamapps\common\Left 4 Dead 2", false);
+                    Application.DoEvents();
+                    if (lblLoading != null)
+                    {
+                        using (Bitmap p2 = new Bitmap(Math.Max(1, lblLoading.Width), Math.Max(1, lblLoading.Height)))
+                        using (Graphics pg2 = Graphics.FromImage(p2))
+                        {
+                            lblLoading.Render(pg2);
+                            p2.Save(System.IO.Path.Combine(Core.LogDir, "loading_strip.png"), System.Drawing.Imaging.ImageFormat.Png);
+                            // 3 倍放大一份：小字在 1x 下看不出是被裁了还是只是细
+                            using (Bitmap big = new Bitmap(p2.Width * 3, p2.Height * 3))
+                            using (Graphics bg = Graphics.FromImage(big))
+                            {
+                                bg.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                                bg.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+                                bg.DrawImage(p2, 0, 0, big.Width, big.Height);
+                                big.Save(System.IO.Path.Combine(Core.LogDir, "loading_strip_3x.png"), System.Drawing.Imaging.ImageFormat.Png);
+                            }
+                        }
+                    }
+                    ShowLoading("正在读取 U 盘上的 MOD 库…", "第一次启动或刚更新完可能要等几秒，别急着关", true);
+                    Application.DoEvents();
+                }
+                Core.Log("INFO", "LOAD 截图已保存 loading.png（" + ClientSize.Width + "x" + ClientSize.Height + "）");
+            }
+            catch (Exception ex) { Core.Log("FAIL", "LOAD 截图失败: " + ex.Message); }
+        }
+
         /// <summary>诊断截图：把导入窗口填满假数据存一张 PNG，不发请求。</summary>
         internal void WorkshopShot()
         {
@@ -2565,6 +2634,7 @@ namespace Installer
             bar.Style = ProgressBarStyle.Marquee;
             scanning = true;
             StartScanWatch();
+            ShowLoading("正在按新游戏目录重扫…", root, treeView == null || treeView.SlotCount == 0);
             Thread th = new Thread(delegate()
             {
                 string err = null;
@@ -2573,6 +2643,7 @@ namespace Installer
                 SafeBeginInvoke(delegate()
                 {
                     scanning = false;
+                    HideLoading();
                     SetBusy(false);
                     bar.Style = ProgressBarStyle.Blocks;
                     RefreshMods();

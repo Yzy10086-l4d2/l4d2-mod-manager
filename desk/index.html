@@ -79,10 +79,25 @@
   #toast.show { opacity: 1; }
   #loading {
     position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 22px;
     background: #0b0907; color: #6B6154; font-size: 13px; letter-spacing: .16em; z-index: 30;
     transition: opacity .5s;
   }
   #loading.gone { opacity: 0; pointer-events: none; }
+  /* 骨架 + 扫光：等数据的时候不许是一片纯黑 */
+  #loading .sk { width: min(560px, 72vw); display: flex; flex-direction: column; gap: 10px; }
+  #loading .sk i {
+    display: block; height: 13px; border-radius: 7px; background: rgba(237,230,216,.07);
+    position: relative; overflow: hidden;
+  }
+  #loading .sk i::after {
+    content: ''; position: absolute; inset: 0; transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(237,230,216,.16), transparent);
+    animation: skSweep 1.4s linear infinite;
+  }
+  @keyframes skSweep { to { transform: translateX(100%); } }
+  @media (prefers-reduced-motion: reduce) { #loading .sk i::after { animation: none; } }
+  #loading .txt { opacity: .9; }
 </style>
 </head>
 <body>
@@ -115,7 +130,15 @@
 </div>
 
 <div id="toast"></div>
-<div id="loading">正在摆桌…</div>
+<div id="loading">
+  <div class="sk">
+    <i style="width:44%"></i>
+    <i style="width:100%"></i>
+    <i style="width:82%"></i>
+    <i style="width:63%"></i>
+  </div>
+  <div class="txt" id="loadingText">正在读取库…</div>
+</div>
 
 <script src="three.min.js"></script>
 <script>
@@ -1027,8 +1050,21 @@
     }).then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); });
   }
 
+  // ---------- 加载层 ----------
+  function setLoadingText(t) {
+    var e = el('loadingText');
+    if (e) e.textContent = t;
+  }
+  function hideLoading() {
+    var l = el('loading');
+    if (!l || l.classList.contains('gone')) return;
+    l.classList.add('gone');
+    setTimeout(function () { if (l.parentNode) l.parentNode.removeChild(l); }, 600);
+  }
+
   function load() {
     var url = location.search.indexOf('demo') >= 0 ? 'sample.json' : '/api/state';
+    setLoadingText('正在读取库…');
     fetch(url).then(function (r) { return r.json(); }).then(function (s) {
       state = s;
       boot();
@@ -1044,6 +1080,7 @@
     buildCards();
     refreshStats();
     if (state.title) document.title = state.title;
+    hideLoading();                    // 卡已经建好，加载层的淡出正好盖住第一帧
 
     // 调试用：?lift=N 强制抬起第 N 张，方便在无头环境里看“阅读姿态”
     var lq = /[?&]lift=(\d+)/.exec(location.search);
@@ -1069,12 +1106,9 @@
 
     startPoll();
 
-    requestAnimationFrame(function () {
-      var l = el('loading');
-      if (!l) return;
-      l.classList.add('gone');
-      setTimeout(function () { if (l.parentNode) l.parentNode.removeChild(l); }, 600);
-    });
+    // 加载层等数据到了再撤（以前是首帧就撤，库大的时候用户先看到一片空地，
+    // 卡片再"啪"地冒出来）。8 秒兜底：服务异常也不至于永远白屏。
+    var loadingGuard = setTimeout(hideLoading, 8000);
 
     // 入场只做缓缓淡入，别再动 transform：animate 每帧都会按 lift 重算位置，
     // 这里改 group.position / lift 只会被下一帧覆盖（曾经因此把 ?hard=1 的调试值抹掉）
