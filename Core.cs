@@ -65,6 +65,7 @@ namespace Installer
         public string Appearance = "system";  // 外观：system = 跟随系统（默认）/ light / dark
         public string LibraryRoot = "";     // U 盘模式的主库根；空 = 跟随程序所在盘
         public bool DrawerOpen = true;      // 左栏（组件 / 安装选项）展开状态；首次进来看得到勾选项
+        public string WorkshopDir = "";     // 工坊下载位置；空 = 跟随主库（U 盘库/_创意工坊 或 游戏 addons/_创意工坊）
         public List<string> ModDirs = new List<string>();   // 额外的 MOD 库文件夹（任意电脑上的任意目录）
         public List<string> Recent = new List<string>();
         public List<string> Mods = new List<string>();
@@ -370,6 +371,7 @@ namespace Installer
                     else if (k == "Appearance") Cfg.Appearance = v;
                     else if (k == "LibraryRoot") Cfg.LibraryRoot = v;
                     else if (k == "Drawer") Cfg.DrawerOpen = (v != "0");
+                    else if (k == "WorkshopDir") Cfg.WorkshopDir = v;
                     else if (k == "ModDir") Cfg.ModDirs.Add(v);
                     else if (k == "Recent") Cfg.Recent.Add(v);
                     else if (k.StartsWith("Mod:")) Cfg.Mods.Add(k.Substring(4));
@@ -405,6 +407,7 @@ namespace Installer
                 sb.AppendLine("Appearance=" + Cfg.Appearance);
                 sb.AppendLine("LibraryRoot=" + Cfg.LibraryRoot);
                 sb.AppendLine("Drawer=" + (Cfg.DrawerOpen ? "1" : "0"));
+                sb.AppendLine("WorkshopDir=" + Cfg.WorkshopDir);
                 foreach (string d in Cfg.ModDirs) sb.AppendLine("ModDir=" + d);
                 foreach (string rp in Cfg.Recent) sb.AppendLine("Recent=" + rp);
                 sb.AppendLine("[mods]");
@@ -446,6 +449,33 @@ namespace Installer
                 ModRoot = p;
                 Cfg.LibraryRoot = p;
             }
+            if (save) SaveConfig();
+            return true;
+        }
+
+        /// <summary>
+        /// 工坊下载位置。传空 = 恢复「跟随主库」。
+        /// 目录不存在就建：用户常直接填 U 盘上的新文件夹，不该因为"还没建"就被拒。
+        /// </summary>
+        public static bool SetWorkshopDir(string path, bool save)
+        {
+            string p = (path ?? "").Trim().TrimEnd('\\');
+            if (p.Length == 0)
+            {
+                Cfg.WorkshopDir = "";
+                if (save) SaveConfig();
+                return true;
+            }
+            try
+            {
+                if (!Directory.Exists(p)) Directory.CreateDirectory(p);
+            }
+            catch (Exception ex)
+            {
+                Log("WARN", "工坊下载位置不可用: " + p + "（" + ex.Message + "）");
+                return false;
+            }
+            Cfg.WorkshopDir = p;
             if (save) SaveConfig();
             return true;
         }

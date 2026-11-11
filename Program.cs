@@ -66,6 +66,7 @@ namespace Installer
             bool uiTree = false;
             bool mapShot = false;
             bool loadShot = false;
+            bool downsShot = false;
             bool mapSelf = false;
             bool scanRace = false;
             string uiSelect = null;
@@ -130,6 +131,7 @@ namespace Installer
                 else if (string.Equals(a, "--treeshot", StringComparison.OrdinalIgnoreCase)) { mapShot = true; uiTest = true; }
                 // 诊断截图：把「读取中」的骨架占位截一张，确认扫光和排版在真机上好看
                 else if (string.Equals(a, "--loadshot", StringComparison.OrdinalIgnoreCase)) { loadShot = true; uiTest = true; }
+                else if (string.Equals(a, "--downsshot", StringComparison.OrdinalIgnoreCase)) { downsShot = true; uiTest = true; }
                 else if (string.Equals(a, "--treeself", StringComparison.OrdinalIgnoreCase)) { mapSelf = true; uiTest = true; }
                 else if (string.Equals(a, "--scanrace", StringComparison.OrdinalIgnoreCase)) { scanRace = true; uiTest = true; }
                 else if (a.StartsWith("--uiselect=", StringComparison.OrdinalIgnoreCase)) uiSelect = a.Substring(11);
@@ -508,6 +510,7 @@ namespace Installer
                     if (uiDeps) { f.UiTestDeps(); System.Windows.Forms.Application.DoEvents(); }
                     if (mapShot) { f.OverviewShot(); System.Windows.Forms.Application.DoEvents(); return 0; }
                     if (loadShot) { f.LoadingShot(); System.Windows.Forms.Application.DoEvents(); return 0; }
+                    if (downsShot) { f.DownsShot(); System.Windows.Forms.Application.DoEvents(); return 0; }
                     if (scanRace) { f.ScanRaceTest(); System.Windows.Forms.Application.DoEvents(); return 0; }
                     if (mapSelf)
                     {

@@ -673,8 +673,23 @@ namespace Installer
             return set;
         }
 
+        /// <summary>
+        /// 下载保存到哪。用户在工坊「下载列表」里指定过就用那个目录（不再自动套 _创意工坊 子目录），
+        /// 没指定才跟随主库：U 盘模式 = 库根\_创意工坊，本地模式 = 游戏 addons\_创意工坊。
+        /// </summary>
         public static string DestDir()
         {
+            string custom = (Core.Cfg.WorkshopDir ?? "").Trim();
+            if (custom.Length > 0)
+            {
+                try { Directory.CreateDirectory(custom); }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException("工坊下载位置不可用：" + custom + "（" + ex.Message + "）");
+                }
+                return custom;
+            }
+
             string root;
             if (Core.IsLocal)
             {
@@ -2019,6 +2034,7 @@ namespace Installer
 
                     int idx = i;
                     SetRowState(it, "下载中…");
+                    WorkshopDownloads.Begin(it.Id, it.Title, it.Url, dir);
                     try
                     {
                         Workshop.Download(it, dest, delegate(long got, long total)
@@ -2026,6 +2042,7 @@ namespace Installer
                             if ((DateTime.Now - lastUi).TotalMilliseconds < 100) return;
                             lastUi = DateTime.Now;
                             int pct = total > 0 ? (int)Math.Min(100, got * 100 / total) : 0;
+                            WorkshopDownloads.Progress(it.Id, got, total);
                             Ui(delegate
                             {
                                 if (pct >= bar.Minimum && pct <= bar.Maximum) bar.Value = pct;
@@ -2045,6 +2062,11 @@ namespace Installer
                         }
                         it.SavedAs = Path.GetFileName(dest);
                         Workshop.RememberDownload(it.Id, it.SavedAs);
+                        {
+                            long sz = 0;
+                            try { sz = new FileInfo(dest).Length; } catch { }
+                            WorkshopDownloads.Finish(it.Id, true, dest, sz, "");
+                        }
                         done.Add(it);
                         SetRowState(it, "已下载 " + Core.Human(it.Size) + (rn != null ? "，已改名 " + Clip(rn, 16) : ""));
                         Core.Log("OK", "工坊：已下载 " + it.Id + " → " + dest);
@@ -2055,6 +2077,7 @@ namespace Installer
                         if (!failed.Contains(it)) failed.Add(it);
                         string why = ex.Message;
                         if (why.Length > 24) why = why.Substring(0, 24) + "…";
+                        WorkshopDownloads.Finish(it.Id, false, dest, 0, ex.Message);
                         SetRowState(it, "失败：" + why);
                         Core.Log("FAIL", "工坊下载失败 " + it.Id + ": " + ex.Message);
                     }

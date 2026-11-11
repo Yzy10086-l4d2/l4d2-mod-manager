@@ -2005,11 +2005,41 @@ namespace Installer
                 Application.DoEvents();
                 Application.DoEvents();
                 Shot(f, "gallery-skeleton");
+                // 最小尺寸：顶栏新加了「下载列表」，900 宽下不该挤成两行或盖住搜索框
+                f.ClientSize = Dpi.Sz(900, 620);
+                Application.DoEvents();
+                Application.DoEvents();
+                Shot(f, "gallery-min");
+                f.ClientSize = Dpi.Sz(1180, 780);
+                Application.DoEvents();
                 // 空态：没搜到 / 搜索失败时应该有说明，不是一片背景色
                 f.EmptyForTest("搜索失败", "The operation has timed out");
                 Application.DoEvents();
                 Application.DoEvents();
                 Shot(f, "gallery-empty");
+                f.Close();
+            }
+        }
+
+        /// <summary>
+        /// 诊断截图：下载列表窗口。空态一张、有记录一张 —— 这个窗口是新加的，
+        /// 按钮/列宽在 125% DPI 下挤不挤，只能看图确认。
+        /// </summary>
+        internal void DownsShot()
+        {
+            using (DownloadListForm f = new DownloadListForm())
+            {
+                f.Show();
+                Application.DoEvents();
+                Application.DoEvents();
+                Shot(f, "downloads-real");      // 真实记录（有就显示，没有就是空态）
+                f.ShowEmptyForTest();
+                Application.DoEvents();
+                Shot(f, "downloads-empty");
+                f.FillSample();
+                Application.DoEvents();
+                Application.DoEvents();
+                Shot(f, "downloads");
                 f.Close();
             }
         }

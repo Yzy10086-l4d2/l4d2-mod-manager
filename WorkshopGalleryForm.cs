@@ -43,6 +43,8 @@ namespace Installer
         private readonly ComboBox cboSort = new ComboBox();
         private readonly FlatButton btnSearch = new FlatButton();
         private readonly FlatButton btnList = new FlatButton();
+        private readonly FlatButton btnDowns = new FlatButton();   // 下载列表 + 保存位置
+        private DownloadListForm downsWindow;
         private readonly FlatButton btnClose = new FlatButton();
         private readonly FlatButton btnTop = new FlatButton();       // 回到顶部
         private readonly FlatButton btnPrevPage = new FlatButton();  // 上一页（替换式定位）
@@ -151,6 +153,10 @@ namespace Installer
             btnList.Click += delegate { OpenList(); };
             Controls.Add(btnList);
 
+            btnDowns.Text = "下载列表";
+            btnDowns.Click += delegate { OpenDowns(); };
+            Controls.Add(btnDowns);
+
             btnClose.Text = "关闭";
             btnClose.DialogResult = DialogResult.Cancel;
             Controls.Add(btnClose);
@@ -223,6 +229,8 @@ namespace Installer
             lblState.ForeColor = Theme.Ink3;
             lblState.AutoSize = false;
             lblState.AutoEllipsis = true;
+            lblState.Cursor = Cursors.Hand;
+            lblState.Click += delegate { OpenDowns(); };
             detail.Controls.Add(lblState);
 
             // 加载动效：抓全文 / 翻译 / 大图期间跑跑马灯，全完成自动消失
@@ -318,7 +326,9 @@ namespace Installer
             Load += delegate { Application.AddMessageFilter(this); };
             FormClosed += delegate { Application.RemoveMessageFilter(this); };
             Load += delegate { Theme.ApplyChrome(this); Theme.DeepNative(this); };
-            Shown += delegate { Theme.ApplyChrome(this); Theme.DeepNative(this); };
+            Shown += delegate { Theme.ApplyChrome(this); Theme.DeepNative(this); UpdateDownsCaption(); };
+            WorkshopDownloads.Changed += OnDownloadsChanged;
+            FormClosed += delegate { WorkshopDownloads.Changed -= OnDownloadsChanged; };
             Resize += delegate { ApplyLayout(); };
 
             ApplyLayout();
@@ -349,6 +359,7 @@ namespace Installer
             int bx = W - m;
             btnClose.SetBounds(bx - S(72), y, S(72), S(30)); bx -= S(72) + S(8);
             btnList.SetBounds(bx - S(96), y, S(96), S(30)); bx -= S(96) + S(8);
+            btnDowns.SetBounds(bx - S(92), y, S(92), S(30)); bx -= S(92) + S(8);
             cboSort.SetBounds(bx - S(104), y + S(2), S(104), S(26)); bx -= S(104) + S(8);
             btnSearch.SetBounds(bx - S(64), y, S(64), S(30)); bx -= S(64) + S(8);
             int qx = m + S(40) + S(160) + S(8);
@@ -703,7 +714,11 @@ namespace Installer
             if (it.IsCollection) meta += (meta.Length > 0 ? "  ·  " : "") + "这是合集";
             lblMeta.Text = meta.Length == 0 ? "物品 " + it.Id : meta;
             lblTags.Text = it.Tags;
-            lblState.Text = it.Where.Length > 0 ? "会装到：" + it.Where : "";
+            string where = it.Where.Length > 0 ? "会装到：" + it.Where + "  ·  " : "";
+            string saveTo;
+            try { saveTo = "保存到 " + ShortPath(Workshop.DestDir()) + "（点这里改）"; }
+            catch (Exception ex) { saveTo = ex.Message; }
+            lblState.Text = where + saveTo;
             btnGet.Enabled = !it.IsCollection && it.Url.Length > 0;
 
             if (picHero.Image != null) { Image old = picHero.Image; picHero.Image = null; old.Dispose(); }
@@ -796,6 +811,19 @@ namespace Installer
             barLoad.Visible = detailLoading > 0 && !sampleMode;
         }
 
+        /// <summary>路径太长时只留末尾两段，够认出是哪个目录，又不至于把整行挤满。</summary>
+        private static string ShortPath(string p)
+        {
+            try
+            {
+                string t = (p ?? "").TrimEnd('\\');
+                string[] parts = t.Split('\\');
+                if (parts.Length <= 2) return t;
+                return "…\\" + parts[parts.Length - 2] + "\\" + parts[parts.Length - 1];
+            }
+            catch { return p; }
+        }
+
         /// <summary>按当前「原文 / 译文」选择把正文填进框里。两处都要走 ToDisplay：TextBox 只认 CRLF。</summary>
         private void RenderDesc()
         {
@@ -841,6 +869,7 @@ namespace Installer
             barLoad.Maximum = 100;
             barLoad.Value = 0;
             barLoad.Visible = true;
+            WorkshopDownloads.Begin(it.Id, it.Title, it.Url, dir);   // 列表里立刻出现「下载中」
 
             Thread t = new Thread(delegate()
             {
@@ -854,6 +883,7 @@ namespace Installer
                         {
                             lblState.Text = "正在下载 " + pct + "%  ·  " + Core.Human(got) + " / " + Core.Human(total);
                             try { if (pct >= 0 && pct <= 100) barLoad.Value = pct; } catch { }
+                            WorkshopDownloads.Progress(it.Id, got, total);
                         });
                     });
                     string rn = Workshop.RenameToAddonTitle(dest);
@@ -867,6 +897,9 @@ namespace Installer
                         btnGet.Enabled = true;
                         grid.DownloadedIds.Add(it.Id);
                         grid.Invalidate();
+                        long sz = 0;
+                        try { sz = new FileInfo(dest).Length; } catch { }
+                        WorkshopDownloads.Finish(it.Id, true, dest, sz, "");
                         lblState.Text = "已下载到库里：" + name + "（关窗后在方案树里找它）";
                     });
                     Core.Log("OK", "画廊：下载 " + it.Id + " → " + dest);
@@ -878,6 +911,7 @@ namespace Installer
                         busy = false;
                         EndDownBar();
                         btnGet.Enabled = true;
+                        WorkshopDownloads.Finish(it.Id, false, "", 0, ex.Message);
                         lblState.Text = "下载失败：" + ex.Message;
                     });
                     Core.Log("FAIL", "画廊下载失败 " + it.Id + ": " + ex.Message);
@@ -909,6 +943,43 @@ namespace Installer
         {
             if (owner == null) return;
             owner.ShowWorkshopList();
+        }
+
+        /// <summary>
+        /// 下载列表：这次下了什么、存到哪、成了没有，都在里面；保存位置也在里面改。
+        /// 非模态且只留一个 —— 下载在跑的时候能开着看进度。
+        /// </summary>
+        private void OpenDowns()
+        {
+            if (downsWindow != null && !downsWindow.IsDisposed)
+            {
+                if (downsWindow.WindowState == FormWindowState.Minimized)
+                    downsWindow.WindowState = FormWindowState.Normal;
+                downsWindow.Activate();
+                return;
+            }
+            downsWindow = new DownloadListForm();
+            downsWindow.FormClosed += delegate { downsWindow = null; UpdateDownsCaption(); };
+            downsWindow.Show(this);
+            UpdateDownsCaption();
+        }
+
+        private void OnDownloadsChanged()
+        {
+            if (IsDisposed) return;
+            try
+            {
+                if (!IsHandleCreated) return;
+                BeginInvoke(new MethodInvoker(UpdateDownsCaption));
+            }
+            catch { }
+        }
+
+        /// <summary>按钮上直接报「有几个在下」：不打开窗口也知道后台还在干活。</summary>
+        private void UpdateDownsCaption()
+        {
+            int run = WorkshopDownloads.RunningCount;
+            btnDowns.Text = run > 0 ? "下载列表 (" + run + ")" : "下载列表";
         }
 
         /// <summary>
