@@ -497,7 +497,8 @@ namespace Installer
                 + (blocked > 0 ? "另有 " + blocked + " 个在压缩包里，这次不会动。\r\n\r\n" : "")
                 + "删了没法恢复。",
                 unverified > 0 ? "确认删除 · 有未核对项" : "确认删除",
-                MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+                MessageBoxButtons.OKCancel, MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
 
             int done = 0;
             List<string> errs = new List<string>();

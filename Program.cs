@@ -187,11 +187,13 @@ namespace Installer
                             || addonSelf || safeSelf || dumpId || dumpTree || ovDump || recogSelf
                             || mapShot || mapSelf || scanRace || layoutSelf || wsSelf || wsNet != null || wsSearch != null;
 
-            // 单实例只约束界面模式：已经开着就把那个窗口叫到前面来
+            // 单实例只约束界面模式：已经开着就把那个窗口叫到前面来。
+            // 用 Core.SelfTesting 判，不再手写参数清单 —— 以前漏了 --workshopself / --layoutself /
+            // --workshopnet=… / --wssearch=…，GUI 开着时跑这些自检会激活旧窗口然后 return 0，
+            // CI 拿到 exit 0 误以为自检通过。
             bool created;
             Mutex only = new Mutex(true, "L4D2Setup_SingleInstance", out created);
-            if (!created && !selfTest && !uiTest && !copyTest && !tweakSelf && !launchSelf && !dupSelf
-                && !addonSelf && !safeSelf && !dumpId && !dumpTree && !ovDump && !recogSelf && vpkFile == null)
+            if (!created && !Core.SelfTesting && vpkFile == null)
             {
                 ActivateExisting();
                 try { only.Dispose(); } catch { }

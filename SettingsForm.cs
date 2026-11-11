@@ -358,10 +358,35 @@ namespace Installer
             btnSave.SetBounds(504, 682, 96, 32);
             btnSave.Primary = true;
             btnSave.DialogResult = DialogResult.OK;
+            // 校验放进点击里：以前是「先关窗、再在 ShowSettings 里发现路径不对」，
+            // 用户填的东西跟着窗口一起没了，只能重新打开重填一遍。
+            btnSave.Click += delegate
+            {
+                string err = ValidateBeforeSave();
+                if (err == null) return;
+                MessageBox.Show(this, err, "设置", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                DialogResult = DialogResult.None;      // 关键：不让窗口关掉
+            };
             Controls.Add(btnSave);
 
             AcceptButton = btnSave;
             CancelButton = cancel;
+        }
+
+        /// <summary>保存前就地校验：返回 null = 可以存；否则是要弹给用户的提示。</summary>
+        private string ValidateBeforeSave()
+        {
+            if (!WantLocal)
+            {
+                string root = WantLibraryRoot;
+                if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
+                    return "没有找到可用的 MOD 主库，请重新选盘或指定文件夹。";
+            }
+            // 留空 = 不改：没填就保存不该把原来能用的游戏目录清掉
+            string game = WantGameRoot;
+            if (game.Length > 0 && !Core.TestGame(game))
+                return "这个目录里没有 left4dead2.exe，设置没有保存：\r\n" + game;
+            return null;
         }
 
         // ---------------------------------------------------------- 游戏目录

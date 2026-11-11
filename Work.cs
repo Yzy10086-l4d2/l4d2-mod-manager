@@ -626,13 +626,23 @@ namespace Installer
         }
 
         // ---------- 校验 ----------
-        public static List<string> Verify(string gameRoot)
+        /// <summary>
+        /// 装机后的逐项核对。只核对「这次真的装了 / 勾了」的组件 —— 用户没勾 dxvk，
+        /// 却在日志里打一行「[缺] d3d9.dll」，看起来像装坏了，实际什么都没丢。
+        /// </summary>
+        public static List<string> Verify(string gameRoot, List<string> components)
         {
             List<string> list = new List<string>();
-            string[] items = new string[] {
-                "left4dead2.exe", "bin\\left4neko.dll", "skeeto.dll", "bin\\wininet.dll",
-                "bin\\neko\\mqcore\\mqcam.dll", "d3d9.dll", "dxvk.conf"
-            };
+            List<string> items = new List<string>();
+            items.Add("left4dead2.exe");                     // 这个必须有，跟勾选无关
+            HashSet<string> comps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (components != null) foreach (string c in components) if (!string.IsNullOrEmpty(c)) comps.Add(c.Trim());
+
+            if (comps.Contains("L4N")) { items.Add("bin\\left4neko.dll"); items.Add("bin\\wininet.dll"); }
+            if (comps.Contains("Skeeto")) items.Add("skeeto.dll");
+            if (comps.Contains("Mqcam")) items.Add("bin\\neko\\mqcore\\mqcam.dll");
+            if (comps.Contains("Dxvk")) { items.Add("d3d9.dll"); items.Add("dxvk.conf"); }
+
             foreach (string it in items)
             {
                 bool ok = File.Exists(Path.Combine(gameRoot, it));
@@ -642,12 +652,32 @@ namespace Installer
             return list;
         }
 
+        /// <summary>老调用方式：不知道装了什么，就按全套核对（只在排查时用）。</summary>
+        public static List<string> Verify(string gameRoot)
+        {
+            return Verify(gameRoot, new List<string> { "L4N", "Skeeto", "Mqcam", "Dxvk" });
+        }
+
         // ---------- 铺 MOD ----------
         public static long CopyMods(string gameRoot, List<ModItem> sel, Action<long, long> progress, out int copied, out int skipped, out List<string> added, out List<string> failed)
+        {
+            List<string> backups;
+            return CopyMods(gameRoot, sel, progress, out copied, out skipped, out added, out failed, out backups);
+        }
+
+        /// <summary>
+        /// 铺 MOD。目标位置已有同名文件时，先把它整份快照到 _装机记录\装机快照\&lt;事务&gt;\ 再覆盖，
+        /// 这样「取消安装 / 一键还原」能回到用户原来那一版 —— 以前覆盖完只记了文件名，
+        /// 还原时把文件删掉，用户自己的旧版本就永远没了。
+        /// </summary>
+        public static long CopyMods(string gameRoot, List<ModItem> sel, Action<long, long> progress,
+            out int copied, out int skipped, out List<string> added, out List<string> failed, out List<string> backups)
         {
             int c = 0, s = 0;
             List<string> okList = new List<string>();
             List<string> badList = new List<string>();
+            List<string> bakList = new List<string>();          // "文件名|装机快照\事务\文件名"
+            string txn = DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N").Substring(0, 4);
             string addons = Path.Combine(Path.Combine(gameRoot, "left4dead2"), "addons");
             if (!Directory.Exists(addons)) Directory.CreateDirectory(addons);
 
@@ -706,6 +736,8 @@ namespace Installer
                             return;
                         }
                         string d = Path.Combine(addons, it.Name);
+                        // 覆盖前先留一份旧版本；快照失败只是「这条回不去」，不拦着装
+                        string bak = SnapshotAddon(addons, txn, it.Name);
                         string why;
                         bool good = it.IsArchive
                             ? ExtractOne(it, d, out why)
@@ -715,6 +747,8 @@ namespace Installer
                         {
                             if (good) { c++; okList.Add(it.Name); }
                             else { badList.Add(it.Name); Core.Log("FAIL", "复制/校验失败 " + it.Name + "：" + why); }
+                            // 只要动过这个目标（含写坏的情况）就记下来：还原时按快照回填
+                            if (bak != null) bakList.Add(it.Name + "|" + bak);
                             done += it.Size;
                             long now = sw.ElapsedMilliseconds;
                             if (now - lastReport >= 120) { lastReport = now; report = true; }
@@ -730,12 +764,101 @@ namespace Installer
                 double rate = todoSize / 1048576.0 / sec;
                 if (rate > 0.2) Core.LastRateMBps = Math.Round(rate, 1);
             }
-            copied = c; skipped = s; added = okList; failed = badList;
+            copied = c; skipped = s; added = okList; failed = badList; backups = bakList;
+            if (bakList.Count > 0) Core.Log("INFO", "覆盖前已快照 " + bakList.Count + " 个旧文件到 _装机记录\\装机快照\\" + txn);
             string tail = "共 " + Core.Human(total) + "，" + Math.Round(sec, 1) + " 秒（" + Core.LastRateMBps + " MB/s）";
             Core.Log("OK", Overwrite
                 ? ("MOD: 覆盖重写 " + c + " 个（并行 " + degree + " 路" + (Core.StrictVerify ? " + 全量 SHA256" : " + 大小校验") + "），同名去重跳过 " + s + " 个，" + tail)
                 : ("MOD: 新装 " + c + " 个（并行 " + degree + " 路" + (Core.StrictVerify ? " + 全量 SHA256" : " + 大小校验") + "），已装跳过 " + s + " 个，" + tail));
             return total;
+        }
+
+        /// <summary>覆盖前把旧文件复制到 _装机记录\装机快照\&lt;事务&gt;\；返回相对 LogDir 的路径（失败返回 null）。</summary>
+        private static string SnapshotAddon(string addons, string txn, string name)
+        {
+            try
+            {
+                string src = Path.Combine(addons, name);
+                if (!File.Exists(src)) return null;
+                string dir = Path.Combine(Path.Combine(Core.LogDir, "装机快照"), txn);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                string dst = Path.Combine(dir, name);
+                if (!File.Exists(dst)) Core.CopyOne(src, dst);
+                return Path.Combine(Path.Combine("装机快照", txn), name);
+            }
+            catch (Exception ex)
+            {
+                Core.Log("WARN", "覆盖前备份失败，这个文件将无法回滚: " + name + "，" + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// 把装机快照里的旧版本放回 addons（取消安装 / 一键还原时用）。
+        /// 清单是纯文本，可能被手改：只接受落在 _装机记录\装机快照 下面的备份路径。
+        /// </summary>
+        public static int RestoreBackups(string gameRoot, List<string> backups, List<string> report)
+        {
+            if (backups == null || backups.Count == 0) return 0;
+            string addons = Path.Combine(Path.Combine(gameRoot, "left4dead2"), "addons");
+            string baseDir = Path.GetFullPath(Path.Combine(Core.LogDir, "装机快照")).TrimEnd('\\') + "\\";
+            int n = 0, miss = 0, fail = 0;
+            foreach (string raw in backups)
+            {
+                string line = (raw ?? "").Trim();
+                if (line.Length == 0) continue;
+                int bar = line.IndexOf('|');
+                if (bar <= 0) continue;
+                string name = line.Substring(0, bar).Trim();
+                string rel = line.Substring(bar + 1).Trim();
+                if (name.Length == 0 || name.IndexOfAny(new char[] { '\\', '/', ':' }) >= 0
+                    || name.IndexOf("..", StringComparison.Ordinal) >= 0) { fail++; continue; }
+                try
+                {
+                    string src = Path.GetFullPath(Path.Combine(Core.LogDir, rel));
+                    if (!src.StartsWith(baseDir, StringComparison.OrdinalIgnoreCase)) { fail++; continue; }
+                    if (!File.Exists(src)) { miss++; Core.Log("WARN", "旧版本快照不在了: " + rel); continue; }
+                    if (!Directory.Exists(addons)) Directory.CreateDirectory(addons);
+                    Core.CopyOne(src, Path.Combine(addons, name));
+                    n++;
+                    try { File.Delete(src); } catch { }          // 回填成功就把快照清掉，别占着 U 盘
+                }
+                catch (Exception ex) { fail++; Core.Log("WARN", "回填旧版本 " + name + " 失败: " + ex.Message); }
+            }
+            SweepEmptySnapshotDirs();
+            if (report != null)
+            {
+                if (n > 0) report.Add("已把 " + n + " 个被覆盖的旧版本放回 addons");
+                if (miss > 0) report.Add("有 " + miss + " 个旧版本快照已被清理，没能回填");
+                if (fail > 0) report.Add("有 " + fail + " 个旧版本回填失败（详见日志）");
+            }
+            return n;
+        }
+
+        /// <summary>这条 "文件名|快照相对路径" 记录对应的快照文件还在不在。</summary>
+        private static bool SnapshotExists(string line)
+        {
+            try
+            {
+                string t = (line ?? "").Trim();
+                int bar = t.IndexOf('|');
+                if (bar <= 0) return false;
+                return File.Exists(Path.Combine(Core.LogDir, t.Substring(bar + 1).Trim()));
+            }
+            catch { return false; }
+        }
+
+        /// <summary>回填完把空的 装机快照\&lt;事务&gt;\ 目录删掉，别留一堆空壳。</summary>
+        private static void SweepEmptySnapshotDirs()
+        {
+            try
+            {
+                string root = Path.Combine(Core.LogDir, "装机快照");
+                if (!Directory.Exists(root)) return;
+                foreach (string d in Directory.GetDirectories(root))
+                    try { if (Directory.GetFileSystemEntries(d).Length == 0) Directory.Delete(d); } catch { }
+            }
+            catch { }
         }
 
         /// <summary>从压缩包里只取出这一个 vpk 放到 addons：不整包解压，也不动 U 盘上的包。</summary>
@@ -1081,7 +1204,13 @@ namespace Installer
         }
 
         // ---------- 回收新 MOD ----------
-        public static List<string> CollectNewMods(string gameRoot)
+        /// <summary>
+        /// 把游戏 addons 里「U 盘库没有」的 vpk 收进 U 盘 addons回收。
+        /// deleteSource=true 时，复制并核对大小之后再把游戏里那份删掉 —— 只复制不删的旧行为
+        /// 叫「收回」名不副实，用户以为腾出了空间，其实游戏盘一个字节没少。
+        /// </summary>
+        public static List<string> CollectNewMods(string gameRoot, bool deleteSource,
+            Action<int, int, string> progress, List<string> kept, List<string> failed)
         {
             List<string> got = new List<string>();
             string addons = Path.Combine(Path.Combine(gameRoot, "left4dead2"), "addons");
@@ -1090,20 +1219,49 @@ namespace Installer
             HashSet<string> known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (ModItem m in Core.ModList) known.Add(m.Name);
             string dst = Path.Combine(Core.ModRoot, "addons回收");
+
+            List<string> todo = new List<string>();
             foreach (string f in Directory.GetFiles(addons, "*.vpk"))
             {
                 string name = Path.GetFileName(f);
                 if (known.Contains(name)) continue;
+                todo.Add(f);
+            }
+
+            int i = 0;
+            foreach (string f in todo)
+            {
+                string name = Path.GetFileName(f);
+                i++;
+                if (progress != null) progress(i, todo.Count, name);
                 try
                 {
                     if (!Directory.Exists(dst)) Directory.CreateDirectory(dst);
                     string target = Path.Combine(dst, name);
-                    if (Core.SameFile(f, target)) continue;
+                    if (Core.SameFile(f, target))
+                    {
+                        // 库里已经有同一份：不重复复制，但「删源」仍然要按用户的选择做
+                        if (deleteSource) { File.Delete(f); }
+                        kept.Add(name);
+                        continue;
+                    }
                     Core.CopyOne(f, target);
+                    // CopyOne 已经校验过（默认比大小，严格模式比 SHA256）；这里再确认目标真的在
+                    if (!File.Exists(target) || new FileInfo(target).Length != new FileInfo(f).Length)
+                        throw new IOException("复制后大小不一致");
                     got.Add(name);
-                    Core.Log("OK", "已收回: " + name);
+                    if (deleteSource)
+                    {
+                        File.Delete(f);
+                        Core.Log("OK", "已收回并删除游戏里的: " + name);
+                    }
+                    else Core.Log("OK", "已复制到 U 盘（游戏里的保留）: " + name);
                 }
-                catch (Exception ex) { Core.Log("WARN", "回收 " + name + " 失败: " + ex.Message); }
+                catch (Exception ex)
+                {
+                    failed.Add(name);
+                    Core.Log("WARN", "回收 " + name + " 失败: " + ex.Message);
+                }
             }
             return got;
         }
@@ -1247,10 +1405,18 @@ namespace Installer
                 }
                 catch (Exception ex) { failed++; kept.Add(name); Core.Log("WARN", "删除 " + name + " 失败: " + ex.Message); }
             }
+
+            // 删完本次装的，再把「安装前被覆盖的旧版本」放回去 —— 这是覆盖安装真正的回滚。
+            // 不放回的话，一键还原会把用户自己原来那一版一起带走。
+            int restored = mine == null ? 0 : RestoreBackups(gameRoot, mine.Backups, report);
+
             // 记录里已经删掉/本来就不存在的条目也一并摘掉，免得下次手放同名文件被误删。
             if (mine != null)
             {
                 mine.Added = kept;
+                // 回填成功的那几条快照文件已经被删掉了，顺手从记录里摘掉；
+                // 没回填成功的留着，下次还原还能再试一次。
+                mine.Backups.RemoveAll(delegate(string line) { return !SnapshotExists(line); });
                 // 平台文件都处理干净了才清组件记录；有删不掉/备份失败的留着，下次还原还能重试。
                 if (backupFail == 0 && delFail == 0)
                 {
@@ -1520,6 +1686,11 @@ namespace Installer
             /// Schema &gt;= 2 时「列表为空」就是「一个都没装」；Schema == 0 时才退回按包清单删（有备份兜底）。
             /// </summary>
             public List<string> Platform = new List<string>();
+            /// <summary>
+            /// 覆盖安装前留下的旧版本快照，每项 "文件名|装机快照\事务\文件名"。
+            /// 还原 / 取消安装时按这里把用户原来的那一版放回 addons。
+            /// </summary>
+            public List<string> Backups = new List<string>();
         }
 
         private static string NormRoot(string root)
@@ -1571,6 +1742,11 @@ namespace Installer
                         string name = Path.GetFileName(t.Substring("Added=".Length).Trim());
                         if (name.Length > 0) cur.Added.Add(name);
                     }
+                    else if (t.StartsWith("Backup=", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string v = t.Substring("Backup=".Length).Trim();
+                        if (v.Length > 0) cur.Backups.Add(v);
+                    }
                 }
             }
             catch (Exception ex) { Core.Log("WARN", "读装机记录失败: " + ex.Message); }
@@ -1620,6 +1796,10 @@ namespace Installer
                 foreach (string c in m.Platform) haveP.Add(c);
                 foreach (string c in s.Platform)
                     if (!string.IsNullOrEmpty(c) && haveP.Add(c)) m.Platform.Add(c);
+                HashSet<string> haveB = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (string b in m.Backups) haveB.Add(b);
+                foreach (string b in s.Backups)
+                    if (!string.IsNullOrEmpty(b) && haveB.Add(b)) m.Backups.Add(b);
             }
 
             StringBuilder sb = new StringBuilder();
@@ -1631,6 +1811,7 @@ namespace Installer
                 sb.AppendLine("Time=" + (string.IsNullOrEmpty(s.Time)
                     ? DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") : s.Time));
                 foreach (string c in s.Platform) sb.AppendLine("Platform=" + c);
+                foreach (string b in s.Backups) sb.AppendLine("Backup=" + b);
                 foreach (string a in s.Added) sb.AppendLine("Added=" + a);
                 sb.AppendLine();
             }
@@ -1643,6 +1824,15 @@ namespace Installer
         }
 
         public static void WriteManifest(string gameRoot, List<string> added, List<string> platform)
+        {
+            WriteManifest(gameRoot, added, platform, null);
+        }
+
+        /// <summary>
+        /// 写装机记录。backups 是「覆盖前快照」，每项 "文件名|装机快照\事务\文件名"；
+        /// 传 null 表示本次没有覆盖任何已有文件（不是「清空历史」）。
+        /// </summary>
+        public static void WriteManifest(string gameRoot, List<string> added, List<string> platform, List<string> backups)
         {
             try
             {
@@ -1672,6 +1862,16 @@ namespace Installer
                         if (comp.Length > 0 && haveP.Add(comp)) sec.Platform.Add(comp);
                     }
                 }
+                HashSet<string> haveB = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (string b in sec.Backups) haveB.Add(b);
+                if (backups != null)
+                {
+                    foreach (string b in backups)
+                    {
+                        string line = (b ?? "").Trim();
+                        if (line.Length > 0 && haveB.Add(line)) sec.Backups.Add(line);
+                    }
+                }
                 SaveManifest(path, sections);
             }
             catch (Exception ex) { Core.Log("WARN", "装机记录写失败: " + ex.Message); }
@@ -1695,6 +1895,9 @@ namespace Installer
                     if (name.Length > 0) drop.Add(name);
                 }
                 sec.Added.RemoveAll(delegate(string s) { return drop.Contains(s); });
+                // 回填成功的快照文件已经删掉了，对应记录跟着清；没回填成功的留着，下次还能再试
+                if (sec.Backups.Count > 0)
+                    sec.Backups.RemoveAll(delegate(string line) { return !SnapshotExists(line); });
                 SaveManifest(path, sections);
             }
             catch (Exception ex) { Core.Log("WARN", "更新装机记录失败: " + ex.Message); }
@@ -1921,6 +2124,34 @@ namespace Installer
                     SafeCheck(ref bad, Core.ModList.Count == baseline,
                         "并发扫描后条目数不变（" + Core.ModList.Count + " / " + baseline + "）");
                 else Console.WriteLine("SKIP  库是空的，并发扫描只验证了不炸");
+
+                // 7) 中断残留清理：addons 下超过 1 小时的 .part / ~l4d2-* 才清，刚写的不许动
+                string sw = Path.Combine(Path.GetTempPath(), "l4d2-sweep-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+                try
+                {
+                    string swAddons = Path.Combine(Path.Combine(sw, "left4dead2"), "addons");
+                    Directory.CreateDirectory(swAddons);
+                    string oldPart = Path.Combine(swAddons, "中断.vpk.deadbeef.part");
+                    string newPart = Path.Combine(swAddons, "正在写.vpk.cafebabe.part");
+                    string stage = Path.Combine(swAddons, "~l4d2-abcd1234");
+                    File.WriteAllText(oldPart, "x");
+                    File.WriteAllText(newPart, "x");
+                    Directory.CreateDirectory(stage);
+                    File.WriteAllText(Path.Combine(stage, "half.vpk"), "x");
+                    DateTime past = DateTime.UtcNow.AddHours(-3);
+                    File.SetLastWriteTimeUtc(oldPart, past);
+                    Directory.SetLastWriteTimeUtc(stage, past);
+
+                    Core.SweepGameTemps(sw);
+
+                    bool oldGone = !File.Exists(oldPart);
+                    bool newKept = File.Exists(newPart);
+                    bool stageGone = !Directory.Exists(stage);
+                    SafeCheck(ref bad, oldGone, "中断超过 1 小时的 *.part 被清掉");
+                    SafeCheck(ref bad, newKept, "正在写的 *.part 没被误删");
+                    SafeCheck(ref bad, stageGone, "中断留下的 ~l4d2-* 暂存目录被清掉");
+                }
+                finally { try { Directory.Delete(sw, true); } catch { } }
 
                 // 只报数字不断言：压缩包里的包要等包变过或用户点详情才补上标题，
                 // 这里断言「必须 N 个」等于把库的内容写死在自测里。
@@ -2317,6 +2548,52 @@ namespace Installer
                         Core.Cfg.GameRoot = savedGame;
                         Core.LogDir = savedLog;
                         try { Directory.Delete(tmpC, true); } catch { }
+                    }
+
+                    // 覆盖安装：旧版本先快照，还原时放回去。
+                    // 以前覆盖完只记文件名，还原把文件删掉，用户原来那一版就永远没了。
+                    string tmpD = Path.Combine(Path.GetTempPath(), "l4d2-snap-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+                    bool savedOw = Overwrite;
+                    try
+                    {
+                        string addonsD = Path.Combine(Path.Combine(tmpD, "left4dead2"), "addons");
+                        Directory.CreateDirectory(addonsD);
+                        string srcDir = Path.Combine(tmpD, "src");
+                        Directory.CreateDirectory(srcDir);
+                        Core.Cfg.GameRoot = tmpD;
+                        Core.LogDir = Path.Combine(tmpD, "_装机记录");
+                        Directory.CreateDirectory(Core.LogDir);
+
+                        string live = Path.Combine(addonsD, "覆盖测试.vpk");
+                        File.WriteAllText(live, "旧版内容-123");            // 用户原来那一版
+                        string src = Path.Combine(srcDir, "覆盖测试.vpk");
+                        File.WriteAllText(src, "新版内容-456789");          // 要装的版本（大小不同）
+
+                        ModItem it = new ModItem();
+                        it.Name = "覆盖测试.vpk";
+                        it.FullPath = src;
+                        it.Size = new FileInfo(src).Length;
+
+                        int cD, sD;
+                        List<string> aD, fD, bD;
+                        Overwrite = true;
+                        CopyMods(tmpD, new List<ModItem> { it }, null, out cD, out sD, out aD, out fD, out bD);
+                        bool wrote = File.ReadAllText(live) == "新版内容-456789";
+                        bool snap = bD.Count == 1;
+                        WriteManifest(tmpD, aD, null, bD);
+                        FullRestore(tmpD);
+                        bool backOld = File.ReadAllText(live) == "旧版内容-123";
+                        if (!wrote) { bad++; Console.WriteLine("[FAIL] 覆盖安装没写进新版本"); }
+                        if (!snap) { bad++; Console.WriteLine("[FAIL] 覆盖前没有留旧版本快照"); }
+                        if (!backOld) { bad++; Console.WriteLine("[FAIL] 还原后没把被覆盖的旧版本放回去"); }
+                        Console.WriteLine("ADDON 覆盖安装回滚：写入新版本=" + wrote + "，覆盖前已快照=" + snap + "，还原后回到旧版=" + backOld);
+                    }
+                    finally
+                    {
+                        Overwrite = savedOw;
+                        Core.Cfg.GameRoot = savedGame;
+                        Core.LogDir = savedLog;
+                        try { Directory.Delete(tmpD, true); } catch { }
                     }
                 }
                 finally

@@ -1006,7 +1006,17 @@ namespace Installer
             };
             Controls.Add(lv);
             ContextMenuStrip cms = new ContextMenuStrip();
-            cms.Items.Add("删除勾中的", null, delegate { DeleteChecked(); });
+            ToolStripMenuItem delItem = new ToolStripMenuItem("删除选中的", null, delegate { DeleteChecked(); });
+            cms.Items.Add(delItem);
+            // 这个列表里「勾选」= 启用，跟「选中」是两回事。菜单按选中行数报数，
+            // 不在菜单文字里混用「勾」字，免得有人为了删除去取消勾选、结果把 MOD 打开了。
+            cms.Opening += delegate
+            {
+                delItem.Text = lv.SelectedItems.Count > 0
+                    ? "删除选中的 " + lv.SelectedItems.Count + " 个"
+                    : "删除选中的（先在上面选行）";
+                delItem.Enabled = lv.SelectedItems.Count > 0;
+            };
             lv.ContextMenuStrip = cms;
 
             Button up = new Button(); up.Text = "上移 ↑"; up.SetBounds(12, 360, 90, 28); up.Click += delegate { MoveItem(-1); }; Controls.Add(up);
@@ -1027,18 +1037,24 @@ namespace Installer
             LoadItems();
         }
 
-        /// <summary>批量删除：把勾中的 vpk 从游戏 addons 直接删掉，并摘掉 addonlist 登记。</summary>
+        /// <summary>批量删除：把选中的 vpk 从游戏 addons 直接删掉，并摘掉 addonlist 登记。</summary>
         private void DeleteChecked()
         {
+            // 只认选中行。以前用 CheckedItems，可这个列表里勾选=启用：
+            // 用户为了删除去「勾选」，反而先把 MOD 打开了；取消勾选再来删又选不中。
             List<string> names = new List<string>();
-            foreach (ListViewItem li in lv.CheckedItems) names.Add(li.Tag.ToString());
+            foreach (ListViewItem li in lv.SelectedItems) names.Add(li.Tag.ToString());
             if (names.Count == 0)
-                foreach (ListViewItem li in lv.SelectedItems) names.Add(li.Tag.ToString());
-            if (names.Count == 0) { MessageBox.Show("先勾选要删的 MOD（或选中几行）。"); return; }
+            {
+                MessageBox.Show("先在上面选中要删的行（可按住 Ctrl / Shift 多选）。\r\n\r\n"
+                    + "注意：左侧的勾是「启用 / 关闭」，不是选中。", "删除已装 MOD");
+                return;
+            }
             if (MessageBox.Show("把这 " + names.Count + " 个 MOD 从游戏里删掉？\r\n\r\n"
                 + "· vpk 直接从 left4dead2\\addons 删除，删了就是没了\r\n"
                 + "· addonlist 里那条登记也会摘掉\r\n\r\n确定？",
-                "删除已装 MOD", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+                "删除已装 MOD", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
             string addons = Path.Combine(Path.Combine(gameRoot, "left4dead2"), "addons");
             int n = 0;
             foreach (string name in names)
@@ -1130,9 +1146,45 @@ namespace Installer
 
         private void Collect()
         {
-            List<string> got = Work.CollectNewMods(gameRoot);
-            if (got.Count == 0) { MessageBox.Show("没有新 MOD：游戏里的都在 U 盘库里。"); return; }
-            MessageBox.Show("已收回 " + got.Count + " 个到 U 盘 addons回收 目录：\r\n" + string.Join("\r\n", got.ToArray()));
+            if (MessageBox.Show(
+                "把游戏 addons 里「U 盘库没有」的 MOD 收进 U 盘 addons回收？\r\n\r\n"
+                + "· 先复制到 U 盘并核对大小\r\n"
+                + "· 复制成功后才删游戏里的那份（给游戏盘腾地方）\r\n"
+                + "· 复制失败的一律保留原文件，不会删\r\n\r\n"
+                + "注意：删除后游戏里就没有这个 MOD 了，要用时从 U 盘库装回来。",
+                "收回新 MOD", MessageBoxButtons.OKCancel, MessageBoxIcon.Question,
+                MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
+
+            List<string> kept = new List<string>();
+            List<string> failed = new List<string>();
+            List<string> got;
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                got = Work.CollectNewMods(gameRoot, true, delegate(int done, int total, string name)
+                {
+                    // 大文件单个就要几十秒，不报进度会像卡死
+                    lbl.Text = "正在收回 " + done + "/" + total + "：" + name;
+                    lbl.Refresh();
+                    Application.DoEvents();
+                }, kept, failed);
+            }
+            finally { Cursor = Cursors.Default; }
+
+            if (got.Count == 0 && kept.Count == 0 && failed.Count == 0)
+            {
+                lbl.Text = "";
+                MessageBox.Show("没有新 MOD：游戏里的都在 U 盘库里。");
+                return;
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("收回 " + got.Count + " 个到 U 盘 addons回收，并从游戏里删除。");
+            if (kept.Count > 0) sb.AppendLine("另有 " + kept.Count + " 个库里已有同一份，已直接删掉游戏里的副本。");
+            if (failed.Count > 0)
+                sb.AppendLine("有 " + failed.Count + " 个复制失败，原文件已保留（详见日志）：\r\n  "
+                    + string.Join("\r\n  ", failed.ToArray()));
+            lbl.Text = "已收回 " + got.Count + " 个";
+            MessageBox.Show(sb.ToString(), "收回新 MOD");
         }
 
         /// <summary>把「关闭」的 MOD 挪回 U 盘，给游戏盘腾地方（开着的一概不碰）。</summary>
@@ -1143,8 +1195,9 @@ namespace Installer
                 + "· 只动已经关掉的\r\n"
                 + "· 开着的、以及不是本工具装的，一概不碰\r\n"
                 + "· 挪走的以后要用会自动重新复制\r\n\r\n"
-                + "先把上面的开关写进去，再清理。", "清理关着的 MOD",
-                MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+                +                 "先把上面的开关写进去，再清理。", "清理关着的 MOD",
+                MessageBoxButtons.OKCancel, MessageBoxIcon.Question,
+                MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
             if (!ApplyQuiet()) return;          // 写入失败就不继续清理，避免按旧状态挪文件
             int n = Work.ParkDisabled(gameRoot);
             state = AddonList.Read(gameRoot);

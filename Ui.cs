@@ -80,9 +80,11 @@ namespace Installer
 
         public MainForm(string gameRootHint)
         {
-            // 版本只写在 AssemblyInfo 里，标题跟着走，省得两处对不上
+            // 版本只写在 AssemblyInfo 里，标题跟着走，省得两处对不上。
+            // Build 位为 0 的不显示（2.59.0.0 → v2.59），有修订号时才带上（2.59.1 → v2.59.1）。
             Version ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-            Text = "L4D2 MOD 管理工具  v" + ver.Major + "." + ver.Minor;
+            string verText = ver.Major + "." + ver.Minor + (ver.Build > 0 ? "." + ver.Build : "");
+            Text = "L4D2 MOD 管理工具  v" + verText;
             // 一开始就开够大：右栏要放下方案树（左边位置 + 右边候选），窄了列会挤成一团
             // 尺寸全部按设计值 × DPI 比例算：WorkingArea 是物理像素，设计值是 96dpi 下的数
             Theme.UseDpi(this);
@@ -156,7 +158,8 @@ namespace Installer
                 {
                     if (MessageBox.Show(this,
                         "有 " + treeView.PendingCount + " 处开关改动还没写进游戏。\r\n退出就丢了，确定退出？",
-                        "改动没保存", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
+                        "改动没保存", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning,
+                        MessageBoxDefaultButton.Button2) != DialogResult.OK)
                     { e.Cancel = true; return; }
                 }
                 CloseDesk();
@@ -365,12 +368,17 @@ namespace Installer
             btnView = new FlatButton(); btnView.Text = "总览";
             btnView.SetBounds(viewX, 16, viewW, Theme.H);
             btnView.Click += delegate { ToggleView(); };
-            tips.SetToolTip(btnView, "套装总览：这套里每个位置装的是哪个 MOD，一眼看完。\r\n左边点大类，右边列这个类的位置和已装的 MOD；没装的灰着，库里没有的空心点。\r\n点一行就回方案树改那个位置（看板只看不改）。再点一下回到方案树。");
+            tips.SetToolTip(btnView, "套装总览：这套里每个位置装的是哪个 MOD，一眼看完。\r\n左边点大类，右边列这个类的位置和已装的 MOD；没装的灰着，库里没有的空心点。\r\n点开关直接开/关，点名字就地换 MOD，拖大类改顺序；点一行回方案树改那个位置。再点一下回到方案树。");
             Controls.Add(btnView);
 
             btnPanel = new FlatButton(); btnPanel.Text = "面板";
             btnPanel.SetBounds(panelX, 16, panelW, Theme.H);
-            btnPanel.Click += delegate { SetDrawer(!drawerOpen); };
+            btnPanel.Click += delegate
+            {
+                SetDrawer(!drawerOpen);
+                // 只有用户自己点的时候才记：总览/跳转那些自动展开收起不该改用户偏好
+                if (Core.Cfg.DrawerOpen != drawerOpen) { Core.Cfg.DrawerOpen = drawerOpen; Core.SaveConfig(); }
+            };
             tips.SetToolTip(btnPanel, "展开 / 收起左边那栏（装什么、安装选项、日志）。\r\n收起来以后整个窗口就是一张台面。");
             Controls.Add(btnPanel);
 
@@ -638,7 +646,9 @@ namespace Installer
             // 校验条防抖：勾选会连着变，进程枚举和路径判断不用每敲一下就做一遍
             preTimer.Interval = 220;
             preTimer.Tick += delegate { preTimer.Stop(); RefreshPrecheck(); };
-            SetDrawer(false);                  // 默认收起：整个窗口就是一张台面
+            // 默认展开：以前一进来左栏就是收起的，新用户看不到「环境组件」和「安装选项」，
+            // 以为这工具只能看不能装。状态记进配置，收过一次之后下次还是收起的。
+            SetDrawer(Core.Cfg.DrawerOpen);
             Resize += delegate { ApplyResponsive(); };
             ApplyResponsive();
         }
@@ -814,6 +824,7 @@ namespace Installer
                 Core.Log("INFO", "扫库进行中切工作模式被拦下，先记着不动");
                 return;
             }
+            string prev = Core.Cfg.Mode;
             Core.Cfg.Mode = want;
             Core.SaveConfig();
             Core.Log("OK", "工作模式：" + (want == "local" ? "本地模式（游戏目录 addons 当库）" : "U 盘模式（U 盘库是主，游戏目录重复项合并）"));
@@ -823,20 +834,30 @@ namespace Installer
             StartScanWatch();
             System.Threading.Thread th = new System.Threading.Thread(delegate()
             {
+                bool ok = true;
                 try { Core.ScanMods(); }
-                catch (Exception ex) { Core.Log("FAIL", "切换模式后重扫失败: " + ex.Message); }
+                catch (Exception ex) { ok = false; Core.Log("FAIL", "切换模式后重扫失败: " + ex.Message); }
                 SafeInvoke(delegate()
                 {
                     scanning = false;
+                    if (!ok)
+                    {
+                        // 扫描失败时别把用户留在「配置已经切了、界面还是旧数据」的错位状态：
+                        // 模式回滚、下拉跟着回去，下次启动也不会拿着一个跑不通的模式。
+                        Core.Cfg.Mode = prev;
+                        Core.SaveConfig();
+                        modeSync = true;
+                        cboMode.SelectedIndex = string.Equals(prev, "local", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+                        modeSync = false;
+                        SetStatus("切换工作模式失败，已恢复原模式（详见日志）");
+                        Core.Log("WARN", "工作模式已回滚到 " + prev);
+                        return;
+                    }
                     QueuePrecheck();            // 按钮亮不亮交给校验条算（模式变了勾选也可能变了）
                     RefreshMods();
                     RefreshConflicts();
                     if (treeView != null) RebuildViews();
                     RunPendingRoot();
-                    lblStatus.Text = "就绪";
-                    RefreshMods();
-                    RefreshConflicts();
-                    if (treeView != null) RebuildViews();
                     lblStatus.Text = "就绪";
                 });
             });
@@ -1589,7 +1610,8 @@ namespace Installer
             if (MessageBox.Show("删除选中的 " + todo.Count + " 个 vpk（" + Core.Human(size) + "）？\r\n\r\n"
                 + "· 文件直接从磁盘删掉，删了就是没了\r\n"
                 + "· 只删文件，不改游戏里的 addonlist",
-                "确认批量删除", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+                "确认批量删除", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
 
             int n = 0;
             List<string> failed = new List<string>();
@@ -1687,7 +1709,8 @@ namespace Installer
             bool fromGame = parts.Exists(delegate(ModItem m) { return m.FromGame; });
             if (MessageBox.Show("删除「" + name + "」" + tail + "？\r\n\r\n· 文件直接从磁盘删掉，删了就是没了"
                 + (fromGame ? "\r\n· 这是游戏 addons 里的文件，删掉 = 从游戏里卸掉" : ""),
-                "确认删除", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+                "确认删除", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
 
             int n = 0;
             foreach (ModItem it in parts)
@@ -2691,7 +2714,8 @@ namespace Installer
                 MessageBox.Show(sb.ToString(), "清理重复", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
-            if (MessageBox.Show(sb.ToString(), "清理重复（确认删除）", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+            if (MessageBox.Show(sb.ToString(), "清理重复（确认删除）", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
 
             // 清单落到日志里，删完还能查到删了哪些
             foreach (ModItem m in plan.Drop) Core.Log("INFO", "清重删除: " + m.RelPath);
@@ -3722,11 +3746,14 @@ namespace Installer
             {
                 string d = sub.Length == 0 ? dir : Path.Combine(dir, sub);
                 if (!Directory.Exists(d)) continue;      // 没这个目录（还没装 MOD / 没装平台），不用测
+                // 每次探测用独立的临时名：启动时的后台探测和界面线程可能同时在测同一个目录，
+                // 固定叫 _write_test.tmp 会互删对方正在写的文件 —— 表现是「目录明明能写却报不可写」，
+                // 还可能顺手删掉用户恰好同名的文件。
+                string f = Path.Combine(d, "_write_test_" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp");
                 try
                 {
-                    string f = Path.Combine(d, "_write_test.tmp");
-                    File.WriteAllText(f, "x");
-                    File.Delete(f);
+                    try { File.WriteAllText(f, "x"); }
+                    finally { try { if (File.Exists(f)) File.Delete(f); } catch { } }
                 }
                 catch (Exception ex)
                 {
@@ -3739,7 +3766,14 @@ namespace Installer
 
         private static bool GameRunning()
         {
-            try { return System.Diagnostics.Process.GetProcessesByName("left4dead2").Length > 0; }
+            try
+            {
+                // GetProcessesByName 返回的每个 Process 都握着句柄，用完不 Dispose 会慢慢漏；
+                // 预检每次勾选都会问一遍，量不小。
+                System.Diagnostics.Process[] ps = System.Diagnostics.Process.GetProcessesByName("left4dead2");
+                try { return ps.Length > 0; }
+                finally { foreach (System.Diagnostics.Process p in ps) { try { p.Dispose(); } catch { } } }
+            }
             catch { return false; }
         }
 
@@ -4219,6 +4253,8 @@ namespace Installer
             public List<string> Added = new List<string>();
             /// <summary>这次实际装成功的平台组件（L4N / Dxvk / Skeeto / Asset / Mqcam），还原时只删这些。</summary>
             public List<string> Platform = new List<string>();
+            /// <summary>覆盖安装前快照下来的旧版本（"文件名|装机快照\事务\文件名"），取消/还原时按它回填。</summary>
+            public List<string> Backups = new List<string>();
             /// <summary>addonlist 的开关是否已经写入（取消时别把已写好的开关又改掉）。</summary>
             public bool SwitchesWritten;
             public int StepDone, StepTotal;
@@ -4500,13 +4536,14 @@ namespace Installer
                 for (int attempt = 0; attempt <= 2; attempt++)
                 {
                     int copied, skipped;
-                    List<string> addedThis, failed;
+                    List<string> addedThis, failed, backedThis;
                     Work.CopyMods(j.Root, todo, delegate(long done, long total)
                     {
                         int pct = total > 0 ? (int)(done * 1000 / total) : 0;
                         SetBar(pct);
-                    }, out copied, out skipped, out addedThis, out failed);
+                    }, out copied, out skipped, out addedThis, out failed, out backedThis);
                     if (addedThis.Count > 0) j.Added.AddRange(addedThis);
+                    if (backedThis.Count > 0) j.Backups.AddRange(backedThis);
                     finalFailed = failed.Count;
                     if (Work.CancelRequested) { j.Canceled = true; break; }
                     if (failed.Count == 0 || attempt == 2) break;
@@ -4551,10 +4588,10 @@ namespace Installer
             Core.Log("WARN", "安装已停止：没有继续后续步骤；已写入的 " + copied + " 个 MOD 文件保留。");
             SafeBeginInvoke(delegate()
             {
-                if (j != null && (j.Added.Count > 0 || j.Platform.Count > 0))
+                if (j != null && (j.Added.Count > 0 || j.Platform.Count > 0 || j.Backups.Count > 0))
                 {
                     // 先把本次写的记进还原清单：不管用户选删还是留，都不至于变成“谁都找不到”的孤儿文件。
-                    Work.WriteManifest(j.Root, j.Added, j.Platform);
+                    Work.WriteManifest(j.Root, j.Added, j.Platform, j.Backups);
                 }
                 if (j != null && j.Added.Count > 0)
                 {
@@ -4563,6 +4600,7 @@ namespace Installer
                         + "· 已经复制完的 " + j.Added.Count + " 个 MOD 文件还在游戏目录里\r\n"
                         + "· 后续组件没有继续安装\r\n\r\n"
                         + "要现在删掉这 " + j.Added.Count + " 个文件吗？\r\n"
+                        + "选「是」会删掉本次复制的文件，并把被覆盖的旧版本放回去；\r\n"
                         + "选「否」会保留文件、记入还原清单，并把它们的开关先设为关闭。",
                         "安装已停止",
                         MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
@@ -4570,9 +4608,13 @@ namespace Installer
                     if (remove)
                     {
                         List<string> cleared = Work.RemoveAddedFiles(j.Root, j.Added);
+                        // 覆盖安装的：把原来那一版放回 addons，才算真的回到装机前
+                        List<string> rep = new List<string>();
+                        int back = Work.RestoreBackups(j.Root, j.Backups, rep);
                         Work.ForgetManifest(j.Root, cleared);
-                        SetStatus("已停止 · 已删除本次复制 " + cleared.Count + " 个文件");
-                        Core.Log("OK", "取消安装：已删除本次复制的 " + cleared.Count + " 个文件");
+                        SetStatus("已停止 · 已删除本次复制 " + cleared.Count + " 个文件"
+                            + (back > 0 ? "，已放回 " + back + " 个旧版本" : ""));
+                        Core.Log("OK", "取消安装：删除本次复制 " + cleared.Count + " 个，回填旧版本 " + back + " 个");
                     }
                     else
                     {
@@ -4609,8 +4651,8 @@ namespace Installer
         private void FinishInstall(InstallJob j)
         {
             Core.Log("STEP", "逐项核对");
-            Work.Verify(j.Root);
-            Work.WriteManifest(j.Root, j.Added, j.Platform);
+            Work.Verify(j.Root, j.Platform);
+            Work.WriteManifest(j.Root, j.Added, j.Platform, j.Backups);
             if (j.Failed.Count == 0)
             {
                 SetStatus("完成");

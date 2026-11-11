@@ -498,7 +498,8 @@ namespace Installer
             if (name == null) return;
             if (gameRoot == null || !Core.TestGame(gameRoot)) { MessageBox.Show("先选对游戏目录。"); return; }
             if (MessageBox.Show("把「" + name + "」里的参数写入这台机器？\r\n\r\nleft4dead2\\cfg\\autoexec.cfg\r\nskeeto_setting.ini\r\n\r\n现在这两份会被直接覆盖，不留副本。", "套用参数",
-                                MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+                                MessageBoxButtons.OKCancel, MessageBoxIcon.Question,
+                                MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
             List<string> lines;
             string err = Tweaks.Apply(gameRoot, name, out lines);
             if (err != null) { MessageBox.Show(err, "没套上"); return; }
@@ -513,7 +514,8 @@ namespace Installer
             if (name == null) return;
             string dir = Tweaks.DirOf(name);
             if (MessageBox.Show("彻底删掉存档「" + name + "」？\r\n\r\n会删掉 U 盘上的整个目录（autoexec.cfg + skeeto_setting.ini）：\r\n" + dir
-                + "\r\n\r\n删了没法恢复。", "删除参数存档", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+                + "\r\n\r\n删了没法恢复。", "删除参数存档", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
             string err;
             if (!Tweaks.Delete(name, out err)) { MessageBox.Show(err); return; }
             Reload(null);

@@ -64,6 +64,7 @@ namespace Installer
         public string Mode = "usb";         // 工作模式：usb = U 盘库是主（默认）；local = 游戏目录 addons 当库
         public string Appearance = "system";  // 外观：system = 跟随系统（默认）/ light / dark
         public string LibraryRoot = "";     // U 盘模式的主库根；空 = 跟随程序所在盘
+        public bool DrawerOpen = true;      // 左栏（组件 / 安装选项）展开状态；首次进来看得到勾选项
         public List<string> ModDirs = new List<string>();   // 额外的 MOD 库文件夹（任意电脑上的任意目录）
         public List<string> Recent = new List<string>();
         public List<string> Mods = new List<string>();
@@ -127,6 +128,10 @@ namespace Installer
             MigrateLegacyConfig();
             LoadConfig();
             ApplyConfiguredLibraryRoot();
+            // 得等配置读完才知道游戏目录在哪。装机/解包中断留下的 .part 和 ~l4d2-* 暂存目录
+            // 以前只清 _装机记录 一处，addons 和库里的一直攒着，扫库时还会被当成怪文件。
+            SweepGameTemps(Cfg.GameRoot);
+            SweepGameTemps(ModRoot);
         }
 
         // v2.39 换了产品名，配置文件跟着改名。老文件还在就搬过去，用户原来的设置不丢；
@@ -277,6 +282,45 @@ namespace Installer
             catch { }
         }
 
+        /// <summary>
+        /// 清掉装机 / 解包中断留在游戏目录和 MOD 库里的临时件：
+        ///  · addons（或库根）下写了一半的 *.part —— 装机中途强退、拔盘就会留下
+        ///  · 解包用的 ~l4d2-xxxxxxxx 暂存目录
+        /// 只碰一小时以前的：可能还有别的实例正在写。
+        /// </summary>
+        internal static void SweepGameTemps(string root)
+        {
+            if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) return;
+            int files = 0, dirs = 0;
+            try
+            {
+                string addons = Path.Combine(Path.Combine(root, "left4dead2"), "addons");
+                string where = Directory.Exists(addons) ? addons : root;   // 库根就是一堆 vpk 的情况
+                DateTime cutoff = DateTime.UtcNow.AddHours(-1);
+                foreach (string f in Directory.GetFiles(where, "*.part"))
+                {
+                    try
+                    {
+                        if (File.GetLastWriteTimeUtc(f) > cutoff) continue;
+                        File.Delete(f); files++;
+                    }
+                    catch { }
+                }
+                foreach (string d in Directory.GetDirectories(where, "~l4d2-*"))
+                {
+                    try
+                    {
+                        if (Directory.GetLastWriteTimeUtc(d) > cutoff) continue;
+                        Directory.Delete(d, true); dirs++;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            if (files + dirs > 0)
+                Log("INFO", "清掉中断留下的临时件 " + files + " 个文件 / " + dirs + " 个暂存目录（" + root + "）");
+        }
+
         public static string Human(long b)
         {
             if (b >= 1073741824L) return (b / 1073741824.0).ToString("N2") + " GB";
@@ -325,6 +369,7 @@ namespace Installer
                     else if (k == "Mode") Cfg.Mode = v;
                     else if (k == "Appearance") Cfg.Appearance = v;
                     else if (k == "LibraryRoot") Cfg.LibraryRoot = v;
+                    else if (k == "Drawer") Cfg.DrawerOpen = (v != "0");
                     else if (k == "ModDir") Cfg.ModDirs.Add(v);
                     else if (k == "Recent") Cfg.Recent.Add(v);
                     else if (k.StartsWith("Mod:")) Cfg.Mods.Add(k.Substring(4));
@@ -359,6 +404,7 @@ namespace Installer
                 sb.AppendLine("Mode=" + (ModeLock ?? Cfg.Mode));
                 sb.AppendLine("Appearance=" + Cfg.Appearance);
                 sb.AppendLine("LibraryRoot=" + Cfg.LibraryRoot);
+                sb.AppendLine("Drawer=" + (Cfg.DrawerOpen ? "1" : "0"));
                 foreach (string d in Cfg.ModDirs) sb.AppendLine("ModDir=" + d);
                 foreach (string rp in Cfg.Recent) sb.AppendLine("Recent=" + rp);
                 sb.AppendLine("[mods]");
