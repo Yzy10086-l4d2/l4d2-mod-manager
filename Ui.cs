@@ -2053,6 +2053,20 @@ namespace Installer
         /// 画廊自检：建窗 + 样例数据 + 截图（卡片墙一张、详情页一张）。
         /// 样例模式不联网，缩略图用代码画的色块，能看出卡片比例与裁切对不对。
         /// </summary>
+        /// <summary>自检：工坊骨架是否铺满视口（不缺口）。返回失败条数。</summary>
+        internal int GallerySelf()
+        {
+            for (int i = 0; i < 200 && !Ready; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(20); }
+            using (GalleryForm f = new GalleryForm(this))
+            {
+                f.Show();
+                Application.DoEvents();
+                int bad = f.SkeletonSelfTest();
+                f.Close();
+                return bad;
+            }
+        }
+
         internal void GalleryShot()
         {
             using (GalleryForm f = new GalleryForm(this))
@@ -2078,7 +2092,7 @@ namespace Installer
                 Application.DoEvents();
                 Shot(f, "gallery-nopreview");
                 // 骨架屏：搜索中应该立刻有占位卡，而不是一面空墙
-                f.SkeletonForTest(12);
+                f.SkeletonForTest();
                 Application.DoEvents();
                 Application.DoEvents();
                 Shot(f, "gallery-skeleton");

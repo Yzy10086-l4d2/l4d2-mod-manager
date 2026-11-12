@@ -59,8 +59,8 @@ namespace Installer
 
         const int PageSize = 30;        // 工坊 browse 一页固定 30 个，用它判断到底
         const int AutoPages = 3;        // 自动连翻的页数上限，再多就等用户点（别一口气拉十页）
-        const int SkeletonSearch = 12;  // 搜索中的骨架卡数（约铺满一屏）
-        const int SkeletonAppend = 5;   // 翻页中的骨架卡数
+        // 骨架卡张数由卡片墙自己按视口算（ShowSkeletonFit / ShowSkeletonAppend）——
+        // 以前这里写死 12 和 5：1080 宽 5 列时最后一行只排得下 2 张，右下角固定空三格。
         private int pagesLoaded;        // 本次搜索已经加载了几页
         private bool atEnd;             // 已到底
         private readonly HashSet<string> seenIds = new HashSet<string>(StringComparer.Ordinal);
@@ -446,7 +446,7 @@ namespace Installer
             atEnd = false;
             pagesLoaded = 0;
             grid.SetItems(new List<WsItem>()); // 旧结果连图一起清（换搜索了）
-            grid.ShowSkeleton(SkeletonSearch); // 立刻铺骨架，别让人对着空墙猜
+            grid.ShowSkeletonFit();             // 立刻铺满一屏骨架，别让人对着空墙猜
             grid.FooterText = "";
             grid.FooterClickable = false;
             lblStatus.Text = "正在搜工坊…";
@@ -497,7 +497,7 @@ namespace Installer
             {
                 grid.FooterText = "正在加载…";
                 grid.FooterClickable = false;
-                grid.ShowSkeleton(SkeletonAppend);   // 骨架跟在已有卡片后面，等待看得见
+                grid.ShowSkeletonAppend();            // 骨架跟在已有卡片后面，等待看得见
             }
 
             Thread t = new Thread(delegate()
@@ -1095,11 +1095,38 @@ namespace Installer
         }
 
         /// <summary>自检用：铺骨架占位卡（验证「搜索中」的状态看得见）。</summary>
-        internal void SkeletonForTest(int n)
+        /// <summary>
+        /// 自检：三种窗口宽度下骨架都得铺满视口、不能只剩半行。
+        /// 骨架张数原来写死 12，1080 宽（5 列）时最后一行只排得下 2 张 —— 右边空三格，
+        /// 用户看到的就是"骨架少了几个模块"。这条断言专门拦这个。
+        /// </summary>
+        internal int SkeletonSelfTest()
+        {
+            ShowGallery();
+            int bad = 0;
+            int[] widths = new int[] { 900, 1080, 1400 };
+            foreach (int w in widths)
+            {
+                ClientSize = Dpi.Sz(w, 780);
+                Application.DoEvents();
+                grid.SetItems(new List<WsItem>());
+                grid.ShowSkeletonFit();
+                Application.DoEvents();
+                string why = grid.SkeletonCheck();
+                Console.WriteLine("GAL 骨架 " + w + " 宽：" + (why == null ? "OK" : "FAIL " + why)
+                    + "（" + grid.ColsForTest + " 列 / " + grid.SkeletonRowsForTest + " 行）");
+                if (why != null) bad++;
+            }
+            ClientSize = Dpi.Sz(1180, 780);
+            Application.DoEvents();
+            return bad;
+        }
+
+        internal void SkeletonForTest()
         {
             ShowGallery();                          // 详情页那几张截完还停在详情态，先切回墙
             grid.SetItems(new List<WsItem>());
-            grid.ShowSkeleton(n);
+            grid.ShowSkeletonFit();                 // 截图要走真实路径：按视口铺，缺口才会露出来
             grid.FooterText = "";                   // 真实流程里 DoSearch 会清掉底部提示，截图也照做
             grid.FooterClickable = false;
             lblStatus.Text = "正在搜工坊…（骨架态截图）";

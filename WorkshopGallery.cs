@@ -55,6 +55,7 @@ namespace Installer
 
         /// <summary>骨架屏：>0 时在真实卡片后面铺这么多张占位卡（搜索中 / 翻页中）。</summary>
         public int SkeletonCount;
+        private bool skeletonFit;       // true = 按视口铺满模式：窗口尺寸变了要重算，否则会空出一截
 
         /// <summary>
         /// 一面空墙时的说明（没搜到 / 搜索失败）。以前空态什么都不画，
@@ -108,6 +109,7 @@ namespace Installer
             items = list == null ? new List<WsItem>() : list;
             hover = -1;
             nearRow = -1;
+            skeletonFit = false;
             SkeletonCount = 0;
             EmptyText = "";
             EmptyHint = "";
@@ -132,6 +134,7 @@ namespace Installer
             if (more == null || more.Count == 0) return;
             items.AddRange(more);
             hover = -1;
+            skeletonFit = false;
             SkeletonCount = 0;
             Pulse.Forget(this);
             nearRow = -1;                       // 行数变了，允许再报一次「快到底」
@@ -141,10 +144,40 @@ namespace Installer
             Invalidate();
         }
 
-        /// <summary>铺骨架占位卡（搜索开始时调用）。</summary>
+        /// <summary>
+        /// 铺满当前视口的骨架（搜索开始时调用）。
+        ///
+        /// 以前调用方传的是写死的张数（12）：1080 宽是 5 列 3 行 = 15 格，
+        /// 最后一行只排得下 2 张，右下角空出三格 —— 看着就像"骨架少画了几块"。
+        /// 窗口拉宽成 6 列时缺口更大。按视口算，边角就不会再缺。
+        /// </summary>
+        public void ShowSkeletonFit()
+        {
+            skeletonFit = true;
+            Relayout();                 // 先按当前宽度算出 cols / cardH，才知道视口装得下几格
+            SkeletonCount = FitCount();
+            ApplySkeleton();
+        }
+
+        /// <summary>追加在已有卡片后面的骨架（翻页中）：整两行，滚下去正好接住，不留半行缺口。</summary>
+        public void ShowSkeletonAppend()
+        {
+            skeletonFit = false;
+            Relayout();
+            SkeletonCount = Math.Max(1, cols) * 2;
+            ApplySkeleton();
+        }
+
+        /// <summary>写死张数的铺法（自检用）；传 0 等于撤掉。</summary>
         public void ShowSkeleton(int n)
         {
+            skeletonFit = false;
             SkeletonCount = Math.Max(0, n);
+            ApplySkeleton();
+        }
+
+        private void ApplySkeleton()
+        {
             hover = -1;
             if (SkeletonCount > 0) Pulse.Watch(this); else Pulse.Forget(this);
             Relayout();
@@ -153,10 +186,49 @@ namespace Installer
             Invalidate();
         }
 
+        /// <summary>
+        /// 视口能装几格：可见行数（露出一点的那行也算）× 列数，补到整行。
+        /// 半行空着比少几格更显眼，所以宁可按整行铺。
+        /// </summary>
+        private int FitCount()
+        {
+            int availH = Parent != null ? Parent.ClientSize.Height : Height;
+            int step = Math.Max(1, cardH + gap);
+            int rows = Math.Max(1, (availH + step - 1) / step);
+            int c = Math.Max(1, cols);
+            int need = rows * c - items.Count;
+            if (need <= 0) return 0;
+            if (need % c != 0) need += c - need % c;
+            return need;
+        }
+
+        /// <summary>
+        /// 自检：铺满模式下骨架是否真的盖住了视口、且不留缺口。正常返回 null，有问题返回原因。
+        /// 这就是拦住"右下角老空三格"的那个断言。
+        /// </summary>
+        internal string SkeletonCheck()
+        {
+            int availH = Parent != null ? Parent.ClientSize.Height : Height;
+            int step = Math.Max(1, cardH + gap);
+            int wantRows = Math.Max(1, (availH + step - 1) / step);
+            int c = Math.Max(1, cols);
+            if (SkeletonCount <= 0) return "骨架张数是 0";
+            if (SkeletonCount % c != 0)
+                return "最后一行缺口：" + SkeletonCount + " 张不是 " + c + " 列的整行";
+            int gotRows = (items.Count + SkeletonCount + c - 1) / c;
+            if (gotRows < wantRows)
+                return "骨架只铺了 " + gotRows + " 行，视口要 " + wantRows + " 行（" + c + " 列）";
+            return null;
+        }
+
+        internal int ColsForTest { get { return cols; } }
+        internal int SkeletonRowsForTest { get { return (items.Count + SkeletonCount + Math.Max(1, cols) - 1) / Math.Max(1, cols); } }
+
         /// <summary>撤掉骨架（结果到了调用）。</summary>
         public void HideSkeleton()
         {
             if (SkeletonCount == 0) return;
+            skeletonFit = false;
             SkeletonCount = 0;
             Pulse.Forget(this);
             Relayout();
@@ -176,6 +248,8 @@ namespace Installer
             imgH = cardW * 9 / 16;
             cardH = imgH + Dpi.S(8) + Dpi.S(40) + Dpi.S(18);
             if (cardW != cacheW) ClearCardCache();      // 卡宽变了，旧位图全作废
+            // 加载中去拉窗口：列数变了骨架还停在旧张数，右下角就会空一格。这里跟着重算。
+            if (skeletonFit && SkeletonCount > 0) SkeletonCount = FitCount();
             int rows = (TotalCount + cols - 1) / cols;
             int footH = FooterText.Length > 0 ? Dpi.S(64) : 0;
             int h = Math.Max(Dpi.S(60), rows * (cardH + gap) + gap + footH);
@@ -322,7 +396,7 @@ namespace Installer
             {
                 Rectangle r = CardRect(i);
                 if (r.Bottom < top - Dpi.S(40) || r.Top > top + viewH + Dpi.S(40)) continue;
-                if (i >= items.Count) DrawSkeletonCard(g, r);
+                if (i >= items.Count) DrawSkeletonCard(g, r, i);
                 else DrawCard(g, i, r);
             }
 
@@ -385,8 +459,13 @@ namespace Installer
             catch { }
         }
 
-        /// <summary>骨架卡：灰底封面块 + 三条占位灰条，再加一道扫光。没有内容、点不了，只负责告诉用户「在加载」。</summary>
-        private void DrawSkeletonCard(Graphics g, Rectangle r)
+        /// <summary>
+        /// 骨架卡：灰底封面块 + 标题两条 + 元信息一条，再加一道扫光。没有内容、点不了，只负责告诉用户「在加载」。
+        ///
+        /// 条宽按卡片序号错开（不是随机）—— 十几张一模一样的灰条铺成一面墙，看着像一张图复制了很多遍，
+        /// 反而不像"内容正在填进来"。序号固定，所以不会每帧抖动。
+        /// </summary>
+        private void DrawSkeletonCard(Graphics g, Rectangle r, int idx)
         {
             using (GraphicsPath p = Theme.Round(r, Dpi.S(10)))
             {
@@ -395,13 +474,21 @@ namespace Installer
             }
             Rectangle ir = new Rectangle(r.X + 1, r.Y + 1, r.Width - 2, imgH);
             using (SolidBrush b = new SolidBrush(Theme.SkeletonFill)) g.FillRectangle(b, ir);
+
+            // 三条灰条对应真实卡片的「标题第一行 / 标题第二行 / 订阅·大小」三块
+            int tx = r.X + Dpi.S(10);
+            int w = r.Width - Dpi.S(20);
+            int[] pct = new int[]
+            {
+                64 + (idx * 13) % 24,        // 标题一：64% ~ 87%
+                38 + (idx * 17) % 26,        // 标题二：38% ~ 63%
+                22 + (idx * 11) % 16         // 元信息：22% ~ 37%
+            };
             using (SolidBrush b = new SolidBrush(Theme.SkeletonBar))
             {
-                int tx = r.X + Dpi.S(10);
-                int w = r.Width - Dpi.S(20);
-                g.FillRectangle(b, tx, ir.Bottom + Dpi.S(10), (int)(w * 0.72), Dpi.S(11));
-                g.FillRectangle(b, tx, ir.Bottom + Dpi.S(27), (int)(w * 0.46), Dpi.S(11));
-                g.FillRectangle(b, tx, ir.Bottom + Dpi.S(46), (int)(w * 0.3), Dpi.S(9));
+                g.FillRectangle(b, tx, ir.Bottom + Dpi.S(10), Math.Max(Dpi.S(24), w * pct[0] / 100), Dpi.S(11));
+                g.FillRectangle(b, tx, ir.Bottom + Dpi.S(27), Math.Max(Dpi.S(24), w * pct[1] / 100), Dpi.S(11));
+                g.FillRectangle(b, tx, ir.Bottom + Dpi.S(46), Math.Max(Dpi.S(20), w * pct[2] / 100), Dpi.S(9));
             }
             // 扫光：静态骨架看起来像"卡住了"，一道走动的光才像"在加载"
             Region old = g.Clip;

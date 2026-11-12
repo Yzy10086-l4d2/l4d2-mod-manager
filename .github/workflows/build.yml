@@ -68,7 +68,7 @@ jobs:
       - name: 离线自检（硬门禁）
         shell: powershell
         run: |
-          $tests = @('--workshopself', '--recogself', '--dupself', '--tweakself', '--launchself', '--treeself', '--layoutself', '--safeself')
+          $tests = @('--workshopself', '--recogself', '--dupself', '--tweakself', '--launchself', '--treeself', '--gallerself', '--layoutself', '--safeself')
           $bad = @()
           foreach ($t in $tests) {
             Write-Host "=== $t ==="

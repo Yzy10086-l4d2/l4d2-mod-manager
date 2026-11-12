@@ -68,6 +68,7 @@ namespace Installer
             bool loadShot = false;
             bool downsShot = false;
             bool mainShot = false;
+            bool gallerySelf = false;
             bool mapSelf = false;
             bool scanRace = false;
             string uiSelect = null;
@@ -159,6 +160,7 @@ namespace Installer
                 // 诊断截图：打开工坊窗口、填假数据、存 workshop.png，不联网
                 else if (string.Equals(a, "--workshopui", StringComparison.OrdinalIgnoreCase)) { uiWorkshop = true; uiTest = true; }
                 else if (string.Equals(a, "--galleryui", StringComparison.OrdinalIgnoreCase)) { uiGallery = true; uiTest = true; }
+                else if (string.Equals(a, "--gallerself", StringComparison.OrdinalIgnoreCase)) { gallerySelf = true; uiTest = true; }
                 else if (a.StartsWith("--deskserve=", StringComparison.OrdinalIgnoreCase)) { int.TryParse(a.Substring(12), out deskServe); uiTest = true; }
                 else if (string.Equals(a, "--deskself", StringComparison.OrdinalIgnoreCase)) { deskSelf = true; uiTest = true; }
                 else if (string.Equals(a, "--desklaunch", StringComparison.OrdinalIgnoreCase)) { deskLaunch = true; uiTest = true; }
@@ -558,6 +560,7 @@ namespace Installer
                         return bad == 0 ? 0 : 1;
                     }
                     if (uiWorkshop) { f.WorkshopShot(); System.Windows.Forms.Application.DoEvents(); return 0; }
+                    if (gallerySelf) { int badg = f.GallerySelf(); System.Windows.Forms.Application.DoEvents(); return badg == 0 ? 0 : 1; }
                     if (uiGallery) { f.GalleryShot(); System.Windows.Forms.Application.DoEvents(); return 0; }
                     if (uiFilter != null) { f.UiTestFilter(uiFilter); System.Windows.Forms.Application.DoEvents(); }
                     if (uiDeep != null) { f.UiTestFilter(uiDeep); System.Windows.Forms.Application.DoEvents(); f.UiTestDeep(); System.Windows.Forms.Application.DoEvents(); }
