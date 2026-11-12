@@ -141,11 +141,15 @@ jobs:
           如果整包下载被网络截断，可用 L4D2Setup.part* 分片按序号拼接：cat L4D2Setup.part* > L4D2Setup.exe"
 
           # 幂等：同一个 tag 重跑时不再「Release 已存在就失败」，也不再需要强推 tag 绕过。
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          #
+          # 必须显式带 --repo：这个作业只下载产物、没有 checkout，
+          # 目录里没有 .git，gh 猜不出仓库 → 报 "fatal: not a git repository"。
+          REPO="${{ github.repository }}"
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             echo "[i] Release $TAG 已存在，更新说明与资产"
-            gh release edit "$TAG" --notes "$notes"
+            gh release edit "$TAG" --repo "$REPO" --notes "$notes"
           else
             echo "[i] 创建 Release $TAG"
-            gh release create "$TAG" --title "$TAG" --notes "$notes"
+            gh release create "$TAG" --repo "$REPO" --title "$TAG" --notes "$notes"
           fi
-          gh release upload "$TAG" L4D2Setup.exe L4D2Setup.exe.sha256 L4D2Setup.part* --clobber
+          gh release upload "$TAG" --repo "$REPO" L4D2Setup.exe L4D2Setup.exe.sha256 L4D2Setup.part* --clobber
