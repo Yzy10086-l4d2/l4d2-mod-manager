@@ -100,6 +100,23 @@ namespace Installer
         internal int OverviewSelfTest()
         {
             int bad = 0;
+
+            // OVSIZE=1180x780：按指定客户区尺寸跑一遍。
+            // 排版问题是「某个尺寸下才出现」的，本机窗口大小和 CI 常常不一样，
+            // 没有这个入口就只能等 CI 报错才知道（2026-11-12 人物/幸存者被切掉那次就是）。
+            string ovSize = Environment.GetEnvironmentVariable("OVSIZE");
+            if (!string.IsNullOrEmpty(ovSize))
+            {
+                string[] wh = ovSize.Split('x', 'X');
+                int ow, oh;
+                if (wh.Length == 2 && int.TryParse(wh[0], out ow) && int.TryParse(wh[1], out oh) && ow > 400 && oh > 300)
+                {
+                    ClientSize = new Size(ow, oh);
+                    Pump(120);
+                    Core.Log("INFO", "OVSELF 指定尺寸: " + ow + "x" + oh);
+                }
+            }
+
             EnsureTree();
             treeView.Rebuild();
             ShowOverview();

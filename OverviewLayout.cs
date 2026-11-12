@@ -98,16 +98,29 @@ namespace Installer
         }
 
         /// <summary>明细最多能滚到哪儿（负值当 0）。</summary>
+        /// <summary>
+        /// 明细列真正能用来摆内容的高度：顶上的小标题（CapH）也在这一列里，必须扣掉。
+        /// 以前没扣：内容比 (可视高 - CapH) 高一点、又比可视高矮的时候，算出来的滚动量是 0，
+        /// 最后一行既看得见被切、又滚不下去（CI 在 1180×780 下抓到的就是这个）。
+        /// </summary>
+        public static float DetailViewH
+        {
+            get { return Math.Max(60f, DetailBottom - DetailY - CapH); }
+        }
+
+        public static float ListViewH
+        {
+            get { return Math.Max(60f, ListBottom - ListY - CapH); }
+        }
+
         public static float MaxScrollDetail(Size view)
         {
-            float viewH = Math.Max(60f, DetailBottom - DetailY);
-            return Math.Max(0f, DetailContentH - viewH);
+            return Math.Max(0f, DetailContentH - DetailViewH);
         }
 
         public static float MaxScrollList(Size view)
         {
-            float viewH = Math.Max(60f, ListBottom - ListY);
-            return Math.Max(0f, ListContentH - viewH);
+            return Math.Max(0f, ListContentH - ListViewH);
         }
     }
 }

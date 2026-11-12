@@ -72,10 +72,12 @@ jobs:
           $bad = @()
           foreach ($t in $tests) {
             Write-Host "=== $t ==="
-            & .\L4D2Setup.exe $t
-            $code = $LASTEXITCODE
-            Write-Host "$t exit=$code"
-            if ($code -ne 0) { $bad += "$t(exit $code)" }
+            # 必须 Start-Process -Wait -PassThru：这是 GUI 子系统程序，直接用 & 调用时
+            # shell 不会等它结束，$LASTEXITCODE 还是上一条命令的（第一条甚至为空），
+            # 结果每条都被记成 exit=(空) → 门禁永远报失败，真正的失败反而看不见。
+            $p = Start-Process -FilePath '.\L4D2Setup.exe' -ArgumentList $t -NoNewWindow -Wait -PassThru
+            Write-Host "$t exit=$($p.ExitCode)"
+            if ($p.ExitCode -ne 0) { $bad += "$t(exit $($p.ExitCode))" }
           }
           if ($bad.Count -gt 0) {
             Write-Host "::error::离线自检失败: $($bad -join ', ')"

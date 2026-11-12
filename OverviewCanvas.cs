@@ -480,7 +480,7 @@ namespace Installer
         {
             float max = OvLayout.MaxScrollDetail(ClientSize);
             if (max <= 1f) return;
-            float viewH = Math.Max(20f, OvLayout.DetailBottom - OvLayout.DetailY);
+            float viewH = OvLayout.DetailViewH;
             float h = Math.Max(24f, viewH * viewH / (viewH + max));
             float t = scrollDetail / max;
             float y = OvLayout.DetailY + (viewH - h) * t;
@@ -497,7 +497,7 @@ namespace Installer
         {
             float max = OvLayout.MaxScrollList(ClientSize);
             if (max <= 1f) return;
-            float viewH = Math.Max(20f, OvLayout.ListBottom - OvLayout.ListY);
+            float viewH = OvLayout.ListViewH;
             float h = Math.Max(24f, viewH * viewH / (viewH + max));
             float t = scrollList / max;
             float y = OvLayout.ListY + (viewH - h) * t;
@@ -834,7 +834,7 @@ namespace Installer
             else if (e.KeyCode == Keys.Escape) { mf.HideOverview(); return; }   // Esc 回方案树
             else if (e.KeyCode == Keys.PageUp || e.KeyCode == Keys.PageDown)
             {
-                scrollDetail += (e.KeyCode == Keys.PageUp ? -1 : 1) * (OvLayout.DetailBottom - OvLayout.DetailY) * 0.8f;
+                scrollDetail += (e.KeyCode == Keys.PageUp ? -1 : 1) * OvLayout.DetailViewH * 0.8f;
                 float mx = OvLayout.MaxScrollDetail(ClientSize);
                 if (scrollDetail < 0f) scrollDetail = 0f;
                 if (scrollDetail > mx) scrollDetail = mx;
@@ -934,8 +934,33 @@ namespace Installer
             OvCat c = OvLayout.CatAt(model, selCat);
             if (c == null) return "找不到大类「" + catTitle + "」";
 
-            float viewH = OvLayout.DetailBottom - OvLayout.DetailY;
+            float viewH = OvLayout.DetailViewH;
             float maxScroll = OvLayout.MaxScrollDetail(ClientSize);
+
+            // 内容高度必须等于最后一行的底边（都相对内容起点算）。
+            // 算小了就意味着「其实还有内容、但滚动量已经到底了」，最后一行永远滚不出来 ——
+            // 之前就是内容比 (可视高 - 小标题) 高一点时，滚动量算成 0，最后一行被切掉。
+            float lastBottom = 0f;
+            foreach (OvSlot s0 in c.Slots)
+                if (s0.Y + s0.H > lastBottom) lastBottom = s0.Y + s0.H;
+            float contentBottom = OvLayout.DetailY + OvLayout.CapH + OvLayout.DetailContentH;
+            if (c.Slots.Count > 0 && Math.Abs(lastBottom - contentBottom) > 1.5f)
+                return catTitle + " 内容高度算错（最后一行底 " + lastBottom.ToString("0")
+                     + " / 记录的内容底 " + contentBottom.ToString("0") + "），会滚不到底";
+
+            // 滚到底：最后一行必须完整露出来。这条就是拦「滚动量算成 0、最后一行永远切着」的
+            // —— 2026-11-12 CI 在 1180×780 上就是 人物/幸存者 被切掉，肉眼极难发现。
+            if (c.Slots.Count > 0)
+            {
+                OvSlot tail = c.Slots[c.Slots.Count - 1];
+                OvLayout.Arrange(model, selCat, ClientSize, scrollList, maxScroll);
+                bool shown = tail.Y + tail.H <= OvLayout.DetailBottom + 1f;
+                OvLayout.Arrange(model, selCat, ClientSize, scrollList, scrollDetail);   // 还原现场
+                if (!shown)
+                    return catTitle + " / " + tail.Name + " 滚到底还有 " + ((tail.Y + tail.H) - OvLayout.DetailBottom).ToString("0")
+                         + "px 露不出来（滚动量算成 " + maxScroll.ToString("0") + "）";
+            }
+
             foreach (OvSlot s in c.Slots)
             {
                 if (s.H < 20f) return catTitle + " / " + s.Name + " 行高压到 " + s.H.ToString("0.0") + "，字放不下";
