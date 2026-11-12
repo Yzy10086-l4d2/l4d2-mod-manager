@@ -130,7 +130,7 @@ namespace Installer
                 else if (string.Equals(a, "--uideps", StringComparison.OrdinalIgnoreCase)) uiDeps = true;
                 else if (string.Equals(a, "--uitree", StringComparison.OrdinalIgnoreCase)) uiTree = true;
                 else if (string.Equals(a, "--treeshot", StringComparison.OrdinalIgnoreCase)) { mapShot = true; uiTest = true; }
-                // 诊断截图：把「读取中」的骨架占位截一张，确认扫光和排版在真机上好看
+                // 诊断截图：把「读取中」的启动占位截一张，确认步骤文案与进度条在真机上好看
                 else if (string.Equals(a, "--loadshot", StringComparison.OrdinalIgnoreCase)) { loadShot = true; uiTest = true; }
                 else if (string.Equals(a, "--downsshot", StringComparison.OrdinalIgnoreCase)) { downsShot = true; uiTest = true; }
                 else if (string.Equals(a, "--mainshot", StringComparison.OrdinalIgnoreCase)) { mainShot = true; uiTest = true; }

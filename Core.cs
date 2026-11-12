@@ -88,6 +88,13 @@ namespace Installer
         public static string LogDir;
         public static string LogFile;
         public static Config Cfg = new Config();
+
+        /// <summary>
+        /// 当前正在做的事（"正在扫描 MOD 库…"这种）。
+        /// 启动占位靠它显示真实步骤 —— 骨架卡那种"猜内容形状"的占位在启动阶段是假的：
+        /// 那时候连最后会显示成方案树还是卡片都不知道。
+        /// </summary>
+        public static volatile string Phase = "";
         public static List<ModItem> ModList = new List<ModItem>();
         public static Dictionary<string, ModItem> ByRel = new Dictionary<string, ModItem>(StringComparer.OrdinalIgnoreCase);
         public static Dictionary<string, int> DirCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -510,6 +517,7 @@ namespace Installer
 
         public static List<string> FindGames()
         {
+            Phase = "正在找游戏目录…";
             List<string> hits = new List<string>();
             HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             Action<string> add = delegate(string p)
@@ -602,6 +610,12 @@ namespace Installer
 
         public static void ScanMods()
         {
+            Phase = "正在扫描 MOD 库…";
+            try { ScanModsCore(); } finally { Phase = ""; }
+        }
+
+        private static void ScanModsCore()
+        {
             // 同一时刻只允许一次扫描在跑。
             // 原来没有这道门：启动扫描还在后台跑，用户在界面上点删除 / 清理同名 / 改名，
             // UI 线程会再调一次，两条线程同时 Clear + 重填 ModList、ByRel、Groups ——
@@ -693,6 +707,7 @@ namespace Installer
         // ---------------- 包检查 ----------------
         public static List<string> CheckPackages(out bool allOk)
         {
+            Phase = "正在检查组件包…";
             List<string> lines = new List<string>();
             allOk = true;
             string l4nZip = FirstFile(PkgDir, "L4N_v*.zip");

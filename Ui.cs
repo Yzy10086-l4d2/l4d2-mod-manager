@@ -35,7 +35,7 @@ namespace Installer
         private TextBox txtSearch;
         private Button btnSaveProfile, btnApplyProfile;
         private Panel viewHost;                  // 右栏：方案树就嵌在这里
-        private LoadingPane lblLoading;          // 读取/重扫期间的骨架占位，平时藏着
+        private LoadingPane lblLoading;          // 读取/重扫期间的加载占位（启动报步骤 / 重扫报细条），平时藏着
         private CatTree treeView;                // 方案树：按「能替换的东西」看，一个位置只留一个 MOD
         private Label lblSel, lblStatus, lblConflict;
         // 底栏总高（设计值）：按钮行 36 + 间距 12 + 状态栏 20 + 触底 8。
@@ -257,7 +257,7 @@ namespace Installer
                         scanning = false;
                         initializing = false;
                         ShowPackStatus(packs, packOk);
-                        HideLoading();                     // 数据到了，撤骨架
+                        HideLoading();                     // 数据到了，撤占位
                         // 扫库期间用户选过目录：现在安全了，接着切
                         if (pendingRoot != null) { string pr = pendingRoot; pendingRoot = null; SwitchGameRoot(pr, "补切（扫库完成）"); }
                         ShowTree();                        // 启动第一屏是方案树；桌面要点按钮才开

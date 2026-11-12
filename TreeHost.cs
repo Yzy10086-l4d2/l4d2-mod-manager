@@ -418,7 +418,7 @@ namespace Installer
         }
 
         /// <summary>
-        /// 显示加载占位。full=true 铺满右栏（内容还空着，给骨架）；
+        /// 显示加载占位。full=true 铺满右栏（内容还空着：报步骤 + 不确定进度）；
         /// full=false 只在顶部给一条走动的进度带（已经有内容，别遮住）。
         /// </summary>
         internal void ShowLoading(string title, string hint, bool full)

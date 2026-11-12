@@ -84,19 +84,20 @@
     transition: opacity .5s;
   }
   #loading.gone { opacity: 0; pointer-events: none; }
-  /* 骨架 + 扫光：等数据的时候不许是一片纯黑 */
-  #loading .sk { width: min(560px, 72vw); display: flex; flex-direction: column; gap: 10px; }
-  #loading .sk i {
-    display: block; height: 13px; border-radius: 7px; background: rgba(237,230,216,.07);
-    position: relative; overflow: hidden;
+  /* 启动态：品牌 + 不确定进度条。
+     原来这里是四条骨架 + 扫光 —— 那是"内容形状已确定、只等填数据"的写法；
+     桌面打开时连有几张卡都还不知道，摆四条灰条只会让人以为在加载某个榜单。 */
+  #loading .mark { font-size: 11px; letter-spacing: .34em; color: rgba(237,230,216,.5); }
+  #loading .bar {
+    width: min(260px, 52vw); height: 2px; border-radius: 2px;
+    background: rgba(237,230,216,.1); position: relative; overflow: hidden;
   }
-  #loading .sk i::after {
-    content: ''; position: absolute; inset: 0; transform: translateX(-100%);
-    background: linear-gradient(90deg, transparent, rgba(237,230,216,.16), transparent);
-    animation: skSweep 1.4s linear infinite;
+  #loading .bar i {
+    position: absolute; top: 0; left: -40%; width: 38%; height: 100%;
+    border-radius: 2px; background: #E08A4A; animation: barRun 1.3s ease-in-out infinite;
   }
-  @keyframes skSweep { to { transform: translateX(100%); } }
-  @media (prefers-reduced-motion: reduce) { #loading .sk i::after { animation: none; } }
+  @keyframes barRun { 0% { left: -40%; } 100% { left: 100%; } }
+  @media (prefers-reduced-motion: reduce) { #loading .bar i { animation: none; left: 31%; } }
   #loading .txt { opacity: .9; }
 </style>
 </head>
@@ -131,12 +132,8 @@
 
 <div id="toast"></div>
 <div id="loading">
-  <div class="sk">
-    <i style="width:44%"></i>
-    <i style="width:100%"></i>
-    <i style="width:82%"></i>
-    <i style="width:63%"></i>
-  </div>
+  <div class="mark">L4D2 · 套装桌面</div>
+  <div class="bar"><i></i></div>
   <div class="txt" id="loadingText">正在读取库…</div>
 </div>
 

@@ -224,79 +224,83 @@ namespace Installer
             using (SolidBrush b = new SolidBrush(Theme.Accent)) g.FillRectangle(b, x, track.Y, seg, track.Height);
         }
 
-        /// <summary>整块占位：居中的标题 + 下面的骨架卡。</summary>
+        /// <summary>
+        /// 启动占位：品牌 + 真实步骤 + 不确定进度条。
+        ///
+        /// 这里以前铺的是骨架卡 + 扫光 —— 那套是给"内容形状已经确定、只等填数据"的场景（比如工坊卡片墙）。
+        /// 启动阶段连最后显示成方案树还是卡片墙都不知道，铺一墙卡片形状是假信息：
+        /// 用户会以为马上要出一堆卡。所以改成"说清正在做什么"，进度不可测就用不确定进度条。
+        /// </summary>
         private void PaintFull(Graphics g, string clock)
         {
             Rectangle r = ClientRectangle;
             int pad = Dpi.S(24);
+            int w = Math.Max(0, r.Width - pad * 2);
 
-            // 视觉重心略高于正中：标题压在上三分之一处，下面才有地方铺骨架
-            int headTop = Math.Max(pad, r.Height / 7);
-            int titleH = Dpi.S(30);
-            Rectangle head = new Rectangle(pad, headTop, Math.Max(0, r.Width - pad * 2), titleH);
-            DrawText(g, title, Theme.H2, head, Theme.Ink2, StringAlignment.Center, StringAlignment.Near);
+            string step = (Core.Phase ?? "").Trim();
+            if (step.Length == 0) step = title;      // 还没进到具体阶段：退回调用方给的标题
 
-            string sub = hint + clock;
-            if (sub.Length > 0)
-                DrawText(g, sub, Theme.UISmall,
-                    new Rectangle(head.X, head.Bottom + Dpi.S(10), head.Width, Dpi.S(18)),
-                    Theme.Ink3, StringAlignment.Center, StringAlignment.Near);
+            int hBrand = Dpi.S(24);
+            int hStep = Dpi.S(22);
+            int hBar = Dpi.S(3);
+            int hHint = hint.Length > 0 || clock.Length > 0 ? Dpi.S(18) : 0;
+            int gapBrand = Dpi.S(12), gapBar = Dpi.S(18), gapHint = Dpi.S(16);
 
-            // 骨架：最多 5 行 × 3 列，宽度/条宽按 seed 错开，像"正在往里填内容"
-            int top = head.Bottom + Dpi.S(10) + Dpi.S(18) + Dpi.S(30);
-            int bottom = r.Height - pad;
-            int cols = Math.Max(1, Math.Min(3, (r.Width - pad * 2) / Dpi.S(230)));
-            int gap = Dpi.S(14);
-            int colW = (r.Width - pad * 2 - gap * (cols - 1)) / cols;
-            int cardH = Dpi.S(64);
-            int rows = Math.Min(5, Math.Max(1, (bottom - top + gap) / (cardH + gap)));
-            // 行数用不满剩下的高度时，把整块网格往下挪到剩余空间的中间，别全都挤在上半屏
-            int usedH = rows * cardH + (rows - 1) * gap;
-            if (bottom - top > usedH) top += (bottom - top - usedH) / 2;
+            int blockH = hBrand + gapBrand + hStep + gapBar + hBar + (hHint > 0 ? gapHint + hHint : 0);
+            int top = Math.Max(pad, (r.Height - blockH) / 2 - Dpi.S(36));   // 略高于正中：视觉重心更稳
 
-            for (int row = 0; row < rows; row++)
+            // 信息优先级：正在做什么 > 提示 > 应用名。
+            // 品牌是标识不是标题，用小字；步骤才是这段时间里唯一在变的东西，放大。
+            string ver = VersionLabel();
+            string brandText = ver.Length > 0 ? "L4D2 MOD 管理工具  ·  " + ver : "L4D2 MOD 管理工具";
+            DrawText(g, brandText, Theme.UISmall, new Rectangle(pad, top, w, Dpi.S(16)), Theme.Ink3,
+                StringAlignment.Center, StringAlignment.Near);
+
+            int y = top + hBrand + gapBrand;
+            DrawText(g, step, Theme.H2, new Rectangle(pad, y - Dpi.S(2), w, hStep + Dpi.S(4)), Theme.Ink,
+                StringAlignment.Center, StringAlignment.Near);
+
+            // 不确定进度：一段亮条在轨道里来回走。进度本来就测不出来，就不假装有百分比。
+            y += hStep + gapBar;
+            int barW = Math.Min(Dpi.S(340), Math.Max(Dpi.S(180), w / 3));
+            Rectangle track = new Rectangle((r.Width - barW) / 2, y, barW, hBar);
+            using (GraphicsPath p = Theme.Round(track, Dpi.S(2)))
+            using (SolidBrush b = new SolidBrush(Theme.Chip))
+                g.FillPath(b, p);
+
+            float trip = Pulse.Animating ? Trip() : 0.5f;
+            int segW = Math.Max(Dpi.S(48), barW / 3);
+            int sx = track.X + (int)((barW - segW) * trip);
+            using (GraphicsPath p = Theme.Round(new Rectangle(sx, track.Y, segW, track.Height), Dpi.S(2)))
+            using (SolidBrush b = new SolidBrush(Theme.Accent))
+                g.FillPath(b, p);
+
+            if (hHint > 0)
             {
-                for (int col = 0; col < cols; col++)
-                {
-                    int x = pad + col * (colW + gap);
-                    int y = top + row * (cardH + gap);
-                    if (y + cardH > bottom) break;
-                    PaintSkeletonCard(g, new Rectangle(x, y, colW, cardH), row + col);
-                }
+                string sub = hint + clock;
+                DrawText(g, sub, Theme.UISmall,
+                    new Rectangle(pad, y + hBar + gapHint, w, hHint), Theme.Ink3,
+                    StringAlignment.Center, StringAlignment.Near);
             }
         }
 
-        private void PaintSkeletonCard(Graphics g, Rectangle card, int seed)
+        /// <summary>来回往返：0→1→0，避免光条"跳回左边"。</summary>
+        private static float Trip()
         {
-            using (GraphicsPath p = Theme.Round(card, Dpi.S(10)))
-            {
-                using (SolidBrush b = new SolidBrush(Theme.SkeletonFill)) g.FillPath(b, p);
-                using (Pen pen = new Pen(Theme.CardEdge)) g.DrawPath(pen, p);
-            }
+            float t = Pulse.Phase;
+            return t < 0.5f ? t * 2f : (1f - t) * 2f;
+        }
 
-            // 三条占位灰条：宽度按 seed 错开，避免一眼看出是同一块复制出来的
-            int tx = card.X + Dpi.S(14);
-            int w = card.Width - Dpi.S(28);
-            int[] parts = new int[] { 58, 40, 26 };
-            using (SolidBrush b = new SolidBrush(Theme.SkeletonBar))
+        /// <summary>标题旁边的小版本号，和主窗口标题同源，不另写一份。</summary>
+        private static string VersionLabel()
+        {
+            try
             {
-                int y = card.Y + Dpi.S(14);
-                for (int i = 0; i < parts.Length; i++)
-                {
-                    int bw = Math.Max(Dpi.S(24), w * (parts[i] + (seed * 7 + i * 5) % 16) / 100);
-                    g.FillRectangle(b, tx, y, Math.Min(bw, w), Dpi.S(10));
-                    y += Dpi.S(15);
-                }
+                Version v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+                return v.Build > 0 ? "v" + v.Major + "." + v.Minor + "." + v.Build
+                                   : "v" + v.Major + "." + v.Minor;
             }
-
-            // 扫光只打在卡里，圆角外不涂
-            Region old = g.Clip;
-            using (GraphicsPath p = Theme.Round(card, Dpi.S(10)))
-            {
-                g.SetClip(p);
-                Pulse.PaintSheen(g, card);
-            }
-            g.Clip = old;
+            catch { return ""; }
         }
     }
 }
