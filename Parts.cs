@@ -75,17 +75,17 @@ namespace Installer
                 lb.Items.Add(r, on);
             }
 
-            FlatButton all = new FlatButton(); all.Text = "全选"; all.SetBounds(12, 410, 76, Theme.H);
+            FlatButton all = new FlatButton(); all.Text = Lang.S("全选"); all.SetBounds(12, 410, 76, Theme.H);
             all.Click += delegate { SetAll(true); }; Controls.Add(all);
-            FlatButton def = new FlatButton(); def.Text = "只留默认"; def.SetBounds(96, 410, 88, Theme.H);
+            FlatButton def = new FlatButton(); def.Text = Lang.S("只留默认"); def.SetBounds(96, 410, 88, Theme.H);
             def.Click += delegate { SetPreset(); }; Controls.Add(def);
-            FlatButton none = new FlatButton(); none.Text = "都不选"; none.SetBounds(192, 410, 76, Theme.H);
+            FlatButton none = new FlatButton(); none.Text = Lang.S("都不选"); none.SetBounds(192, 410, 76, Theme.H);
             none.Click += delegate { SetAll(false); }; Controls.Add(none);
 
-            FlatButton ok = new FlatButton(); ok.Text = "确定"; ok.Primary = true;
+            FlatButton ok = new FlatButton(); ok.Text = Lang.S("确定"); ok.Primary = true;
             ok.SetBounds(432, 410, 80, Theme.H);
             ok.Click += delegate { Accept(); }; Controls.Add(ok);
-            FlatButton no = new FlatButton(); no.Text = "取消"; no.SetBounds(520, 410, 88, Theme.H);
+            FlatButton no = new FlatButton(); no.Text = Lang.S("取消"); no.SetBounds(520, 410, 88, Theme.H);
             no.DialogResult = DialogResult.Cancel; Controls.Add(no);
             AcceptButton = ok;
             CancelButton = no;

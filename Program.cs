@@ -69,6 +69,7 @@ namespace Installer
             bool downsShot = false;
             bool mainShot = false;
             bool gallerySelf = false;
+            bool langSelf = false;
             bool mapSelf = false;
             bool scanRace = false;
             string uiSelect = null;
@@ -161,6 +162,7 @@ namespace Installer
                 else if (string.Equals(a, "--workshopui", StringComparison.OrdinalIgnoreCase)) { uiWorkshop = true; uiTest = true; }
                 else if (string.Equals(a, "--galleryui", StringComparison.OrdinalIgnoreCase)) { uiGallery = true; uiTest = true; }
                 else if (string.Equals(a, "--gallerself", StringComparison.OrdinalIgnoreCase)) { gallerySelf = true; uiTest = true; }
+                else if (string.Equals(a, "--langself", StringComparison.OrdinalIgnoreCase)) { langSelf = true; uiTest = true; }
                 else if (a.StartsWith("--deskserve=", StringComparison.OrdinalIgnoreCase)) { int.TryParse(a.Substring(12), out deskServe); uiTest = true; }
                 else if (string.Equals(a, "--deskself", StringComparison.OrdinalIgnoreCase)) { deskSelf = true; uiTest = true; }
                 else if (string.Equals(a, "--desklaunch", StringComparison.OrdinalIgnoreCase)) { deskLaunch = true; uiTest = true; }
@@ -433,6 +435,8 @@ namespace Installer
             {
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
+                // --langself 要在建窗口之前就把语言切成英文，否则控件文案还是按中文建出来的
+                if (langSelf) Lang.Cur = Lang.EN;
                 using (MainForm f = new MainForm(gameRoot))
                 {
                     // --uitsize=0x0 表示不强制尺寸，按窗口自己的初始大小截（用来核对默认值）
@@ -560,6 +564,7 @@ namespace Installer
                         return bad == 0 ? 0 : 1;
                     }
                     if (uiWorkshop) { f.WorkshopShot(); System.Windows.Forms.Application.DoEvents(); return 0; }
+                    if (langSelf) { f.LangSelf(); System.Windows.Forms.Application.DoEvents(); return 0; }
                     if (gallerySelf) { int badg = f.GallerySelf(); System.Windows.Forms.Application.DoEvents(); return badg == 0 ? 0 : 1; }
                     if (uiGallery) { f.GalleryShot(); System.Windows.Forms.Application.DoEvents(); return 0; }
                     if (uiFilter != null) { f.UiTestFilter(uiFilter); System.Windows.Forms.Application.DoEvents(); }
@@ -578,7 +583,25 @@ namespace Installer
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new MainForm(gameRoot));
+
+            // 切语言不重启进程：把主窗口关掉重建一遍。
+            // 界面文案是在控件构造时定下来的，改语言只能重建；重建比让用户手动重开顺手得多。
+            // （状态靠配置和 Core 的静态量带过去，用户看到的就是"刷"一下变语言。）
+            bool again = false;
+            do
+            {
+                again = false;
+                using (MainForm f = new MainForm(gameRoot))
+                {
+                    Application.Run(f);
+                    again = f.LangRestartRequested;
+                }
+                if (again)
+                {
+                    Lang.Load();          // 配置里已经是新语言了
+                    Lang.EnsureBuilt();
+                }
+            } while (again);
             return 0;
         }
     }

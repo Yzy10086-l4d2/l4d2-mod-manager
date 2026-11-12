@@ -359,7 +359,7 @@ namespace Installer
         public TweakForm(string root, string current)
         {
             gameRoot = root;
-            Text = "参数配置（L4N 按键 / Skeeto 设置）";
+            Text = Lang.S("参数配置（L4N 按键 / Skeeto 设置）");
             Theme.UseDpi(this);
             ClientSize = Dpi.Sz(664, 452);
             Font = Theme.UI;
@@ -400,19 +400,19 @@ namespace Installer
             txtPreview.Font = Theme.UISmall;
             Controls.Add(txtPreview);
 
-            btnSave = new FlatButton(); btnSave.Text = "把本机参数存进U盘"; btnSave.SetBounds(12, 362, 152, Theme.H);
+            btnSave = new FlatButton(); btnSave.Text = Lang.S("把本机参数存进U盘"); btnSave.SetBounds(12, 362, 152, Theme.H);
             btnSave.Click += delegate { DoSave(); }; Controls.Add(btnSave);
 
-            btnApply = new FlatButton(); btnApply.Text = "套用到本机"; btnApply.Primary = true; btnApply.SetBounds(170, 362, 108, Theme.H);
+            btnApply = new FlatButton(); btnApply.Text = Lang.S("套用到本机"); btnApply.Primary = true; btnApply.SetBounds(170, 362, 108, Theme.H);
             btnApply.Click += delegate { DoApply(); }; Controls.Add(btnApply);
 
-            btnDel = new FlatButton(); btnDel.Text = "删除存档"; btnDel.SetBounds(284, 362, 88, Theme.H);
+            btnDel = new FlatButton(); btnDel.Text = Lang.S("删除存档"); btnDel.SetBounds(284, 362, 88, Theme.H);
             btnDel.Click += delegate { DoDelete(); }; Controls.Add(btnDel);
 
-            FlatButton btnOpen = new FlatButton(); btnOpen.Text = "打开文件夹"; btnOpen.SetBounds(488, 362, 92, Theme.H);
+            FlatButton btnOpen = new FlatButton(); btnOpen.Text = Lang.S("打开文件夹"); btnOpen.SetBounds(488, 362, 92, Theme.H);
             btnOpen.Click += delegate { try { Directory.CreateDirectory(Tweaks.Root); System.Diagnostics.Process.Start("explorer.exe", Tweaks.Root); } catch { } }; Controls.Add(btnOpen);
 
-            FlatButton btnClose = new FlatButton(); btnClose.Text = "关闭"; btnClose.SetBounds(586, 362, 54, Theme.H);
+            FlatButton btnClose = new FlatButton(); btnClose.Text = Lang.S("关闭"); btnClose.SetBounds(586, 362, 54, Theme.H);
             btnClose.DialogResult = DialogResult.Cancel; Controls.Add(btnClose);
             CancelButton = btnClose;
 

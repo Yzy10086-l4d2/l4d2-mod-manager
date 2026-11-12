@@ -39,7 +39,7 @@ namespace Installer
             map.Rebuild();
             map.Visible = true;
             map.BringToFront();
-            if (btnView != null) btnView.Text = "方案树";
+            if (btnView != null) btnView.Text = Lang.S("方案树");
             map.Focus();
             UpdateModCaption();
         }
@@ -56,7 +56,7 @@ namespace Installer
         internal void HideOverview()
         {
             if (map != null) map.Visible = false;
-            if (btnView != null) btnView.Text = "总览";
+            if (btnView != null) btnView.Text = Lang.S("总览");
             ShowTree();
         }
 
@@ -475,13 +475,12 @@ namespace Installer
             int sc = treeView == null ? 0 : treeView.SlotCount;
             int sk = treeView == null ? 0 : treeView.SlotCheckedCount;
             string tail = treeView != null && treeView.Unmatched > 0 ? " · " + treeView.Unmatched + " 个未归类" : "";
-            gMod.Caption = "方案树 · " + sc + " 个位置 · 已选 " + sk + tail;
+            gMod.Caption = Lang.F("方案树 · {0} 个位置 · 已选 {1}{2}", sc, sk, tail);
 
             if (lblLibInfo != null)
             {
-                string lib = Core.IsLocal ? "游戏 addons" : "U 盘库";
                 int n = Core.ModList == null ? 0 : Core.ModList.Count;
-                string last = "还没装过";
+                string last = Lang.S("还没装过");
                 string run = (Core.Cfg.LastRun ?? "").Trim();
                 if (run.Length > 0)
                 {
@@ -490,11 +489,12 @@ namespace Installer
                     if (sp > 0 && run.Length >= sp + 6)
                     {
                         string day = run.Substring(0, sp), hm = run.Substring(sp + 1, 5);
-                        last = (day == DateTime.Now.ToString("yyyy-MM-dd") ? "今天 " + hm : day.Substring(Math.Max(0, day.Length - 5)) + " " + hm) + " 装过";
+                        last = (day == DateTime.Now.ToString("yyyy-MM-dd") ? Lang.F("今天 {0}", hm) : day.Substring(Math.Max(0, day.Length - 5)) + " " + hm)
+                             + Lang.S(" 装过");
                     }
                     else last = run;
                 }
-                lblLibInfo.Text = lib + " · " + n + " 个 MOD · " + last;
+                lblLibInfo.Text = Lang.F("U 盘库 · {0} 个 MOD · {1}", n, last);
             }
         }
     }

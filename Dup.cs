@@ -254,10 +254,10 @@ namespace Installer
             lv.Font = Theme.UI;
             lv.BackColor = Theme.Surface;
             lv.ForeColor = Theme.Ink;
-            lv.Columns.Add("名字", 300);
-            lv.Columns.Add("大小", 76);
-            lv.Columns.Add("分类", 150);
-            lv.Columns.Add("位置", 258);
+            lv.Columns.Add(Lang.S("名字"), 300);
+            lv.Columns.Add(Lang.S("大小"), 76);
+            lv.Columns.Add(Lang.S("分类"), 150);
+            lv.Columns.Add(Lang.S("位置"), 258);
             lv.ItemCheck += delegate(object s, ItemCheckEventArgs e)
             {
                 if (e.Index < 0 || e.Index >= lv.Items.Count) return;
@@ -276,30 +276,30 @@ namespace Installer
             status.ForeColor = Theme.Ink3;
             Controls.Add(status);
 
-            FlatButton bVerify = new FlatButton(); bVerify.Text = "核对内容";
+            FlatButton bVerify = new FlatButton(); bVerify.Text = Lang.S("核对内容");
             bVerify.SetBounds(14, 470, 96, Theme.H);
             bVerify.Click += delegate { Verify(); };
             tipsSet(bVerify, "算一遍内容指纹（独立 vpk、zip / rar 内条目统一用 CRC32）。\r\n只有整组都核对成功且一致，才会标成“内容完全相同”。");
             Controls.Add(bVerify);
 
-            FlatButton bSkip = new FlatButton(); bSkip.Text = "这次不装";
+            FlatButton bSkip = new FlatButton(); bSkip.Text = Lang.S("这次不装");
             bSkip.SetBounds(118, 470, 96, Theme.H);
             bSkip.Click += delegate { SkipChecked(); };
             tipsSet(bSkip, "把勾选的从这次的勾选里去掉，文件原样留在 U 盘。");
             Controls.Add(bSkip);
 
-            FlatButton bDel = new FlatButton(); bDel.Text = "直接删掉";
+            FlatButton bDel = new FlatButton(); bDel.Text = Lang.S("直接删掉");
             bDel.SetBounds(222, 470, 110, Theme.H);
             bDel.Click += delegate { DeleteChecked(); };
             tipsSet(bDel, "从 U 盘库里真删（删了没法恢复）。\r\n压缩包里的 vpk 不支持，请用「这次不装」。");
             Controls.Add(bDel);
 
-            FlatButton bLoc = new FlatButton(); bLoc.Text = "在列表里定位";
+            FlatButton bLoc = new FlatButton(); bLoc.Text = Lang.S("在列表里定位");
             bLoc.SetBounds(370, 470, 112, Theme.H);
             bLoc.Click += delegate { Locate(); };
             Controls.Add(bLoc);
 
-            FlatButton bClose = new FlatButton(); bClose.Text = "关闭";      // 不用 Primary：这屏的主动作是核对/处理，不是关窗
+            FlatButton bClose = new FlatButton(); bClose.Text = Lang.S("关闭");      // 不用 Primary：这屏的主动作是核对/处理，不是关窗
             bClose.SetBounds(716, 470, 90, Theme.H);
             bClose.DialogResult = DialogResult.Cancel;
             Controls.Add(bClose);
@@ -358,7 +358,7 @@ namespace Installer
 
             if (rows == 0)
             {
-                status.Text = "已经没有重复嫌疑了。";
+                status.Text = Lang.S("已经没有重复嫌疑了。");
                 status.ForeColor = Theme.Ok;
             }
             else

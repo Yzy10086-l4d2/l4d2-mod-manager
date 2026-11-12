@@ -25,7 +25,7 @@ namespace Installer
         }
 
         private readonly MainForm owner;
-        private Segmented segMode, segAppearance;
+        private Segmented segMode, segAppearance, segLang;
         private Toggle tglMotion;
         private ComboBox cboGame, cboLibDrive;
         private FlatButton btnGameBrowse, btnGameFind, btnLibBrowse, btnLibManage, btnSave;
@@ -61,9 +61,9 @@ namespace Installer
             this.owner = owner;
             pendingRoot = Core.ModRoot;
 
-            Text = "设置 · L4D2 MOD 管理工具";
+            Text = Lang.S("设置 · L4D2 MOD 管理工具");
             Theme.UseDpi(this);
-            ClientSize = Dpi.Sz(620, 730);
+            ClientSize = Dpi.Sz(620, 790);
             Font = Theme.UI;
             BackColor = Theme.Bg;
             ForeColor = Theme.Ink;
@@ -75,7 +75,7 @@ namespace Installer
             DoubleBuffered = true;
 
             Label title = new Label();
-            title.Text = "设置";
+            title.Text = Lang.S("设置");
             title.SetBounds(20, 14, 300, 30);
             title.Font = Theme.H1;
             title.ForeColor = Theme.Ink;
@@ -144,7 +144,7 @@ namespace Installer
         private FlatButton SoftButton(Control parent, string text, int x, int y, int w, int h)
         {
             FlatButton b = new FlatButton();
-            b.Text = text;
+            b.Text = Lang.S(text);        // 小按钮都从这里出，文案统一过一遍语言层
             b.Soft = true;
             b.SetBounds(x, y, w, h);
             parent.Controls.Add(b);
@@ -155,10 +155,10 @@ namespace Installer
 
         private void BuildGeneral()
         {
-            Card s = AddGroup("常规", 56, 150);
+            Card s = AddGroup(Lang.S("常规"), 56, 200);
 
-            RowTitle(s, "工作模式", 16, 7, 200);
-            RowNote(s, "U 盘模式扫所选主库，本地模式只看游戏目录", 16, 25, 300);
+            RowTitle(s, Lang.S("工作模式"), 16, 7, 200);
+            RowNote(s, Lang.S("U 盘模式扫所选主库，本地模式只看游戏目录"), 16, 25, 300);
 
             segMode = new Segmented();
             segMode.Items = new string[] { "U 盘模式", "本地模式" };
@@ -169,8 +169,8 @@ namespace Installer
 
             s.Separate(50);
 
-            RowTitle(s, "减少动态效果", 16, 57, 220);
-            RowNote(s, "关掉按钮与状态切换的过渡，低配机器更轻快", 16, 75, 320);
+            RowTitle(s, Lang.S("减少动态效果"), 16, 57, 220);
+            RowNote(s, Lang.S("关掉按钮与状态切换的过渡，低配机器更轻快"), 16, 75, 320);
 
             tglMotion = new Toggle();
             tglMotion.SetBounds(520, 65, 44, 26);
@@ -181,8 +181,8 @@ namespace Installer
 
             // 外观：纯粹的显示开关，没有「生效代价」，所以点了就立刻应用并落配置。
             // 不跟着「保存设置」走 —— 用户点完看到颜色变了，关掉窗口却又变回去，会当成 bug。
-            RowTitle(s, "外观", 16, 107, 220);
-            RowNote(s, "跟随系统 = 跟 Windows 走；选了立即生效", 16, 125, 310);
+            RowTitle(s, Lang.S("外观"), 16, 107, 220);
+            RowNote(s, Lang.S("跟随系统 = 跟 Windows 走；选了立即生效"), 16, 125, 310);
 
             segAppearance = new Segmented();
             segAppearance.Items = new string[] { "跟随系统", "浅色", "深色" };
@@ -204,6 +204,28 @@ namespace Installer
                 catch { }
             };
             s.Controls.Add(segAppearance);
+
+            s.Separate(150);
+
+            // 语言：和外观一样「点了就生效」，但它必须重建界面（控件文案是构造时定下的），
+            // 所以这里只落配置 + 打标记，由主窗口关掉自己、Program 那边重建一次。
+            RowTitle(s, Lang.S("语言 / Language"), 16, 157, 240);
+            RowNote(s, Lang.S("切换后界面立即重建，其它设置不会丢"), 16, 175, 320);
+
+            segLang = new Segmented();
+            segLang.Items = new string[] { "中文", "English" };
+            segLang.SetBounds(332, 156, 232, 30);
+            segLang.SelectedIndex = Lang.IsEn ? 1 : 0;
+            segLang.SelectedIndexChanged += delegate
+            {
+                if (syncing) return;
+                string want = segLang.SelectedIndex == 1 ? Lang.EN : Lang.ZH;
+                if (string.Equals(Core.Cfg.Lang, want, StringComparison.OrdinalIgnoreCase)) return;
+                Lang.Set(want);
+                Core.Log("INFO", "设置：界面语言→" + (Lang.IsEn ? "English" : "中文"));
+                if (owner != null) owner.RequestLangRestart();
+            };
+            s.Controls.Add(segLang);
         }
 
         /// <summary>
@@ -212,9 +234,9 @@ namespace Installer
         /// </summary>
         private void BuildGameDir()
         {
-            Card s = AddGroup("游戏目录", 238, 104);
+            Card s = AddGroup(Lang.S("游戏目录"), 298, 104);
 
-            RowTitle(s, "游戏根目录", 16, 6, 200);
+            RowTitle(s, Lang.S("游戏根目录"), 16, 6, 200);
 
             cboGame = new ComboBox();
             cboGame.SetBounds(16, 26, 348, 24);
@@ -238,14 +260,14 @@ namespace Installer
             lblGameState.AutoEllipsis = true;
             s.Controls.Add(lblGameState);
 
-            RowNote(s, "选里面有 left4dead2.exe 的那一层；本地模式只扫这里的 left4dead2\\addons。", 16, 79, 548);
+            RowNote(s, Lang.S("选里面有 left4dead2.exe 的那一层；本地模式只扫这里的 left4dead2\\addons。"), 16, 79, 548);
         }
 
         private void BuildLibrary()
         {
-            Card s = AddGroup("MOD 主库", 374, 146);
+            Card s = AddGroup(Lang.S("MOD 主库"), 434, 146);
 
-            RowTitle(s, "库所在盘", 16, 6, 200);
+            RowTitle(s, Lang.S("库所在盘"), 16, 6, 200);
 
             cboLibDrive = new ComboBox();
             cboLibDrive.SetBounds(16, 26, 240, 24);
@@ -255,7 +277,7 @@ namespace Installer
             s.Controls.Add(cboLibDrive);
             FillDrives();
 
-            btnLibBrowse = SoftButton(s, "选择文件夹…", 264, 26, 110, 24);
+            btnLibBrowse = SoftButton(s, Lang.S("选择文件夹…"), 264, 26, 110, 24);
             btnLibBrowse.Click += delegate { BrowseLibrary(); };
 
             // 本地模式下把下拉框整个换掉：禁用的原生下拉框在深色主题里仍是一块白，
@@ -265,7 +287,7 @@ namespace Installer
             lblLocalOnly.Font = Theme.UISmall;
             lblLocalOnly.ForeColor = Theme.Ink3;
             lblLocalOnly.BackColor = Color.Transparent;
-            lblLocalOnly.Text = "本地模式不使用外部库，只读游戏目录里的 addons";
+            lblLocalOnly.Text = Lang.S("本地模式不使用外部库，只读游戏目录里的 addons");
             lblLocalOnly.Visible = false;
             s.Controls.Add(lblLocalOnly);
 
@@ -287,7 +309,7 @@ namespace Installer
 
             s.Separate(100);
 
-            btnLibManage = SoftButton(s, "附加库目录…", 16, 110, 140, 24);
+            btnLibManage = SoftButton(s, Lang.S("附加库目录…"), 16, 110, 140, 24);
             btnLibManage.Click += delegate { ManageLibrary(); };
 
             lblLibHint = new Label();
@@ -301,14 +323,14 @@ namespace Installer
 
         private void BuildDiagnostics()
         {
-            Card s = AddGroup("位置与诊断", 544, 98);
+            Card s = AddGroup(Lang.S("位置与诊断"), 604, 98);
 
             lblCfg = new Label();
             lblCfg.SetBounds(16, 8, 548, 16);
             lblCfg.Font = Theme.UISmall;
             lblCfg.ForeColor = Theme.Ink2;
             lblCfg.AutoEllipsis = true;
-            lblCfg.Text = "配置：" + Core.CfgPath;
+            lblCfg.Text = Lang.F("配置：{0}", Core.CfgPath);
             s.Controls.Add(lblCfg);
 
             lblLog = new Label();
@@ -316,18 +338,18 @@ namespace Installer
             lblLog.Font = Theme.UISmall;
             lblLog.ForeColor = Theme.Ink2;
             lblLog.AutoEllipsis = true;
-            lblLog.Text = "日志：" + Core.LogDir;
+            lblLog.Text = Lang.F("日志：{0}", Core.LogDir);
             s.Controls.Add(lblLog);
 
             s.Separate(50);
 
-            FlatButton openCfg = SoftButton(s, "打开配置文件夹", 16, 58, 124, 24);
+            FlatButton openCfg = SoftButton(s, Lang.S("打开配置文件夹"), 16, 58, 124, 24);
             openCfg.Click += delegate { OpenConfigFolder(); };
 
-            FlatButton openLog = SoftButton(s, "打开日志", 148, 58, 84, 24);
+            FlatButton openLog = SoftButton(s, Lang.S("打开日志"), 148, 58, 84, 24);
             openLog.Click += delegate { OpenFolder(Core.LogDir); };
 
-            FlatButton env = SoftButton(s, "环境自检", 240, 58, 88, 24);
+            FlatButton env = SoftButton(s, Lang.S("环境自检"), 240, 58, 88, 24);
             env.Click += delegate { if (owner != null) owner.ShowEnv(); };
         }
 
@@ -339,7 +361,7 @@ namespace Installer
             Controls.Add(rule);
 
             Label note = new Label();
-            note.Text = "保存后立即生效，不改已经装进游戏的文件。";
+            note.Text = Lang.S("保存后立即生效，不改已经装进游戏的文件。");
             note.SetBounds(20, 682, 360, 20);
             note.Font = Theme.UISmall;
             note.ForeColor = Theme.Ink3;
@@ -347,15 +369,15 @@ namespace Installer
             Controls.Add(note);
 
             FlatButton cancel = new FlatButton();
-            cancel.Text = "取消";
+            cancel.Text = Lang.S("取消");
             cancel.Plain = true;
             cancel.SetBounds(408, 682, 88, 32);
             cancel.DialogResult = DialogResult.Cancel;
             Controls.Add(cancel);
 
             btnSave = new FlatButton();
-            btnSave.Text = "保存设置";
-            btnSave.SetBounds(504, 682, 96, 32);
+            btnSave.Text = Lang.S("保存设置");
+            btnSave.SetBounds(504, 742, 96, 32);
             btnSave.Primary = true;
             btnSave.DialogResult = DialogResult.OK;
             // 校验放进点击里：以前是「先关窗、再在 ShowSettings 里发现路径不对」，
@@ -406,12 +428,12 @@ namespace Installer
             else if (Core.TestGame(root))
             {
                 lblGameState.ForeColor = Theme.Ok;
-                lblGameState.Text = "已识别：left4dead2.exe 在里面，可以扫描和安装";
+                lblGameState.Text = Lang.S("已识别：left4dead2.exe 在里面，可以扫描和安装");
             }
             else
             {
                 lblGameState.ForeColor = Theme.Accent;
-                lblGameState.Text = "没认出：这一层找不到 left4dead2.exe";
+                lblGameState.Text = Lang.S("没认出：这一层找不到 left4dead2.exe");
             }
             UpdateLibraryState();
         }
@@ -436,7 +458,7 @@ namespace Installer
             if (found == null || found.Count == 0)
             {
                 lblGameState.ForeColor = Theme.Accent;
-                lblGameState.Text = "没自动找到游戏，请用「浏览…」手动选";
+                lblGameState.Text = Lang.S("没自动找到游戏，请用「浏览…」手动选");
                 return;
             }
             cboGame.Text = found[0];
@@ -585,22 +607,22 @@ namespace Installer
                     ? "本地模式：只扫描 " + addons
                     : "本地模式：只扫描游戏目录 addons（先在上方指定游戏目录）";
                 lblLibExtra.ForeColor = Theme.Ink3;
-                lblLibExtra.Text = "主库和附加目录都不参与扫描";
-                lblLibHint.Text = "游戏目录在上方改；切回 U 盘模式后原来的库仍保留。";
+                lblLibExtra.Text = Lang.S("主库和附加目录都不参与扫描");
+                lblLibHint.Text = Lang.S("游戏目录在上方改；切回 U 盘模式后原来的库仍保留。");
                 if (btnSave != null) btnSave.Enabled = true;
                 return;
             }
 
             bool valid = !string.IsNullOrEmpty(pendingRoot) && Directory.Exists(pendingRoot);
             lblLibMain.ForeColor = valid ? Theme.Ink2 : Theme.Accent;
-            lblLibMain.Text = valid ? "主库：" + pendingRoot : "主库：未找到有效目录，请重新选盘或选择文件夹";
+            lblLibMain.Text = valid ? Lang.F("主库：{0}", pendingRoot) : Lang.S("主库：未找到有效目录，请重新选盘或选择文件夹");
             if (btnSave != null) btnSave.Enabled = valid;
 
             int n = Core.Cfg.ModDirs == null ? 0 : Core.Cfg.ModDirs.Count;
             lblLibExtra.ForeColor = Theme.Ink2;
             if (n == 0)
             {
-                lblLibExtra.Text = "附加目录：无";
+                lblLibExtra.Text = Lang.S("附加目录：无");
             }
             else
             {
@@ -610,9 +632,9 @@ namespace Installer
                     if (sample.Length > 0) sample += "；";
                     sample += Core.Cfg.ModDirs[i];
                 }
-                lblLibExtra.Text = "附加目录：" + n + " 个 · " + sample + (n > 2 ? " 等" : "");
+                lblLibExtra.Text = Lang.F("附加目录：{0} 个 · {1}{2}", n, sample, n > 2 ? Lang.S(" 等") : "");
             }
-            lblLibHint.Text = "主库和附加目录都会扫描；只读，不复制、不移动。";
+            lblLibHint.Text = Lang.S("主库和附加目录都会扫描；只读，不复制、不移动。");
         }
 
         private void ManageLibrary()

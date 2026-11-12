@@ -1092,7 +1092,7 @@ namespace Installer
             Controls.Add(lblExtraTitle);
 
             btnPick = new FlatButton();
-            btnPick.Text = "留原版";
+            btnPick.Text = Lang.S("留原版");
             btnPick.SetBounds(0, 0, 66, Theme.H);
             btnPick.Click += delegate { Choose(null); };
             btnPick.Visible = false;          // 列表里已经有「留原版」那一行，按钮就多余了
@@ -1101,7 +1101,7 @@ namespace Installer
             // 未归类页的手动入口：选中一行点它（或双击那行），告诉程序这个 MOD 算哪一类、替换什么。
             // 用的是和「设置 MOD 分类…」同一个窗口，保存后立刻重新归组，认出位置就排进树里。
             btnCat = new FlatButton();
-            btnCat.Text = "指定位置…";
+            btnCat.Text = Lang.S("指定位置…");
             btnCat.SetBounds(0, 0, 96, Theme.H);
             btnCat.Click += delegate { mf.SetModCatIn(lv); };
             btnCat.Visible = false;
@@ -1110,7 +1110,7 @@ namespace Installer
             // 「只装这里」：方案树是按位置看的，经常只想试一处（换个枪模看看像不像），
             // 不想为这一个 vpk 把整套重铺一遍。这个按钮只动当前位置勾上的文件。
             btnDeploy = new FlatButton();
-            btnDeploy.Text = "只装这里";
+            btnDeploy.Text = Lang.S("只装这里");
             btnDeploy.SetBounds(0, 0, 92, Theme.H);
             btnDeploy.Visible = false;
             btnDeploy.Click += delegate { DeployHere(); };
@@ -1120,13 +1120,13 @@ namespace Installer
             // 有改动时变实心、标题带条数；没改动时是灰的，点了直接告诉你先点「开关」列。
             // 不自动写是为了点错能反悔，也避免每点一下都动一次游戏文件。
             btnApply = new FlatButton();
-            btnApply.Text = "应用改动";
+            btnApply.Text = Lang.S("应用改动");
             btnApply.SetBounds(0, 0, 104, Theme.H);
             btnApply.Click += delegate { ApplyHere(); };
             Controls.Add(btnApply);
 
             tipApply = new ToolTip();
-            tipApply.SetToolTip(btnApply, "把「开关」列里点出来的改动一次性写进 left4dead2\\addonlist.txt（只改 1/0，不动任何 vpk 文件）");
+            tipApply.SetToolTip(btnApply, Lang.S("把「开关」列里点出来的改动一次性写进 left4dead2\\addonlist.txt（只改 1/0，不动任何 vpk 文件）"));
             // 小标题在窄窗口放不下整句话，完整的解释挂在这里
             tipApply.SetToolTip(lblExtraTitle,
                 "可叠加的扩展 = 不换本体模型、能和模型同时生效的东西：开火音效、第一人称手部模型、HUD 图标。\r\n"
@@ -1162,10 +1162,10 @@ namespace Installer
             v.SmallImageList = pad;
             v.StateImageList = Dots();
             v.Columns.Add(firstCol, 380);
-            v.Columns.Add("改了什么", 100);
-            v.Columns.Add("大小", 74).TextAlign = HorizontalAlignment.Right;
-            v.Columns.Add("已装", 84);                        // 游戏 addons 里有没有这一份
-            v.Columns.Add("开关 ⇄", 62);                        // addonlist 里是 1 还是 0（点一下能翻，⇄ 是这个意思）
+            v.Columns.Add(Lang.S("改了什么"), 100);
+            v.Columns.Add(Lang.S("大小"), 74).TextAlign = HorizontalAlignment.Right;
+            v.Columns.Add(Lang.S("已装"), 84);                        // 游戏 addons 里有没有这一份
+            v.Columns.Add(Lang.S("开关 ⇄"), 62);                        // addonlist 里是 1 还是 0（点一下能翻，⇄ 是这个意思）
             return v;
         }
 
@@ -1200,17 +1200,17 @@ namespace Installer
             // 已装列（本地模式下宽度为 0，看不见，只留空串）
             string instText; Color instInk;
             if (local) { instText = ""; instInk = Theme.Ink3; }
-            else if (inst == 0) { instText = "未装"; instInk = Theme.Ink3; }
+            else if (inst == 0) { instText = Lang.S("未装"); instInk = Theme.Ink3; }
             else if (inst < total) { instText = "部分 " + inst + "/" + total; instInk = Theme.Info; }
             else if (game == total) { instText = "仅游戏内"; instInk = Theme.Ink2; }
-            else { instText = "已装"; instInk = Theme.Ok; }
+            else { instText = Lang.S("已装"); instInk = Theme.Ok; }
 
             // 开关列：只有装进去的才谈得上开关。
             // 本地模式下这列就是唯一的状态列，所以用「开启 / 关闭」说全称，不再用「开 / 关」。
             string swText; Color swInk; Color rowBg;
             if (ins == 0) { swText = "—"; swInk = Theme.Ink3; rowBg = Theme.Surface; }
-            else if (shownOn == ins) { swText = local ? "开启" : "开"; swInk = Theme.Ok; rowBg = Theme.RowOn; }
-            else if (shownOn == 0) { swText = local ? "关闭" : "关"; swInk = Theme.Warn; rowBg = Theme.RowOff; }
+            else if (shownOn == ins) { swText = Lang.S(local ? "开启" : "开"); swInk = Theme.Ok; rowBg = Theme.RowOn; }
+            else if (shownOn == 0) { swText = Lang.S(local ? "关闭" : "关"); swInk = Theme.Warn; rowBg = Theme.RowOff; }
             else { swText = (local ? "开启 " : "") + shownOn + "/" + ins; swInk = Theme.Warn; rowBg = Theme.RowOff; }
 
             // 攒着还没落盘的（pending 里有、且跟文件里的实际值不一样）加个 *：
@@ -1836,7 +1836,7 @@ namespace Installer
                 Slot s = r.Slot;
                 if (IsBranchSlot(s))
                 {
-                    if (g.Main == null) { lblFoot.Text = "这个 MOD 没有主体 vpk，放不进分支"; return; }
+                    if (g.Main == null) { lblFoot.Text = Lang.S("这个 MOD 没有主体 vpk，放不进分支"); return; }
                     MyBranch.Put(s.Name, g.Main.Name);
                     Rebuild();
                     GoSlot(s.Key);
@@ -1844,7 +1844,7 @@ namespace Installer
                     Core.Log("OK", "拖拽归类: " + g.Name + " → 分支「" + s.Name + "」");
                     return;
                 }
-                if (s.Pile) { lblFoot.Text = "「一堆」收的是叠装（地图 / 喷漆），拖不进去"; return; }
+                if (s.Pile) { lblFoot.Text = Lang.S("「一堆」收的是叠装（地图 / 喷漆），拖不进去"); return; }
                 mf.ApplyCatAssign(g, s.Cat, s.Name);
                 Rebuild();
                 GoSlot(s.Key);
@@ -2952,7 +2952,7 @@ namespace Installer
             foreach (string c in SlotIndex.CatOrder(slots)) folded.Add(c);
             BuildRows();
             SaveFold();
-            lblFoot.Text = "全部收起 · 点大类或小分类那行就展开";
+            lblFoot.Text = Lang.S("全部收起 · 点大类或小分类那行就展开");
         }
 
         /// <summary>右键「全部展开」。</summary>
@@ -2961,7 +2961,7 @@ namespace Installer
             folded.Clear();
             BuildRows();
             SaveFold();
-            lblFoot.Text = "全部展开";
+            lblFoot.Text = Lang.S("全部展开");
         }
 
         /// <summary>
@@ -3113,7 +3113,7 @@ namespace Installer
         {
             if (btnApply == null) return;
             int n = pending.Count;
-            string want = n > 0 ? "应用改动 " + n : "应用改动";
+            string want = n > 0 ? "应用改动 " + n : Lang.S("应用改动");
             if (btnApply.Text != want) btnApply.Text = want;
             bool on = n > 0;
             btnApply.Primary = on;
@@ -3173,8 +3173,8 @@ namespace Installer
                 lvExtra.Items.Clear();
                 if (s == null)
                 {
-                    lblTitle.Text = "选一个位置";
-                    lblCur.Text = "左边点一个武器 / 药品 / 人物，这里列它的 MOD";
+                    lblTitle.Text = Lang.S("选一个位置");
+                    lblCur.Text = Lang.S("左边点一个武器 / 药品 / 人物，这里列它的 MOD");
                     lblExtraTitle.Visible = false;
                     lvExtra.Visible = false;
                     return;
@@ -3185,7 +3185,7 @@ namespace Installer
                 if (s.Empty)
                 {
                     // 空位：不是「忘了选」，是这个位置压根还没有包 —— 话说清楚，别让人以为坏了
-                    lblCur.Text = "这个位置还没有 MOD · 游戏里就是原版";
+                    lblCur.Text = Lang.S("这个位置还没有 MOD · 游戏里就是原版");
                 }
                 else if (s.Pile)
                 {
@@ -3194,11 +3194,11 @@ namespace Installer
                         ? "这一堆还没勾 · 共 " + s.Items.Count + " 个，能同时开好几个"
                         : "这一堆已勾 " + n + " 个 · 会一起装，冲不冲突自己确认";
                 }
-                else if (n == 0 && ne == 0) lblCur.Text = "还没选 · 游戏里还是原版";
+                else if (n == 0 && ne == 0) lblCur.Text = Lang.S("还没选 · 游戏里还是原版");
                 else if (n == 1)
                 {
                     ModGroup c = ChosenOf(s);
-                    lblCur.Text = "当前：" + (c == null ? "" : c.Name) + (ne > 0 ? "　+ " + ne + " 个扩展" : "");
+                    lblCur.Text = Lang.F("当前：{0}{1}", c == null ? "" : c.Name, ne > 0 ? Lang.F("　+ {0} 个扩展", ne) : "");
                 }
                 else if (n > 1) lblCur.Text = "这个位置叠了 " + n + " 件（自己确认会不会打架）";
                 else lblCur.Text = "模型还是原版 · 只装了 " + ne + " 个扩展";
@@ -3245,11 +3245,11 @@ namespace Installer
                 else if (s.Empty)
                 {
                     // 窄窗口下这一行只剩一百多像素，长句子必被省略号切 —— 怎么进货交给悬停提示（UpdateTip）
-                    lblFoot.Text = "还没有这个位置的 MOD";
+                    lblFoot.Text = Lang.S("还没有这个位置的 MOD");
                 }
                 else lblFoot.Text = s.Items.Count == 0
                     ? "这个位置没有换模型的包，只有下面那些扩展"
-                    : s.Items.Count + " 个模型候选 · 点一个就换掉原来的"
+                    : Lang.F("{0} 个模型候选 · 点一个就换掉原来的", s.Items.Count)
                       + (HasSet(s) ? " · 组合装双击可挑部件" : "")
                       + " · 「开关 ⇄」列点一下=把这个 MOD 开 / 关";
 
@@ -3260,7 +3260,7 @@ namespace Installer
                     lvExtra.Visible = false;
                     // 窄窗口下这一行只有 330px 左右，写太长会被省略号切掉；
                     // 完整的说法放在悬停提示里（见 lblExtraTitle 的 ToolTip）。
-                    lblExtraTitle.Text = "可叠加的扩展：这个位置没有（音效 / 第一人称 / HUD）";
+                    lblExtraTitle.Text = Lang.S("可叠加的扩展：这个位置没有（音效 / 第一人称 / HUD）");
                 }
                 else
                 {
@@ -3351,7 +3351,7 @@ namespace Installer
                 lblCur.Text = n + " 个匹配「" + kw + "」的 MOD · 名称 / 替换内容 / 位置都参与搜索 · 点一行跳到他该在的位置";
             }
             finally { lv.EndUpdate(); }
-            lblFoot.Text = "清空搜索框回到方案树；这一页只找东西，不改勾选。";
+            lblFoot.Text = Lang.S("清空搜索框回到方案树；这一页只找东西，不改勾选。");
             LayoutSelf();
             LayoutCols();
         }
@@ -3363,9 +3363,9 @@ namespace Installer
             lvExtra.Visible = false;
             lv.Visible = true;
             lv.Items.Clear();
-            lblTitle.Text = "我的分支";
-            lblCur.Text = "程序认不出改的是什么的 MOD，自己拉一组装进去（一组里能同时开好几个）";
-            lblFoot.Text = "这一行 = 新建顶层分支 · 右键一个已有分支 = 在它下面建子分支";
+            lblTitle.Text = Lang.S("我的分支");
+            lblCur.Text = Lang.S("程序认不出改的是什么的 MOD，自己拉一组装进去（一组里能同时开好几个）");
+            lblFoot.Text = Lang.S("这一行 = 新建顶层分支 · 右键一个已有分支 = 在它下面建子分支");
             LayoutSelf();
             LayoutCols();
         }
@@ -3378,7 +3378,7 @@ namespace Installer
         {
             lblExtraTitle.Visible = false;
             lvExtra.Visible = false;
-            lblTitle.Text = "未归类";
+            lblTitle.Text = Lang.S("未归类");
             lblCur.Text = unmatched + " 个 MOD 没认出改的是哪件东西";
             lv.BeginUpdate();
             try
@@ -3410,7 +3410,7 @@ namespace Installer
                 }
             }
             finally { lv.EndUpdate(); }
-            lblFoot.Text = "不影响装机，照常能勾。按住一行拖到左边的树上松手 = 归到那；或双击打开「设置 MOD 分类」细调。";
+            lblFoot.Text = Lang.S("不影响装机，照常能勾。按住一行拖到左边的树上松手 = 归到那；或双击打开「设置 MOD 分类」细调。");
             if (btnCat != null) btnCat.Visible = true;
             LayoutSelf();
             LayoutCols();
@@ -3675,7 +3675,7 @@ namespace Installer
                 v.Columns[3].Width = instW;
                 v.Columns[4].Width = swW;
                 // 表头跟着模式换：本地模式下没有「已装」，那一列叫「已装」会误导
-                string t3 = local ? "" : "已装";
+                string t3 = local ? "" : Lang.S("已装");
                 string t4 = local ? "开启 ⇄" : "开关 ⇄";
                 if (v.Columns[3].Text != t3) v.Columns[3].Text = t3;
                 if (v.Columns[4].Text != t4) v.Columns[4].Text = t4;
@@ -3724,11 +3724,11 @@ namespace Installer
             ListView v = new ListView();
             try
             {
-                v.Columns.Add("名称", 380);
-                v.Columns.Add("改了什么", 100);
-                v.Columns.Add("大小", 74);
-                v.Columns.Add("已装", 84);
-                v.Columns.Add("开关 ⇄", 62);
+                v.Columns.Add(Lang.S("名称"), 380);
+                v.Columns.Add(Lang.S("改了什么"), 100);
+                v.Columns.Add(Lang.S("大小"), 74);
+                v.Columns.Add(Lang.S("已装"), 84);
+                v.Columns.Add(Lang.S("开关 ⇄"), 62);
                 v.ClientSize = new Size(clientWidth, 400);
                 Cols(v);
                 return new int[] { v.Columns[1].Width, v.Columns[2].Width, v.Columns[3].Width, v.Columns[4].Width };
@@ -4090,13 +4090,13 @@ namespace Installer
                         if (i == hov) g.FillRectangle(hovBg, 0, y, W, RowH);
                         DrawTri(g, 10, y + RowH / 2, open);
                         Glyph.Draw(g, Glyph.ForCat(r.Cat), new Rectangle(18, y + (RowH - 18) / 2, 18, 18), Theme.Ink2);
-                        TextRenderer.DrawText(g, r.Cat, Theme.UIBold, new Rectangle(42, y, W - 106, RowH), Theme.Ink,
+                        TextRenderer.DrawText(g, Lang.S(r.Cat), Theme.UIBold, new Rectangle(42, y, W - 106, RowH), Theme.Ink,
                             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
                         // 计数按整个大类算，不受折叠影响 —— 收起来只是看不见行，
                         // 位置数不该跟着变（桌面上那张卡写的也是这个数）
                         int n = 0;
                         if (all != null) foreach (Slot sl in all) if (sl.Cat == r.Cat) n++;
-                        string num = r.Cat == "未归类" ? owner.Unmatched + " 个" : n + " 个";
+                        string num = Lang.F("{0} 个", r.Cat == "未归类" ? owner.Unmatched : n);
                         TextRenderer.DrawText(g, num, Theme.UISmall, new Rectangle(W - 62, y, 50, RowH), Theme.Ink3,
                             TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
                         continue;
@@ -4110,12 +4110,12 @@ namespace Installer
                         g.DrawLine(branch, 17, y + RowH / 2, 26, y + RowH / 2);
                         DrawTri(g, 32, y + RowH / 2, open);
                         Glyph.Draw(g, Glyph.ForSub(r.Sub, r.Cat), new Rectangle(40, y + (RowH - 17) / 2, 17, 17), Theme.Ink2);
-                        TextRenderer.DrawText(g, r.Sub, Theme.UIBold, new Rectangle(62, y, W - 126, RowH), Theme.Ink2,
+                        TextRenderer.DrawText(g, Lang.S(r.Sub), Theme.UIBold, new Rectangle(62, y, W - 126, RowH), Theme.Ink2,
                             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding
                             | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
                         int k = 0;
                         if (all != null) foreach (Slot sl in all) if (sl.Cat == r.Cat && sl.Sub == r.Sub) k++;
-                        string num = k + " 个";
+                        string num = Lang.F("{0} 个", k);
                         TextRenderer.DrawText(g, num, Theme.UISmall, new Rectangle(W - 62, y, 50, RowH), Theme.Ink3,
                             TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
                         // 往下连一小段，免得和位置行的竖线断开
@@ -4127,7 +4127,7 @@ namespace Installer
                     {
                         if (i == hov) g.FillRectangle(hovBg, 0, y, W, RowH);
                         g.DrawLine(branch, 17, y + RowH / 2, 26, y + RowH / 2);
-                        TextRenderer.DrawText(g, "认不出改的是什么（点开看全部 · 可手动指定）", Theme.UI,
+                        TextRenderer.DrawText(g, Lang.S("认不出改的是什么（点开看全部 · 可手动指定）"), Theme.UI,
                             new Rectangle(33, y, W - 46, RowH), Theme.Ink3,
                             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding
                             | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
@@ -4178,7 +4178,7 @@ namespace Installer
                     int nameW = 86;
                     // 「步枪」小分类下又有个位置叫「步枪」= 认不出具体型号的那一堆，改个说法免得看着像重复。
                     // 空位不套这条：空位本来就叫得准（手枪 / 近战武器），改成「未分型号」反而看不懂。
-                    string showName = (s.Name == s.Sub && !s.Empty) ? "未分型号" : s.Name;
+                    string showName = (s.Name == s.Sub && !s.Empty) ? Lang.S("未分型号") : Lang.S(s.Name);
                     // 空位的名字压暗一档：一眼分得出「这里还缺 MOD」和「这里有包没选」
                     TextRenderer.DrawText(g, showName, sel ? Theme.UIBold : Theme.UI,
                         new Rectangle(nx, y, nameW, RowH), s.Empty ? Theme.Ink3 : Theme.Ink,

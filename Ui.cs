@@ -35,6 +35,10 @@ namespace Installer
         private TextBox txtSearch;
         private Button btnSaveProfile, btnApplyProfile;
         private Panel viewHost;                  // 右栏：方案树就嵌在这里
+        private bool langRestart;                // 设置里切了语言：关掉自己，让 Program 重建
+        internal bool LangRestartRequested { get { return langRestart; } }
+        internal void RequestLangRestart() { langRestart = true; }
+
         private LoadingPane lblLoading;          // 读取/重扫期间的加载占位（启动报步骤 / 重扫报细条），平时藏着
         private CatTree treeView;                // 方案树：按「能替换的东西」看，一个位置只留一个 MOD
         private Label lblSel, lblStatus, lblConflict;
@@ -311,7 +315,7 @@ namespace Installer
         // 包不齐就直接顶到状态栏上，不用等装到一半才发现
         private void ShowPackStatus(List<string> packs, bool packOk)
         {
-            if (packOk) { lblStatus.Text = "就绪"; lblStatus.ForeColor = Theme.Ink2; return; }
+            if (packOk) { lblStatus.Text = Lang.S("就绪"); lblStatus.ForeColor = Theme.Ink2; return; }
             List<string> miss = new List<string>();
             foreach (string l in packs)
             {
@@ -360,7 +364,7 @@ namespace Installer
             int rightW = W - Theme.M - rightX;
 
             // ---- 顶部：游戏目录 ----
-            Label l1 = new Label(); l1.Text = "游戏目录"; l1.SetBounds(Theme.M, 20, 60, 20); Theme.Dress(l1); l1.Font = Theme.UISmall; l1.ForeColor = Theme.Ink3; Controls.Add(l1);
+            Label l1 = new Label(); l1.Text = Lang.S("游戏目录"); l1.SetBounds(Theme.M, 20, 60, 20); Theme.Dress(l1); l1.Font = Theme.UISmall; l1.ForeColor = Theme.Ink3; Controls.Add(l1);
             const int modeW = 104;
             const int findW = 76;
             const int browseW = 76;
@@ -383,12 +387,12 @@ namespace Installer
             cboMode.DropDownStyle = ComboBoxStyle.DropDownList; Theme.Dress(cboMode);
             cboMode.Items.Add("U 盘模式"); cboMode.Items.Add("本地模式");
             cboMode.SelectedIndexChanged += delegate { OnModeChanged(); };
-            tips.SetToolTip(cboMode, "U 盘模式：所选主库是主，装 MOD = 从库里复制到游戏。\r\n游戏目录里和库里同名同大小的那份会合并显示（标「已装」），不再重复列。\r\n本地模式：只看游戏目录 addons，不扫主库和附加目录；删除 = 从游戏里卸掉（文件真删）。");
+            tips.SetToolTip(cboMode, Lang.S("U 盘模式：所选主库是主，装 MOD = 从库里复制到游戏。\r\n游戏目录里和库里同名同大小的那份会合并显示（标「已装」），不再重复列。\r\n本地模式：只看游戏目录 addons，不扫主库和附加目录；删除 = 从游戏里卸掉（文件真删）。"));
             Controls.Add(cboMode);
-            btnBrowse = new FlatButton(); btnBrowse.Soft = true; btnBrowse.Text = "浏览…"; btnBrowse.SetBounds(browseX, 16, browseW, Theme.H); btnBrowse.Click += delegate { BrowseGame(); }; Controls.Add(btnBrowse);
-            btnFind = new FlatButton(); btnFind.Soft = true; btnFind.Text = "自动找"; btnFind.SetBounds(findX, 16, findW, Theme.H); btnFind.Click += delegate { FindGame(); }; Controls.Add(btnFind);
+            btnBrowse = new FlatButton(); btnBrowse.Soft = true; btnBrowse.Text = Lang.S("浏览…"); btnBrowse.SetBounds(browseX, 16, browseW, Theme.H); btnBrowse.Click += delegate { BrowseGame(); }; Controls.Add(btnBrowse);
+            btnFind = new FlatButton(); btnFind.Soft = true; btnFind.Text = Lang.S("自动找"); btnFind.SetBounds(findX, 16, findW, Theme.H); btnFind.Click += delegate { FindGame(); }; Controls.Add(btnFind);
             // 工坊导入：入口放顶栏而不是藏在设置里 —— 这是「往库里加东西」的主路径之一
-            btnWorkshop = new FlatButton(); btnWorkshop.Text = "工坊";
+            btnWorkshop = new FlatButton(); btnWorkshop.Text = Lang.S("工坊");
             btnWorkshop.SetBounds(wsX, 16, wsW, Theme.H);
             btnWorkshop.AccessibleName = "从创意工坊导入";
             btnWorkshop.Click += delegate { OpenWorkshop(); };
@@ -396,21 +400,26 @@ namespace Installer
                 + "L4D2 的物品都是单个 vpk，能直接下，不需要 Steam 登录。");
             Controls.Add(btnWorkshop);
 
-            btnSettings = new FlatButton(); btnSettings.Text = "设置";
+            btnSettings = new FlatButton(); btnSettings.Text = Lang.S("设置");
             btnSettings.SetBounds(settingsX, 16, settingsW, Theme.H);
             btnSettings.AccessibleName = "打开设置";
-            btnSettings.Click += delegate { ShowSettings(); };
-            tips.SetToolTip(btnSettings, "工作模式、动效、MOD 库目录，以及配置和日志位置。");
+            btnSettings.Click += delegate
+            {
+                ShowSettings();
+                // 语言在设置里当场落配置，但界面要重建才会变 —— 关掉自己，交给 Program 的循环
+                if (langRestart) { langRestart = false; Close(); }
+            };
+            tips.SetToolTip(btnSettings, Lang.S("工作模式、动效、MOD 库目录，以及配置和日志位置。"));
             Controls.Add(btnSettings);
 
             // 总览 / 方案树：同一份数据的两种看法，按钮上写的是「点了会去哪种」
-            btnView = new FlatButton(); btnView.Soft = true; btnView.Text = "总览";
+            btnView = new FlatButton(); btnView.Soft = true; btnView.Text = Lang.S("总览");
             btnView.SetBounds(viewX, 16, viewW, Theme.H);
             btnView.Click += delegate { ToggleView(); };
-            tips.SetToolTip(btnView, "套装总览：这套里每个位置装的是哪个 MOD，一眼看完。\r\n左边点大类，右边列这个类的位置和已装的 MOD；没装的灰着，库里没有的空心点。\r\n点开关直接开/关，点名字就地换 MOD，拖大类改顺序；点一行回方案树改那个位置。再点一下回到方案树。");
+            tips.SetToolTip(btnView, Lang.S("套装总览：这套里每个位置装的是哪个 MOD，一眼看完。\r\n左边点大类，右边列这个类的位置和已装的 MOD；没装的灰着，库里没有的空心点。\r\n点开关直接开/关，点名字就地换 MOD，拖大类改顺序；点一行回方案树改那个位置。再点一下回到方案树。"));
             Controls.Add(btnView);
 
-            btnPanel = new FlatButton(); btnPanel.Soft = true; btnPanel.Text = "面板";
+            btnPanel = new FlatButton(); btnPanel.Soft = true; btnPanel.Text = Lang.S("面板");
             btnPanel.SetBounds(panelX, 16, panelW, Theme.H);
             btnPanel.Click += delegate
             {
@@ -418,18 +427,18 @@ namespace Installer
                 // 只有用户自己点的时候才记：总览/跳转那些自动展开收起不该改用户偏好
                 if (Core.Cfg.DrawerOpen != drawerOpen) { Core.Cfg.DrawerOpen = drawerOpen; Core.SaveConfig(); }
             };
-            tips.SetToolTip(btnPanel, "展开 / 收起左边那栏（装什么、安装选项、日志）。\r\n收起来以后整个窗口就是一张台面。");
+            tips.SetToolTip(btnPanel, Lang.S("展开 / 收起左边那栏（装什么、安装选项、日志）。\r\n收起来以后整个窗口就是一张台面。"));
             Controls.Add(btnPanel);
 
             // ---- 左栏上：装什么 ----
             Section gp = new Section();
-            gp.Caption = "装什么"; gp.SetBounds(Theme.M, 56, leftW, 222); Controls.Add(gp);
-            chkL4N = AddChk(gp, "L4N 平台（只有 MQCam 相机要用它）", 12, 28, true, true);
-            tips.SetToolTip(chkL4N, "L4N 不是强依赖：不装它照样能装 Skeeto / dxvk / MOD。\r\n只有 MQCam 相机要跑在它的 neko 框架里 —— 勾 MQCam 时会自动把 L4N 带上，取消 L4N 会把 MQCam 一起取消。\r\n装过一次之后再装会自动跳过（除非在下面选「覆盖重装」）。");
-            chkSkeeto = AddChk(gp, "Skeeto 增强框架（命中反馈 / 准星 / HUD）", 12, 52, true, true);
-            chkAsset = AddChk(gp, "Skeeto 素材包 177 MB", 12, 76, true, true);
-            chkMqcam = AddChk(gp, "MQCam 相机（F2 / F3 / F4 视角）", 12, 100, true, true);
-            tips.SetToolTip(chkMqcam, "相机模组要跑在 L4N 的 neko 框架里：勾它会自动把上面的 L4N 一起勾上。");
+            gp.Caption = Lang.S("装什么"); gp.SetBounds(Theme.M, 56, leftW, 222); Controls.Add(gp);
+            chkL4N = AddChk(gp, Lang.S("L4N 平台（只有 MQCam 相机要用它）"), 12, 28, true, true);
+            tips.SetToolTip(chkL4N, Lang.S("L4N 不是强依赖：不装它照样能装 Skeeto / dxvk / MOD。\r\n只有 MQCam 相机要跑在它的 neko 框架里 —— 勾 MQCam 时会自动把 L4N 带上，取消 L4N 会把 MQCam 一起取消。\r\n装过一次之后再装会自动跳过（除非在下面选「覆盖重装」）。"));
+            chkSkeeto = AddChk(gp, Lang.S("Skeeto 增强框架（命中反馈 / 准星 / HUD）"), 12, 52, true, true);
+            chkAsset = AddChk(gp, Lang.S("Skeeto 素材包 177 MB"), 12, 76, true, true);
+            chkMqcam = AddChk(gp, Lang.S("MQCam 相机（F2 / F3 / F4 视角）"), 12, 100, true, true);
+            tips.SetToolTip(chkMqcam, Lang.S("相机模组要跑在 L4N 的 neko 框架里：勾它会自动把上面的 L4N 一起勾上。"));
             // L4N 和 MQCam 的依赖只在这两格之间：勾相机 → 带上平台；去掉平台 → 相机也跟着去掉
             chkMqcam.CheckedChanged += delegate
             {
@@ -443,34 +452,34 @@ namespace Installer
                 chkMqcam.Checked = false;
                 Log("不装 L4N 的话 MQCam 也跑不起来，已把 MQCam 一起取消（要相机就两个都勾）");
             };
-            chkDxvk = AddChk(gp, "dxvk 防闪退（d3d9.dll）", 12, 124, true, true);
-            chkLaunch = AddChk(gp, "写 Steam 启动项", 12, 148, true, true);
-            chkCfg = AddChk(gp, "写参数配置（L4N 按键 + Skeeto 设置）", 12, 172, true, true);
-            tips.SetToolTip(chkCfg, "从 U 盘的参数存档里取出你调好的 autoexec.cfg 和 skeeto_setting.ini，\r\n直接写进这台机器。换机器装机就不用再手调了。\r\n下面那行选套用哪一套；没有存档就退回旧做法（搬 U 盘根目录的 autoexec.cfg）。");
-            Label l4 = new Label(); l4.Text = "启动项"; l4.SetBounds(12, 198, 44, 20); Theme.Dress(l4); gp.Controls.Add(l4);
+            chkDxvk = AddChk(gp, Lang.S("dxvk 防闪退（d3d9.dll）"), 12, 124, true, true);
+            chkLaunch = AddChk(gp, Lang.S("写 Steam 启动项"), 12, 148, true, true);
+            chkCfg = AddChk(gp, Lang.S("写参数配置（L4N 按键 + Skeeto 设置）"), 12, 172, true, true);
+            tips.SetToolTip(chkCfg, Lang.S("从 U 盘的参数存档里取出你调好的 autoexec.cfg 和 skeeto_setting.ini，\r\n直接写进这台机器。换机器装机就不用再手调了。\r\n下面那行选套用哪一套；没有存档就退回旧做法（搬 U 盘根目录的 autoexec.cfg）。"));
+            Label l4 = new Label(); l4.Text = Lang.S("启动项"); l4.SetBounds(12, 198, 44, 20); Theme.Dress(l4); gp.Controls.Add(l4);
             txtLaunch = new TextBox(); txtLaunch.SetBounds(60, 196, 246, 24); Theme.Dress(txtLaunch); gp.Controls.Add(txtLaunch);
             // 一行输入框放不下 130 个字符：外面只给个预览，真正的编辑交给「…」里的放大窗口
             txtLaunch.TextChanged += delegate { UpdateLaunchTip(); };
             txtLaunch.DoubleClick += delegate { EditLaunch(); };
 
             // 复制 / 放大：两个按钮都靠右，位置统一由 LayoutLaunchRow 算，拖动窗口也不会错位
-            btnLaunchCopy = new FlatButton(); btnLaunchCopy.Text = "复制";
+            btnLaunchCopy = new FlatButton(); btnLaunchCopy.Text = Lang.S("复制");
             btnLaunchCopy.SetBounds(310, 196, 44, 24);
             btnLaunchCopy.Click += delegate { CopyLaunch(); };
-            tips.SetToolTip(btnLaunchCopy, "把当前启动项整段复制到剪贴板，方便贴到 Steam、记事本或发给别人。");
+            tips.SetToolTip(btnLaunchCopy, Lang.S("把当前启动项整段复制到剪贴板，方便贴到 Steam、记事本或发给别人。"));
             gp.Controls.Add(btnLaunchCopy);
             copyTimer.Interval = 1400;
             copyTimer.Tick += delegate(object s2, EventArgs e2)
             {
                 copyTimer.Stop();
-                if (btnLaunchCopy != null) btnLaunchCopy.Text = "复制";
+                if (btnLaunchCopy != null) btnLaunchCopy.Text = Lang.S("复制");
             };
 
             btnLaunchEdit = new FlatButton(); btnLaunchEdit.Text = "…"; btnLaunchEdit.Font = Theme.UIBold;
             btnLaunchEdit.AccessibleName = "放大编辑启动项";
             btnLaunchEdit.SetBounds(358, 196, 26, 24);
             btnLaunchEdit.Click += delegate { EditLaunch(); };
-            tips.SetToolTip(btnLaunchEdit, "放大编辑启动项（可换行、可恢复默认、可把 0/1 换成 0 或 1）。双击输入框也能打开。");
+            tips.SetToolTip(btnLaunchEdit, Lang.S("放大编辑启动项（可换行、可恢复默认、可把 0/1 换成 0 或 1）。双击输入框也能打开。"));
             gp.Controls.Add(btnLaunchEdit);
 
             LayoutLaunchRow(leftW);
@@ -478,40 +487,40 @@ namespace Installer
 
             // ---- 左栏中：安装选项（原来挤在 MOD 列表底部，语义上属于"怎么装"，跟"挑什么"分开）----
             gOpt = new Section();
-            gOpt.Caption = "安装选项"; gOpt.SetBounds(Theme.M, 286, leftW, 144); Controls.Add(gOpt);
-            chkSwap = new CheckBox(); chkSwap.Text = "换整套（把不在这套里的 MOD 关掉）";
+            gOpt.Caption = Lang.S("安装选项"); gOpt.SetBounds(Theme.M, 286, leftW, 144); Controls.Add(gOpt);
+            chkSwap = new CheckBox(); chkSwap.Text = Lang.S("换整套（把不在这套里的 MOD 关掉）");
             chkSwap.SetBounds(12, 28, leftW - 24, 22); Theme.Dress(chkSwap); gOpt.Controls.Add(chkSwap);
             chkSwap.Checked = true;
             tips.SetToolTip(chkSwap, "切方案时，上一套的 MOD 在 addonlist 里改成「关闭」，文件留在 addons 里不动。\r\n"
                 + "切回去直接打开就能用，不用重新复制。\r\n"
                 + "只认 U 盘库里有的 vpk —— 你自己丢进 addons 的不会被碰。");
-            chkStrict = new CheckBox(); chkStrict.Text = "严格校验（慢一倍，更保险）";
+            chkStrict = new CheckBox(); chkStrict.Text = Lang.S("严格校验（慢一倍，更保险）");
             chkStrict.SetBounds(12, 52, leftW - 24, 22); Theme.Dress(chkStrict); gOpt.Controls.Add(chkStrict);
-            tips.SetToolTip(chkStrict, "默认只比文件大小。勾上之后，复制完再回读源文件和目标各算一遍 SHA256 比对。");
+            tips.SetToolTip(chkStrict, Lang.S("默认只比文件大小。勾上之后，复制完再回读源文件和目标各算一遍 SHA256 比对。"));
 
             // 已装的怎么办：这是机房里最常遇到的一件事 —— 有的机器上次装过一半，有的要原样重来
-            Label l5 = new Label(); l5.Text = "已装的"; l5.SetBounds(12, 80, 56, 20); Theme.Dress(l5); gOpt.Controls.Add(l5);
-            rdSkip = new RadioButton(); rdSkip.Text = "跳过"; rdSkip.SetBounds(70, 78, 66, 22); Theme.Dress(rdSkip); gOpt.Controls.Add(rdSkip);
-            rdOver = new RadioButton(); rdOver.Text = "覆盖重装"; rdOver.SetBounds(140, 78, 96, 22); Theme.Dress(rdOver); gOpt.Controls.Add(rdOver);
-            Label l6 = new Label(); l6.Text = "跳过已有 / 全部重写"; l6.SetBounds(240, 80, leftW - 240 - 12, 18); l6.Font = Theme.UISmall; Theme.Dress(l6); l6.ForeColor = Theme.Ink3; gOpt.Controls.Add(l6);
-            tips.SetToolTip(rdSkip, "平台、Skeeto、素材包、MQCam、MOD 只要已经装过且大小一致就跳过。\r\n装得快，适合新机器或者上次已经装好了。");
-            tips.SetToolTip(rdOver, "不管装没装过，全都重新写一遍。\r\n用来修「装了一半」「文件被删/被改」的机器，慢一些但最干净。");
+            Label l5 = new Label(); l5.Text = Lang.S("已装的"); l5.SetBounds(12, 80, 56, 20); Theme.Dress(l5); gOpt.Controls.Add(l5);
+            rdSkip = new RadioButton(); rdSkip.Text = Lang.S("跳过"); rdSkip.SetBounds(70, 78, 66, 22); Theme.Dress(rdSkip); gOpt.Controls.Add(rdSkip);
+            rdOver = new RadioButton(); rdOver.Text = Lang.S("覆盖重装"); rdOver.SetBounds(140, 78, 96, 22); Theme.Dress(rdOver); gOpt.Controls.Add(rdOver);
+            Label l6 = new Label(); l6.Text = Lang.S("跳过已有 / 全部重写"); l6.SetBounds(240, 80, leftW - 240 - 12, 18); l6.Font = Theme.UISmall; Theme.Dress(l6); l6.ForeColor = Theme.Ink3; gOpt.Controls.Add(l6);
+            tips.SetToolTip(rdSkip, Lang.S("平台、Skeeto、素材包、MQCam、MOD 只要已经装过且大小一致就跳过。\r\n装得快，适合新机器或者上次已经装好了。"));
+            tips.SetToolTip(rdOver, Lang.S("不管装没装过，全都重新写一遍。\r\n用来修「装了一半」「文件被删/被改」的机器，慢一些但最干净。"));
 
             // 参数配置：全套管理在对话框里，外面只留「选哪套 + 还原」
-            Label l7 = new Label(); l7.Text = "参数"; l7.SetBounds(12, 110, 56, 20); Theme.Dress(l7); gOpt.Controls.Add(l7);
+            Label l7 = new Label(); l7.Text = Lang.S("参数"); l7.SetBounds(12, 110, 56, 20); Theme.Dress(l7); gOpt.Controls.Add(l7);
             cboTweak = new ComboBox(); cboTweak.SetBounds(70, 108, 156, 24); cboTweak.DropDownStyle = ComboBoxStyle.DropDownList; Theme.Dress(cboTweak);
             cboTweak.SelectedIndexChanged += delegate { UpdateTweakTip(); };
             gOpt.Controls.Add(cboTweak);
-            tips.SetToolTip(cboTweak, "装机时勾着「写参数配置」，就会把这套 autoexec.cfg + skeeto_setting.ini 推过去。");
-            btnTweak = new FlatButton(); btnTweak.Text = "参数配置…"; btnTweak.SetBounds(230, 106, 90, Theme.H); btnTweak.Click += delegate { ManageTweaks(); }; gOpt.Controls.Add(btnTweak);
-            tips.SetToolTip(btnTweak, "保存这台机器调好的参数 / 套用存档 / 删除存档。");
+            tips.SetToolTip(cboTweak, Lang.S("装机时勾着「写参数配置」，就会把这套 autoexec.cfg + skeeto_setting.ini 推过去。"));
+            btnTweak = new FlatButton(); btnTweak.Text = Lang.S("参数配置…"); btnTweak.SetBounds(230, 106, 90, Theme.H); btnTweak.Click += delegate { ManageTweaks(); }; gOpt.Controls.Add(btnTweak);
+            tips.SetToolTip(btnTweak, Lang.S("保存这台机器调好的参数 / 套用存档 / 删除存档。"));
 
             // ---- 左栏下：日志（默认收起）----
             // 日志是排错才看的东西：常驻的话左栏一半高度都被它占着，把「装什么 / 安装选项」
             // 挤到上面一小块。收起来只留一个切换按钮，点了才展开；高度由 ApplyResponsive 算。
             Section gl = new Section();
-            gl.Caption = "日志"; gl.SetBounds(Theme.M, 478, leftW, 200); gl.Visible = false; Controls.Add(gl);
-            FlatButton btnLog = new FlatButton(); btnLog.Text = "打开日志"; btnLog.SetBounds(leftW - 12 - 68, 1, 68, 24); btnLog.Font = Theme.UISmall; btnLog.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", Core.LogDir); } catch { } }; gl.Controls.Add(btnLog);
+            gl.Caption = Lang.S("日志"); gl.SetBounds(Theme.M, 478, leftW, 200); gl.Visible = false; Controls.Add(gl);
+            FlatButton btnLog = new FlatButton(); btnLog.Text = Lang.S("打开日志"); btnLog.SetBounds(leftW - 12 - 68, 1, 68, 24); btnLog.Font = Theme.UISmall; btnLog.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", Core.LogDir); } catch { } }; gl.Controls.Add(btnLog);
             txtLog = new TextBox();
             txtLog.SetBounds(12, 30, leftW - 24, 170);
             txtLog.Multiline = true; txtLog.ScrollBars = ScrollBars.Both; txtLog.WordWrap = false; txtLog.ReadOnly = true;
@@ -522,12 +531,12 @@ namespace Installer
             gl.Controls.Add(txtLog);
 
             btnLogToggle = new FlatButton();
-            btnLogToggle.Text = "显示日志 ▾";
+            btnLogToggle.Text = Lang.S("显示日志 ▾");
             btnLogToggle.Font = Theme.UISmall;
             btnLogToggle.Soft = true;                 // 整栏大白按钮太抢眼，像个误放的主操作
             btnLogToggle.SetBounds(Theme.M, 438, 132, Theme.H);
             btnLogToggle.Click += delegate { SetLogOpen(!logOpen); };
-            tips.SetToolTip(btnLogToggle, "安装日志：什么时候开始、每个文件复制到哪、哪一步跳过了。\r\n平时收起来，出问题再展开。");
+            tips.SetToolTip(btnLogToggle, Lang.S("安装日志：什么时候开始、每个文件复制到哪、哪一步跳过了。\r\n平时收起来，出问题再展开。"));
             Controls.Add(btnLogToggle);
 
             // 左栏底部这行信息：以前下面大半屏是空的，看着像漏画了东西；
@@ -546,24 +555,24 @@ namespace Installer
             // 不另开窗口，勾选、搜索、方案下拉始终在视线里，关窗口把进程留在后台这种事也不会再发生。
             int modH = CH - 56 - BottomBarH;                 // 到下方按钮行为止，中间全给 MOD 库
             Section gm = new Section();
-            gm.Caption = "MOD 库（U 盘的 vpk + 压缩包）"; gm.SetBounds(rightX, 56, rightW, modH); Controls.Add(gm);
+            gm.Caption = Lang.S("MOD 库（U 盘的 vpk + 压缩包）"); gm.SetBounds(rightX, 56, rightW, modH); Controls.Add(gm);
 
-            Label l8 = new Label(); l8.Text = "方案"; l8.SetBounds(12, 34, 34, 20); Theme.Dress(l8); gm.Controls.Add(l8);
+            Label l8 = new Label(); l8.Text = Lang.S("方案"); l8.SetBounds(12, 34, 34, 20); Theme.Dress(l8); gm.Controls.Add(l8);
             cboProfile = new ComboBox(); cboProfile.SetBounds(50, 30, 204, 24); cboProfile.DropDownStyle = ComboBoxStyle.DropDownList; Theme.Dress(cboProfile); gm.Controls.Add(cboProfile);
             cboProfile.SelectedIndexChanged += delegate { ProfileSelectionChanged(); };
-            tips.SetToolTip(cboProfile, "只选择方案，不会立刻改当前勾选；确认后点「套用」。");
-            btnSaveProfile = new FlatButton(); btnSaveProfile.Text = "存为方案"; btnSaveProfile.SetBounds(262, 28, 84, Theme.H); btnSaveProfile.Click += delegate { SaveProfile(); }; gm.Controls.Add(btnSaveProfile);
-            btnApplyProfile = new FlatButton(); btnApplyProfile.Text = "套用"; btnApplyProfile.SetBounds(354, 28, 58, Theme.H); btnApplyProfile.Click += delegate { ApplyProfile(); }; gm.Controls.Add(btnApplyProfile);
-            tips.SetToolTip(btnApplyProfile, "把选中的方案套用到当前勾选；如果会覆盖现有选择，会先确认。");
-            btnManage = new FlatButton(); btnManage.Text = "方案管理…"; btnManage.SetBounds(rightW - 12 - 88, 28, 88, Theme.H); btnManage.Click += delegate { ManageProfiles(); }; gm.Controls.Add(btnManage);
+            tips.SetToolTip(cboProfile, Lang.S("只选择方案，不会立刻改当前勾选；确认后点「套用」。"));
+            btnSaveProfile = new FlatButton(); btnSaveProfile.Text = Lang.S("存为方案"); btnSaveProfile.SetBounds(262, 28, 84, Theme.H); btnSaveProfile.Click += delegate { SaveProfile(); }; gm.Controls.Add(btnSaveProfile);
+            btnApplyProfile = new FlatButton(); btnApplyProfile.Text = Lang.S("套用"); btnApplyProfile.SetBounds(354, 28, 58, Theme.H); btnApplyProfile.Click += delegate { ApplyProfile(); }; gm.Controls.Add(btnApplyProfile);
+            tips.SetToolTip(btnApplyProfile, Lang.S("把选中的方案套用到当前勾选；如果会覆盖现有选择，会先确认。"));
+            btnManage = new FlatButton(); btnManage.Text = Lang.S("方案管理…"); btnManage.SetBounds(rightW - 12 - 88, 28, 88, Theme.H); btnManage.Click += delegate { ManageProfiles(); }; gm.Controls.Add(btnManage);
 
-            Label l9 = new Label(); l9.Text = "搜索"; l9.SetBounds(12, 66, 34, 20); Theme.Dress(l9); gm.Controls.Add(l9);
+            Label l9 = new Label(); l9.Text = Lang.S("搜索"); l9.SetBounds(12, 66, 34, 20); Theme.Dress(l9); gm.Controls.Add(l9);
             txtSearch = new TextBox(); txtSearch.SetBounds(50, 62, rightW - 126, 24); txtSearch.AccessibleName = "搜索 MOD"; Theme.Dress(txtSearch); txtSearch.TextChanged += delegate { searchTimer.Stop(); searchTimer.Start(); }; gm.Controls.Add(txtSearch);
-            tips.SetToolTip(txtSearch, "搜名字 / 替换了什么 / 位置名。Ctrl+F 快速聚焦，Esc 清空并返回方案树。\r\n停止输入 250 ms 自动筛；点搜索结果可跳回它在树里的位置。");
-            btnClearSearch = new FlatButton(); btnClearSearch.Text = "清空"; btnClearSearch.SetBounds(rightW - 68, 62, 56, 24);
+            tips.SetToolTip(txtSearch, Lang.S("搜名字 / 替换了什么 / 位置名。Ctrl+F 快速聚焦，Esc 清空并返回方案树。\r\n停止输入 250 ms 自动筛；点搜索结果可跳回它在树里的位置。"));
+            btnClearSearch = new FlatButton(); btnClearSearch.Text = Lang.S("清空"); btnClearSearch.SetBounds(rightW - 68, 62, 56, 24);
             btnClearSearch.AccessibleName = "清空搜索并返回方案树";
             btnClearSearch.Click += delegate { txtSearch.Clear(); RefreshMods(); txtSearch.Focus(); };
-            tips.SetToolTip(btnClearSearch, "清空搜索并返回方案树（Esc）");
+            tips.SetToolTip(btnClearSearch, Lang.S("清空搜索并返回方案树（Esc）"));
             gm.Controls.Add(btnClearSearch);
 
             // 方案分布：一行说完这套在各类里放了几个
@@ -598,7 +607,7 @@ namespace Installer
             lblLoading.ShowLoad("正在读取 U 盘上的 MOD 库…",
                 "第一次启动或刚更新完可能要等几秒，别急着关", true);
 
-            lblSel = new Label(); lblSel.SetBounds(12, modH - 64, rightW - 24, 18); lblSel.Text = "已选 0 个"; lblSel.Font = Theme.UISmall; Theme.Dress(lblSel); gm.Controls.Add(lblSel);
+            lblSel = new Label(); lblSel.SetBounds(12, modH - 64, rightW - 24, 18); lblSel.Text = Lang.S("已选 0 个"); lblSel.Font = Theme.UISmall; Theme.Dress(lblSel); gm.Controls.Add(lblSel);
             lblConflict = new Label();
             lblConflict.SetBounds(12, modH - 40, rightW - 24, 34);
             lblConflict.Text = "";
@@ -619,32 +628,32 @@ namespace Installer
             int xSwitch = xOpen - Theme.S - bwSwitch;
             int xInstall = xSwitch - Theme.S - bwInstall;
 
-            btnInstall = new FlatButton(); btnInstall.Text = "开始安装 →"; btnInstall.Primary = true;
+            btnInstall = new FlatButton(); btnInstall.Text = Lang.S("开始安装 →"); btnInstall.Primary = true;
             btnInstall.AccessibleName = "开始安装所选组件和 MOD";
             btnInstall.Font = new Font(Theme.UI, FontStyle.Bold);
             btnInstall.SetBounds(xInstall, CH - BottomBarH, bwInstall, Theme.HP);
             btnInstall.Click += delegate { DoInstall(); }; Controls.Add(btnInstall);
-            btnSwitch = new FlatButton(); btnSwitch.Soft = true; btnSwitch.Text = "管理已装 MOD";
+            btnSwitch = new FlatButton(); btnSwitch.Soft = true; btnSwitch.Text = Lang.S("管理已装 MOD");
             btnSwitch.SetBounds(xSwitch, CH - BottomBarH, bwSwitch, Theme.HP);
             btnSwitch.Click += delegate { DoSwitch(); }; Controls.Add(btnSwitch);
-            btnRestore = new FlatButton(); btnRestore.Text = "一键还原"; btnRestore.Danger = true;
+            btnRestore = new FlatButton(); btnRestore.Text = Lang.S("一键还原"); btnRestore.Danger = true;
             btnRestore.SetBounds(Theme.M, CH - BottomBarH, bwRestore, Theme.HP);
             btnRestore.AccessibleName = "危险：移除本次安装写进去的文件";
             btnRestore.Click += delegate { DoRestore(); }; Controls.Add(btnRestore);
-            tips.SetToolTip(btnRestore, "危险操作：删掉装进游戏的文件。执行前会再次确认。\r\n故意放在最左下角，离「开始安装」最远的地方。");
-            btnOpen = new FlatButton(); btnOpen.Soft = true; btnOpen.Text = "打开游戏目录";
+            tips.SetToolTip(btnRestore, Lang.S("危险操作：删掉装进游戏的文件。执行前会再次确认。\r\n故意放在最左下角，离「开始安装」最远的地方。"));
+            btnOpen = new FlatButton(); btnOpen.Soft = true; btnOpen.Text = Lang.S("打开游戏目录");
             btnOpen.SetBounds(xOpen, CH - BottomBarH, bwOpen, Theme.HP);
             btnOpen.Click += delegate { try { System.Diagnostics.Process.Start("explorer.exe", txtGame.Text); } catch { } }; Controls.Add(btnOpen);
 
             // 进度条和「停止剩余」跟着让位：起点从还原按钮右边开始
             bar = new ProgressBar(); bar.SetBounds(Theme.M + bwRestore + Theme.G, CH - BottomBarH + 12, 360, 12); bar.Visible = false; Controls.Add(bar);
             btnCancel = new FlatButton();
-            btnCancel.Text = "停止剩余";
+            btnCancel.Text = Lang.S("停止剩余");
             btnCancel.SetBounds(Theme.M + bwRestore + Theme.G + 368, CH - BottomBarH + 6, 92, 24);
             btnCancel.Visible = false;
             btnCancel.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             btnCancel.Click += delegate { RequestStopInstall(); };
-            tips.SetToolTip(btnCancel, "在当前步骤或文件结束后停止后续安装。已经写入的文件会保留，不会自动回滚。");
+            tips.SetToolTip(btnCancel, Lang.S("在当前步骤或文件结束后停止后续安装。已经写入的文件会保留，不会自动回滚。"));
             Controls.Add(btnCancel);
 
             // 装机前的常驻校验条：把「目录不对 / 游戏在跑 / 什么都没勾」这三件事提前写在界面上，
@@ -658,7 +667,7 @@ namespace Installer
             lblPre.BackColor = Color.Transparent;
             lblPre.Visible = false;
             Controls.Add(lblPre);
-            lblStatus = new Label(); lblStatus.SetBounds(Theme.M, CH - 28, W - 2 * Theme.M, 20); lblStatus.Text = "就绪";
+            lblStatus = new Label(); lblStatus.SetBounds(Theme.M, CH - 28, W - 2 * Theme.M, 20); lblStatus.Text = Lang.S("就绪");
             lblStatus.ForeColor = Theme.Ink2; lblStatus.BackColor = Color.Transparent; Controls.Add(lblStatus);
 
             // 随窗口缩放：左右拉伸的跟着走，底部按钮贴右下
@@ -781,13 +790,13 @@ namespace Installer
             if (preOk)
             {
                 lblPre.ForeColor = Theme.Ok;
-                lblPre.Text = "● 可以开始安装";
+                lblPre.Text = Lang.S("● 可以开始安装");
             }
             else
             {
                 lblPre.ForeColor = Theme.Accent;
                 string more = bad.Count > 1 ? "\r\n另有 " + (bad.Count - 1) + " 项：" + string.Join("；", bad.GetRange(1, bad.Count - 1).ToArray()) : "";
-                lblPre.Text = "● " + bad[0] + more;
+                lblPre.Text = Lang.F("● {0}{1}", bad[0], more);
             }
         }
 
@@ -909,7 +918,7 @@ namespace Installer
                     RefreshConflicts();
                     if (treeView != null) RebuildViews();
                     RunPendingRoot();
-                    lblStatus.Text = "就绪";
+                    lblStatus.Text = Lang.S("就绪");
                 });
             });
             th.IsBackground = true;
@@ -1046,7 +1055,7 @@ namespace Installer
             cboProfile.Items.Clear();
             List<string> ps = ProfileStore.ListProfiles();
             if (ps.Count == 0) { cboProfile.Items.Add("还没有方案"); cboProfile.SelectedIndex = 0; LoadSchemeKeys(); SyncPicks(); return; }
-            cboProfile.Items.Add("当前选择");
+            cboProfile.Items.Add(Lang.S("当前选择"));
             foreach (string p in ps) cboProfile.Items.Add(p);
             string want = string.IsNullOrEmpty(keep) ? appliedProfile : keep;
             int idx = 0;
@@ -1881,6 +1890,90 @@ namespace Installer
         /// 诊断截图：主界面（方案树 / 总览 / 收起左栏各一张）。
         /// 改视觉时全靠这几张对照，不然只能凭印象说"好像好看了"。
         /// </summary>
+        /// <summary>
+        /// 语言自检：英文模式下把建出来的界面走一遍，找出还写着中文的控件文字。
+        /// 词表是按「源码里的中文原句」建的，漏翻不会报错、只会显示中文 ——
+        /// 所以必须真的把控件建出来看，光看词表发现不了漏接的地方。
+        /// </summary>
+        internal int LangSelf()
+        {
+            for (int i = 0; i < 200 && !Ready; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(20); }
+            for (int i = 0; i < 6; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(80); }
+
+            List<string> found = new List<string>();
+            CollectCjk(this, found, "主窗口");
+
+            // 设置 / 下载列表 / 工坊：这三处是用户点得最多的二级界面
+            try
+            {
+                using (SettingsForm sf = new SettingsForm(this))
+                {
+                    sf.Show();
+                    for (int i = 0; i < 6; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(60); }
+                    CollectCjk(sf, found, "设置");
+                    Shot(sf, "lang-settings");
+                    sf.Close();
+                }
+            }
+            catch (Exception ex) { Core.Log("WARN", "LANGSELF 设置窗口: " + ex.Message); }
+
+            try
+            {
+                using (DownloadListForm df = new DownloadListForm())
+                {
+                    df.Show();
+                    for (int i = 0; i < 6; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(60); }
+                    CollectCjk(df, found, "下载列表");
+                    Shot(df, "lang-downloads");
+                    df.Close();
+                }
+            }
+            catch (Exception ex) { Core.Log("WARN", "LANGSELF 下载列表: " + ex.Message); }
+
+            try
+            {
+                using (GalleryForm gf = new GalleryForm(this))
+                {
+                    gf.Show();
+                    for (int i = 0; i < 8; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(60); }
+                    CollectCjk(gf, found, "工坊");
+                    Shot(gf, "lang-gallery");
+                    gf.Close();
+                }
+            }
+            catch (Exception ex) { Core.Log("WARN", "LANGSELF 工坊窗口: " + ex.Message); }
+
+            Shot(this, "lang-main");
+
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("英文模式下仍然是中文的控件文字：" + found.Count + " 条");
+            foreach (string one in found) sb.AppendLine("  " + one);
+            try
+            {
+                File.WriteAllText(Path.Combine(Core.LogDir, "lang-missing.txt"), sb.ToString(), new System.Text.UTF8Encoding(false));
+            }
+            catch { }
+            Console.WriteLine("LANGSELF 未翻译控件 = " + found.Count);
+            Core.Log(found.Count == 0 ? "OK" : "WARN", "LANGSELF 未翻译控件 " + found.Count + " 条（见 lang-missing.txt）");
+            return 0;
+        }
+
+        /// <summary>递归找还有中文的控件文字（输入框里的内容不算）。</summary>
+        private static void CollectCjk(Control root, List<string> found, string where)
+        {
+            foreach (Control c in root.Controls)
+            {
+                if (c is TextBox || c is ComboBox || c is ListView || c is RichTextBox) { CollectCjk(c, found, where); continue; }
+                string t = null;
+                if (c is Label || c is Button || c is CheckBox || c is RadioButton || c is GroupBox || c is TabPage)
+                    t = c.Text;
+                // 含盘符路径的不算漏翻：目录名本身是中文，翻不了也不该翻
+                if (!string.IsNullOrEmpty(t) && Lang.HasCjk(t) && t.IndexOf(":\\", StringComparison.Ordinal) < 0)
+                    found.Add(where + " · " + c.GetType().Name + "：" + t);
+                CollectCjk(c, found, where);
+            }
+        }
+
         internal void MainShot()
         {
             for (int i = 0; i < 200 && !Ready; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(20); }
@@ -2266,7 +2359,7 @@ namespace Installer
             if (schemeName.Length == 0)
             {
                 lblScheme.ForeColor = Theme.Ink3;
-                lblScheme.Text = "没选方案：挑一套，列表里就会标出它在这一类里装了什么";
+                lblScheme.Text = Lang.S("没选方案：挑一套，列表里就会标出它在这一类里装了什么");
                 return;
             }
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
@@ -2569,8 +2662,9 @@ namespace Installer
             int mods = 0;
             foreach (ModGroup g in Catalog.Groups) if (CountChecked(g) > 0) mods++;
             double rate = Core.LastRateMBps > 0.5 ? Core.LastRateMBps : 20.0;
-            string files = mods == sel.Count ? "" : "（" + sel.Count + " 个文件）";
-            lblSel.Text = string.Format("已选 {0} 个 MOD{1}  ·  {2}  ·  约 {3} 秒（按 {4:0} MB/s）", mods, files, Core.Human(total), (int)(total / (rate * 1048576.0)), rate);
+            string files = mods == sel.Count ? "" : Lang.F("（{0} 个文件）", sel.Count);
+            lblSel.Text = Lang.F("已选 {0} 个 MOD{1}  ·  {2}  ·  约 {3} 秒（按 {4:0} MB/s）",
+                mods, files, Core.Human(total), (int)(total / (rate * 1048576.0)), rate);
             lblSel.ForeColor = sel.Count > 0 ? Theme.Ink : Theme.Ink3;
             UpdateSchemeLabel();
             QueuePrecheck();          // 勾选变了，底栏那句「可以装 / 还不能装」跟着变
@@ -2606,7 +2700,7 @@ namespace Installer
                 foreach (DupGroup g in dups) waste += g.Size * (g.Items.Count - 1);
                 string one = dups[0].Items[0].Name;
                 if (one.Length > 26) one = one.Substring(0, 26) + "…";
-                lblConflict.Text = "⚠ " + dups.Count + " 组体积重复 · 最多白占 " + Core.Human(waste) + " · " + one + "\r\n"
+                lblConflict.Text = Lang.F("⚠ {0} 组体积重复 · 最多白占 {1} · {2}\r\n", dups.Count, Core.Human(waste), one)
                                  + "点这里处理：先核对内容是不是同一个文件，再决定这次不装 / 直接删掉";
             }
             else
@@ -2731,7 +2825,7 @@ namespace Installer
             if (!Core.TestGame(root))
             {
                 Core.Log("WARN", source + "的目录里没有 left4dead2.exe：" + root);
-                lblStatus.Text = "目录不对：里面没有 left4dead2.exe";
+                lblStatus.Text = Lang.S("目录不对：里面没有 left4dead2.exe");
                 lblStatus.ForeColor = Theme.Accent;
                 return;
             }
@@ -3171,7 +3265,7 @@ namespace Installer
             public LibraryDirsForm()
             {
                 Dirty = false;
-                Text = "库文件夹管理";
+                Text = Lang.S("库文件夹管理");
                 Theme.UseDpi(this);
                 ClientSize = Dpi.Sz(560, 380);
                 Font = Theme.UI;
@@ -3203,20 +3297,20 @@ namespace Installer
                 Controls.Add(lb);
 
                 FlatButton add = new FlatButton();
-                add.Text = "添加文件夹…";
+                add.Text = Lang.S("添加文件夹…");
                 add.SetBounds(12, 326, 120, Theme.H);
                 add.Primary = true;
                 add.Click += delegate { AddDir(); };
                 Controls.Add(add);
 
                 FlatButton del = new FlatButton();
-                del.Text = "移除所选";
+                del.Text = Lang.S("移除所选");
                 del.SetBounds(142, 326, 96, Theme.H);
                 del.Click += delegate { RemoveDir(); };
                 Controls.Add(del);
 
                 FlatButton close = new FlatButton();
-                close.Text = "关闭";
+                close.Text = Lang.S("关闭");
                 close.SetBounds(464, 326, 84, Theme.H);
                 close.DialogResult = DialogResult.Cancel;
                 Controls.Add(close);
@@ -3722,7 +3816,7 @@ namespace Installer
             if (gOpt != null) gOpt.Visible = open;
             if (gLog != null) gLog.Visible = open && logOpen;
             if (btnLogToggle != null) btnLogToggle.Visible = open;
-            if (btnPanel != null) btnPanel.Text = open ? "收起" : "面板";
+            if (btnPanel != null) btnPanel.Text = open ? Lang.S("收起") : "面板";
             lastRespW = -1;                    // 强制重排一次（尺寸没变也要排）
             ApplyResponsive();
         }
@@ -4008,7 +4102,7 @@ namespace Installer
             sb.AppendLine("U 盘根    : " + Core.UsbRoot);
             sb.AppendLine("日志目录  : " + Core.LogDir);
             sb.AppendLine("MOD 库    : " + Core.ModList.Count + " 个 vpk");
-            MessageBox.Show(sb.ToString(), "环境自检");
+            MessageBox.Show(sb.ToString(), Lang.S("环境自检"));
             Core.Log("INFO", "环境自检：" + Environment.OSVersion.VersionString + " / .NET " + Environment.Version + " / 管理员=" + admin);
         }
 
@@ -4184,7 +4278,7 @@ namespace Installer
             if (Work.CancelRequested) return;
             Work.CancelRequested = true;
             btnCancel.Enabled = false;
-            btnCancel.Text = "正在停止…";
+            btnCancel.Text = Lang.S("正在停止…");
             SetStatus("正在停止 · 当前步骤结束后不再继续");
             Core.Log("WARN", "用户请求停止后续安装；已写入的文件会保留，不会自动回滚");
         }
@@ -4604,11 +4698,11 @@ namespace Installer
             j.StepDone = 0;
             Work.CancelRequested = false;
             btnCancel.Enabled = true;
-            btnCancel.Text = "停止剩余";
+            btnCancel.Text = Lang.S("停止剩余");
             btnCancel.Visible = true;
             SetBusy(true);
             bar.Style = ProgressBarStyle.Marquee;
-            lblStatus.Text = "正在准备…";
+            lblStatus.Text = Lang.S("正在准备…");
             Thread th = new Thread(delegate() { RunInstall(j); });
             th.IsBackground = true;
             th.SetApartmentState(ApartmentState.STA);
@@ -4671,7 +4765,7 @@ namespace Installer
                     InstallModsStep(j);
                 if (!j.Canceled && j.Launch)
                 {
-                    Core.Log("STEP", "写 Steam 启动项");
+                    Core.Log("STEP", Lang.S("写 Steam 启动项"));
                     BeginStep(j, "正在写 Steam 启动项…");
                     string launchMsg = Work.WriteLaunchOptions(j.LaunchVal);
                     Core.Log("INFO", launchMsg);
@@ -4697,7 +4791,7 @@ namespace Installer
                 {
                     btnCancel.Visible = false;
                     btnCancel.Enabled = true;
-                    btnCancel.Text = "停止剩余";
+                    btnCancel.Text = Lang.S("停止剩余");
                     ExitLongOp();
                     // 用户中途点过 ×：现在停在文件边界上了，替他关掉窗口（不再问第二遍）
                     if (closeWhenIdle) { closeWhenIdle = false; forceClose = true; BeginInvoke(new MethodInvoker(Close)); }
@@ -5059,7 +5153,7 @@ namespace Installer
         public ProfileManageForm(MainForm o)
         {
             owner = o;
-            Text = "方案管理";
+            Text = Lang.S("方案管理");
             Theme.UseDpi(this);
             ClientSize = Dpi.Sz(820, 520);
             MinimumSize = new Size(760, 470);
@@ -5070,7 +5164,7 @@ namespace Installer
             SuspendLayout();
 
             // ---- 左：方案 ----
-            Label l1 = new Label(); l1.Text = "方案"; l1.SetBounds(12, 12, 60, 20); Theme.Dress(l1); Controls.Add(l1);
+            Label l1 = new Label(); l1.Text = Lang.S("方案"); l1.SetBounds(12, 12, 60, 20); Theme.Dress(l1); Controls.Add(l1);
             lb = new ListBox(); lb.SetBounds(12, 34, 220, 386);
             lb.BorderStyle = BorderStyle.FixedSingle; lb.BackColor = Theme.Surface; lb.ForeColor = Theme.Ink;
             lb.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
@@ -5086,19 +5180,19 @@ namespace Installer
                 dirty = false;
             };
 
-            FlatButton ap = new FlatButton(); ap.Text = "套用"; ap.Primary = true; ap.SetBounds(12, 428, 68, Theme.H);
+            FlatButton ap = new FlatButton(); ap.Text = Lang.S("套用"); ap.Primary = true; ap.SetBounds(12, 428, 68, Theme.H);
             ap.Anchor = AnchorStyles.Bottom | AnchorStyles.Left; ap.Click += delegate { ApplySel(); }; Controls.Add(ap);
-            FlatButton rn = new FlatButton(); rn.Text = "改名"; rn.SetBounds(86, 428, 68, Theme.H);
+            FlatButton rn = new FlatButton(); rn.Text = Lang.S("改名"); rn.SetBounds(86, 428, 68, Theme.H);
             rn.Anchor = AnchorStyles.Bottom | AnchorStyles.Left; rn.Click += delegate { RenameSel(); }; Controls.Add(rn);
-            FlatButton de = new FlatButton(); de.Text = "删除"; de.SetBounds(160, 428, 68, Theme.H);
+            FlatButton de = new FlatButton(); de.Text = Lang.S("删除"); de.SetBounds(160, 428, 68, Theme.H);
             de.Anchor = AnchorStyles.Bottom | AnchorStyles.Left; de.Click += delegate { DeleteSel(); }; Controls.Add(de);
-            FlatButton cp = new FlatButton(); cp.Text = "另存为…"; cp.SetBounds(12, 462, 104, Theme.H);
+            FlatButton cp = new FlatButton(); cp.Text = Lang.S("另存为…"); cp.SetBounds(12, 462, 104, Theme.H);
             cp.Anchor = AnchorStyles.Bottom | AnchorStyles.Left; cp.Click += delegate { CopySel(); }; Controls.Add(cp);
-            FlatButton im = new FlatButton(); im.Text = "导入…"; im.SetBounds(124, 462, 96, Theme.H);
+            FlatButton im = new FlatButton(); im.Text = Lang.S("导入…"); im.SetBounds(124, 462, 96, Theme.H);
             im.Anchor = AnchorStyles.Bottom | AnchorStyles.Left; im.Click += delegate { ImportFile(); }; Controls.Add(im);
 
             // ---- 右：方案内容 ----
-            lblTitle2 = new Label(); lblTitle2.Text = "这套会装什么（勾/取消 = 加减 MOD）"; lblTitle2.SetBounds(248, 12, 320, 20);
+            lblTitle2 = new Label(); lblTitle2.Text = Lang.S("这套会装什么（勾/取消 = 加减 MOD）"); lblTitle2.SetBounds(248, 12, 320, 20);
             lblTitle2.Anchor = AnchorStyles.Top | AnchorStyles.Left; Theme.Dress(lblTitle2); Controls.Add(lblTitle2);
 
             cboCat = new ComboBox(); cboCat.SetBounds(248, 34, 160, 24);
@@ -5125,14 +5219,14 @@ namespace Installer
             txtSearch.TextChanged += delegate { if (!hintOn) RebuildRows(); };
             Controls.Add(txtSearch);
 
-            FlatButton selAll = new FlatButton(); selAll.Text = "全选"; selAll.SetBounds(248, 62, 64, Theme.H);
+            FlatButton selAll = new FlatButton(); selAll.Text = Lang.S("全选"); selAll.SetBounds(248, 62, 64, Theme.H);
             selAll.Anchor = AnchorStyles.Top | AnchorStyles.Left;
             selAll.Click += delegate { SetFiltered(true); }; Controls.Add(selAll);
-            FlatButton selNone = new FlatButton(); selNone.Text = "全不选"; selNone.SetBounds(318, 62, 72, Theme.H);
+            FlatButton selNone = new FlatButton(); selNone.Text = Lang.S("全不选"); selNone.SetBounds(318, 62, 72, Theme.H);
             selNone.Anchor = AnchorStyles.Top | AnchorStyles.Left;
             selNone.Click += delegate { SetFiltered(false); }; Controls.Add(selNone);
 
-            chkOnlyPicked = new CheckBox(); chkOnlyPicked.Text = "只看已选"; chkOnlyPicked.SetBounds(714, 36, 94, 22);
+            chkOnlyPicked = new CheckBox(); chkOnlyPicked.Text = Lang.S("只看已选"); chkOnlyPicked.SetBounds(714, 36, 94, 22);
             chkOnlyPicked.Checked = true;        // 先给「这套里有什么」，要加东西再取消勾
             chkOnlyPicked.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             Theme.Dress(chkOnlyPicked);
@@ -5140,9 +5234,9 @@ namespace Installer
             Controls.Add(chkOnlyPicked);
 
             ToolTip tips = new ToolTip();
-            tips.SetToolTip(selAll, "把当前筛选出来的行全部勾上（算未保存改动，点「保存」才写回方案）");
-            tips.SetToolTip(selNone, "把当前筛选出来的行全部取消（同样要点「保存」）");
-            tips.SetToolTip(txtSearch, "按 MOD 文件名或分类筛选；配合「只看已选」可以只看这个方案里的");
+            tips.SetToolTip(selAll, Lang.S("把当前筛选出来的行全部勾上（算未保存改动，点「保存」才写回方案）"));
+            tips.SetToolTip(selNone, Lang.S("把当前筛选出来的行全部取消（同样要点「保存」）"));
+            tips.SetToolTip(txtSearch, Lang.S("按 MOD 文件名或分类筛选；配合「只看已选」可以只看这个方案里的"));
 
             // 方案内容：换成带分组标题的 ListView —— 一长串「名字 · 分类/细分」看着累，
             // 分组后「这套里地图几个、枪械几个」一眼就数得出来
@@ -5158,9 +5252,9 @@ namespace Installer
             clb.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             ImageList pad2 = new ImageList(); pad2.ImageSize = new Size(1, 22);
             clb.SmallImageList = pad2;
-            clb.Columns.Add("名称", 300);
-            clb.Columns.Add("细分", 128);
-            clb.Columns.Add("套装", 108);
+            clb.Columns.Add(Lang.S("名称"), 300);
+            clb.Columns.Add(Lang.S("细分"), 128);
+            clb.Columns.Add(Lang.S("套装"), 108);
             clb.ItemChecked += OnItemChecked;
             Controls.Add(clb);
 
@@ -5169,15 +5263,15 @@ namespace Installer
             lblInfo.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             Controls.Add(lblInfo);
 
-            FlatButton sv = new FlatButton(); sv.Text = "保存"; sv.Primary = true; sv.SetBounds(636, 452, 80, Theme.H);
+            FlatButton sv = new FlatButton(); sv.Text = Lang.S("保存"); sv.Primary = true; sv.SetBounds(636, 452, 80, Theme.H);
             sv.Anchor = AnchorStyles.Bottom | AnchorStyles.Right; sv.Click += delegate { SaveScheme(); }; Controls.Add(sv);
-            FlatButton rl = new FlatButton(); rl.Text = "还原"; rl.SetBounds(724, 452, 80, Theme.H);
+            FlatButton rl = new FlatButton(); rl.Text = Lang.S("还原"); rl.SetBounds(724, 452, 80, Theme.H);
             rl.Anchor = AnchorStyles.Bottom | AnchorStyles.Right; rl.Click += delegate { RestoreSel(); }; Controls.Add(rl);
-            FlatButton ex = new FlatButton(); ex.Text = "导出…"; ex.SetBounds(636, 486, 80, Theme.H);
+            FlatButton ex = new FlatButton(); ex.Text = Lang.S("导出…"); ex.SetBounds(636, 486, 80, Theme.H);
             ex.Anchor = AnchorStyles.Bottom | AnchorStyles.Right; ex.Click += delegate { ExportSel(); }; Controls.Add(ex);
-            FlatButton ea = new FlatButton(); ea.Text = "全部导出…"; ea.SetBounds(716, 486, 92, Theme.H);
+            FlatButton ea = new FlatButton(); ea.Text = Lang.S("全部导出…"); ea.SetBounds(716, 486, 92, Theme.H);
             ea.Anchor = AnchorStyles.Bottom | AnchorStyles.Right; ea.Click += delegate { ExportAll(); }; Controls.Add(ea);
-            FlatButton cl = new FlatButton(); cl.Text = "关闭"; cl.SetBounds(716, 424, 92, Theme.H);
+            FlatButton cl = new FlatButton(); cl.Text = Lang.S("关闭"); cl.SetBounds(716, 424, 92, Theme.H);
             cl.Anchor = AnchorStyles.Bottom | AnchorStyles.Right; cl.DialogResult = DialogResult.Cancel; Controls.Add(cl);
             CancelButton = cl;
 
@@ -5385,7 +5479,7 @@ namespace Installer
         {
             int miss = 0;
             foreach (string k in picked) if (!Core.ByRel.ContainsKey(k)) miss++;
-            string t = "已选 " + picked.Count + " 个文件 ｜ 列表显示 " + rowKeys.Count + " 行";
+            string t = Lang.F("已选 {0} 个文件 ｜ 列表显示 {1} 行", picked.Count, rowKeys.Count);
             if (miss > 0) t += " ｜ ⚠ " + miss + " 个库里找不到（保存后仍保留）";
             if (dirty) t += " ｜ 有改动未保存";
             lblInfo.Text = t;
@@ -5549,8 +5643,8 @@ namespace Installer
             StartPosition = FormStartPosition.CenterParent; MaximizeBox = false; MinimizeBox = false;
             Label l = new Label(); l.Text = hint; l.SetBounds(12, 12, 396, 20); Theme.Dress(l); Controls.Add(l);
             box = new TextBox(); box.SetBounds(12, 38, 396, 24); Theme.Dress(box); box.Text = def ?? ""; Controls.Add(box);
-            FlatButton ok = new FlatButton(); ok.Text = "确定"; ok.Primary = true; ok.SetBounds(240, 76, 80, Theme.H); ok.DialogResult = DialogResult.OK; Controls.Add(ok);
-            FlatButton no = new FlatButton(); no.Text = "取消"; no.SetBounds(328, 76, 80, Theme.H); no.DialogResult = DialogResult.Cancel; Controls.Add(no);
+            FlatButton ok = new FlatButton(); ok.Text = Lang.S("确定"); ok.Primary = true; ok.SetBounds(240, 76, 80, Theme.H); ok.DialogResult = DialogResult.OK; Controls.Add(ok);
+            FlatButton no = new FlatButton(); no.Text = Lang.S("取消"); no.SetBounds(328, 76, 80, Theme.H); no.DialogResult = DialogResult.Cancel; Controls.Add(no);
             AcceptButton = ok; CancelButton = no;
         }
         public static string Ask(string hint, string title)

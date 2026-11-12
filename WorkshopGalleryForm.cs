@@ -96,7 +96,7 @@ namespace Installer
         public GalleryForm(MainForm o)
         {
             owner = o;
-            Text = "创意工坊 · 画廊";
+            Text = Lang.S("创意工坊 · 画廊");
             Theme.UseDpi(this);
             ClientSize = Dpi.Sz(1180, 780);
             MinimumSize = Dpi.Sz(900, 620);
@@ -107,7 +107,7 @@ namespace Installer
             ShowInTaskbar = true;
 
             // ---- 顶部：找 ----
-            lblCat.Text = "分类";
+            lblCat.Text = Lang.S("分类");
             lblCat.Font = Theme.UISmall;
             lblCat.ForeColor = Theme.Ink2;
             lblCat.AutoSize = false;
@@ -136,7 +136,7 @@ namespace Installer
             };
             Controls.Add(txtQuery);
 
-            btnSearch.Text = "搜索";
+            btnSearch.Text = Lang.S("搜索");
             btnSearch.Click += delegate { DoSearch(1); };
             Controls.Add(btnSearch);
 
@@ -149,15 +149,15 @@ namespace Installer
             cboSort.SelectedIndex = 0;
             Controls.Add(cboSort);
 
-            btnList.Text = "批量下载";
+            btnList.Text = Lang.S("批量下载");
             btnList.Click += delegate { OpenList(); };
             Controls.Add(btnList);
 
-            btnDowns.Text = "下载列表";
+            btnDowns.Text = Lang.S("下载列表");
             btnDowns.Click += delegate { OpenDowns(); };
             Controls.Add(btnDowns);
 
-            btnClose.Text = "关闭";
+            btnClose.Text = Lang.S("关闭");
             btnClose.DialogResult = DialogResult.Cancel;
             Controls.Add(btnClose);
             CancelButton = btnClose;
@@ -200,7 +200,7 @@ namespace Installer
 
             // 说明文字挂成 picHero 的子控件：父控件总把自己的子控件画在自己的图上面，
             // 不依赖 z-order，也不用 BringToFront（列表窗口那次用兄弟控件 + BringToFront 没生效）
-            lblHeroHint.Text = "（点卡片看介绍）";
+            lblHeroHint.Text = Lang.S("（点卡片看介绍）");
             lblHeroHint.TextAlign = ContentAlignment.MiddleCenter;
             lblHeroHint.Font = Theme.UISmall;
             lblHeroHint.ForeColor = Theme.Ink2;
@@ -259,20 +259,20 @@ namespace Installer
             descBox.Controls.Add(txtDesc);
             detail.Controls.Add(descBox);
 
-            btnBack.Text = "← 返回";
+            btnBack.Text = Lang.S("← 返回");
             btnBack.Click += delegate { ShowGallery(); };
             detail.Controls.Add(btnBack);
 
-            btnGet.Text = "下载这个 MOD";
+            btnGet.Text = Lang.S("下载这个 MOD");
             btnGet.Primary = true;
             btnGet.Click += delegate { DownloadOne(); };
             detail.Controls.Add(btnGet);
 
-            btnOpen.Text = "在浏览器打开";
+            btnOpen.Text = Lang.S("在浏览器打开");
             btnOpen.Click += delegate { OpenInBrowser(); };
             detail.Controls.Add(btnOpen);
 
-            btnLang.Text = "看原文";
+            btnLang.Text = Lang.S("看原文");
             btnLang.Click += delegate { showZh = !showZh; RenderDesc(); UpdateLangButton(); };
             detail.Controls.Add(btnLang);
 
@@ -281,20 +281,20 @@ namespace Installer
             lblStatus.ForeColor = Theme.Ink2;
             lblStatus.AutoSize = false;
             lblStatus.AutoEllipsis = true;
-            lblStatus.Text = "挑一个分类，或直接搜关键词；点卡片看完整介绍。";
+            lblStatus.Text = Lang.S("挑一个分类，或直接搜关键词；点卡片看完整介绍。");
             Controls.Add(lblStatus);
 
-            btnTop.Text = "回到顶部";
+            btnTop.Text = Lang.S("回到顶部");
             btnTop.Click += delegate { GoTop(); };
             Controls.Add(btnTop);
 
             // 页码导航：滑动是流式浏览，跳页是精确定位 —— 两种都要
-            btnPrevPage.Text = "◀ 上一页";
+            btnPrevPage.Text = Lang.S("◀ 上一页");
             btnPrevPage.Enabled = false;
             btnPrevPage.Click += delegate { if (page > 1) DoSearch(page - 1); };
             Controls.Add(btnPrevPage);
 
-            btnNextPage.Text = "下一页 ▶";
+            btnNextPage.Text = Lang.S("下一页 ▶");
             btnNextPage.Enabled = false;
             btnNextPage.Click += delegate { DoSearch(page + 1); };
             Controls.Add(btnNextPage);
@@ -314,7 +314,7 @@ namespace Installer
             };
             Controls.Add(txtJump);
 
-            lblJump.Text = "页";
+            lblJump.Text = Lang.S("页");
             lblJump.Font = Theme.UISmall;
             lblJump.ForeColor = Theme.Ink2;
             lblJump.AutoSize = false;
@@ -449,7 +449,7 @@ namespace Installer
             grid.ShowSkeletonFit();             // 立刻铺满一屏骨架，别让人对着空墙猜
             grid.FooterText = "";
             grid.FooterClickable = false;
-            lblStatus.Text = "正在搜工坊…";
+            lblStatus.Text = Lang.S("正在搜工坊…");
             LoadPage(p, false);
         }
 
@@ -492,7 +492,7 @@ namespace Installer
             btnPrevPage.Enabled = false;
             btnNextPage.Enabled = false;
             txtJump.Enabled = false;
-            if (!append) lblStatus.Text = "正在搜工坊…";
+            if (!append) lblStatus.Text = Lang.S("正在搜工坊…");
             if (append)
             {
                 grid.FooterText = "正在加载…";
@@ -553,7 +553,7 @@ namespace Installer
                     KickPrefetch();
                     if (grid.Items.Count == 0)
                     {
-                        lblStatus.Text = "没搜到。换个词试试，或把「分类」切到「全部物品」。";
+                        lblStatus.Text = Lang.S("没搜到。换个词试试，或把「分类」切到「全部物品」。");
                         grid.EmptyText = "没搜到";
                         grid.EmptyHint = "换个词试试，或把「分类」切到「全部物品」";
                         grid.Invalidate();
@@ -751,7 +751,7 @@ namespace Installer
             }
             int pw = picHero.Width, ph = picHero.Height;
             if (detailClean.Length > 0 && detailZh == null)
-                lblState.Text = "正文是英文，正在翻成中文…（点「看原文」可先看）";
+                lblState.Text = Lang.S("正文是英文，正在翻成中文…（点「看原文」可先看）");
             Thread t = new Thread(delegate()
             {
                 // 浏览页只有短介绍 —— 点开时按需补全详情接口（全文/直链），一次调用
@@ -793,7 +793,7 @@ namespace Installer
                         picHero.Image = img;
                         lblHeroHint.Visible = false;
                     }
-                    else if (it.Preview.Length > 0) lblHeroHint.Text = "（预览图加载失败，先在浏览器里看）";
+                    else if (it.Preview.Length > 0) lblHeroHint.Text = Lang.S("（预览图加载失败，先在浏览器里看）");
 
                     if (zh != null && zh.Length > 0) { detailZh = zh; RenderDesc(); UpdateLangButton(); }
                     else if (err != null) lblState.Text = err;
@@ -854,7 +854,7 @@ namespace Installer
         {
             WsItem it = detailItem;
             if (busy || it == null) return;
-            if (it.IsCollection || it.Url.Length == 0) { lblState.Text = "这个物品没有直链，只能走 Steam 客户端订阅。"; return; }
+            if (it.IsCollection || it.Url.Length == 0) { lblState.Text = Lang.S("这个物品没有直链，只能走 Steam 客户端订阅。"); return; }
             string dir;
             try { dir = Workshop.DestDir(); }
             catch (Exception ex) { lblState.Text = ex.Message; return; }
@@ -862,7 +862,7 @@ namespace Installer
             busy = true;
             cancel = false;
             btnGet.Enabled = false;
-            lblState.Text = "正在下载…";
+            lblState.Text = Lang.S("正在下载…");
             // 下载是有明确进度的，别用不确定的跑马灯：切成实进度条，百分比同时写在左边
             barLoad.Style = ProgressBarStyle.Continuous;
             barLoad.Minimum = 0;
@@ -979,7 +979,7 @@ namespace Installer
         private void UpdateDownsCaption()
         {
             int run = WorkshopDownloads.RunningCount;
-            btnDowns.Text = run > 0 ? "下载列表 (" + run + ")" : "下载列表";
+            btnDowns.Text = run > 0 ? Lang.F("下载列表 ({0})", run) : Lang.S("下载列表");
         }
 
         /// <summary>
@@ -1129,7 +1129,7 @@ namespace Installer
             grid.ShowSkeletonFit();                 // 截图要走真实路径：按视口铺，缺口才会露出来
             grid.FooterText = "";                   // 真实流程里 DoSearch 会清掉底部提示，截图也照做
             grid.FooterClickable = false;
-            lblStatus.Text = "正在搜工坊…（骨架态截图）";
+            lblStatus.Text = Lang.S("正在搜工坊…（骨架态截图）");
         }
 
         /// <summary>自检用：只留空墙 + 一句说明（验证「没搜到 / 搜索失败」的空态不是一片空白）。</summary>
@@ -1142,7 +1142,7 @@ namespace Installer
             grid.EmptyHint = hint;
             grid.FooterText = "点这里重试";
             grid.FooterClickable = true;
-            lblStatus.Text = "搜索失败：The operation has timed out（空态截图）";
+            lblStatus.Text = Lang.S("搜索失败：The operation has timed out（空态截图）");
             RelayoutWall();
         }
 

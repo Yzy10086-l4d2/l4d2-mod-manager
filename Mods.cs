@@ -984,7 +984,7 @@ namespace Installer
         public AddonSwitchForm(string root)
         {
             gameRoot = root;
-            Text = "已装 MOD 开关 —— 勾上=进游戏时启用";
+            Text = Lang.S("已装 MOD 开关 —— 勾上=进游戏时启用");
             Theme.UseDpi(this);
             ClientSize = Dpi.Sz(560, 480);
             Font = new Font("Microsoft YaHei UI", 9F);
@@ -997,8 +997,8 @@ namespace Installer
             lv.View = View.Details;
             lv.CheckBoxes = true;
             lv.FullRowSelect = true;
-            lv.Columns.Add("MOD 文件", 380);
-            lv.Columns.Add("状态", 120);
+            lv.Columns.Add(Lang.S("MOD 文件"), 380);
+            lv.Columns.Add(Lang.S("状态"), 120);
             lv.ItemChecked += delegate(object s, ItemCheckedEventArgs e)
             {
                 if (e.Item.SubItems.Count > 1)
@@ -1019,18 +1019,18 @@ namespace Installer
             };
             lv.ContextMenuStrip = cms;
 
-            Button up = new Button(); up.Text = "上移 ↑"; up.SetBounds(12, 360, 90, 28); up.Click += delegate { MoveItem(-1); }; Controls.Add(up);
-            Button dn = new Button(); dn.Text = "下移 ↓"; dn.SetBounds(108, 360, 90, 28); dn.Click += delegate { MoveItem(1); }; Controls.Add(dn);
-            Label tip = new Label(); tip.Text = "顺序 = 覆盖优先级（下面的覆盖上面的）"; tip.SetBounds(210, 364, 330, 20); Controls.Add(tip);
-            Button all = new Button(); all.Text = "全开"; all.SetBounds(12, 402, 80, 30);
+            Button up = new Button(); up.Text = Lang.S("上移 ↑"); up.SetBounds(12, 360, 90, 28); up.Click += delegate { MoveItem(-1); }; Controls.Add(up);
+            Button dn = new Button(); dn.Text = Lang.S("下移 ↓"); dn.SetBounds(108, 360, 90, 28); dn.Click += delegate { MoveItem(1); }; Controls.Add(dn);
+            Label tip = new Label(); tip.Text = Lang.S("顺序 = 覆盖优先级（下面的覆盖上面的）"); tip.SetBounds(210, 364, 330, 20); Controls.Add(tip);
+            Button all = new Button(); all.Text = Lang.S("全开"); all.SetBounds(12, 402, 80, 30);
             all.Click += delegate { SetAll(true); }; Controls.Add(all);
-            Button none = new Button(); none.Text = "全关"; none.SetBounds(98, 402, 80, 30);
+            Button none = new Button(); none.Text = Lang.S("全关"); none.SetBounds(98, 402, 80, 30);
             none.Click += delegate { SetAll(false); }; Controls.Add(none);
-            Button collect = new Button(); collect.Text = "收回新 MOD"; collect.SetBounds(184, 402, 110, 30);
+            Button collect = new Button(); collect.Text = Lang.S("收回新 MOD"); collect.SetBounds(184, 402, 110, 30);
             collect.Click += delegate { Collect(); }; Controls.Add(collect);
-            Button park = new Button(); park.Text = "清理关着的"; park.SetBounds(300, 402, 104, 30);
+            Button park = new Button(); park.Text = Lang.S("清理关着的"); park.SetBounds(300, 402, 104, 30);
             park.Click += delegate { Park(); }; Controls.Add(park);
-            Button ok = new Button(); ok.Text = "写入并关闭"; ok.SetBounds(410, 402, 138, 30);
+            Button ok = new Button(); ok.Text = Lang.S("写入并关闭"); ok.SetBounds(410, 402, 138, 30);
             ok.Click += delegate { Apply(); }; Controls.Add(ok);
             lbl = new Label(); lbl.SetBounds(12, 436, 536, 20); lbl.Text = ""; Controls.Add(lbl);
 
@@ -1081,7 +1081,7 @@ namespace Installer
             lv.BeginUpdate();
             lv.Items.Clear();
             string addons = Path.Combine(Path.Combine(gameRoot, "left4dead2"), "addons");
-            if (!Directory.Exists(addons)) { lv.EndUpdate(); lbl.Text = "游戏里没有 addons 目录"; return; }
+            if (!Directory.Exists(addons)) { lv.EndUpdate(); lbl.Text = Lang.S("游戏里没有 addons 目录"); return; }
             string[] files = Directory.GetFiles(addons, "*.vpk");
 
             // 行的顺序就是 addonlist 里的顺序（= 覆盖优先级）。以前这里是按文件名排序，

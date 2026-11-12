@@ -38,7 +38,7 @@ namespace Installer
 
         public DownloadListForm()
         {
-            Text = "工坊 · 下载列表";
+            Text = Lang.S("工坊 · 下载列表");
             Theme.UseDpi(this);
             ClientSize = Dpi.Sz(780, 560);
             MinimumSize = Dpi.Sz(640, 420);
@@ -49,7 +49,7 @@ namespace Installer
             ShowInTaskbar = true;
 
             // ---- 顶部：保存位置 ----
-            lblSaveTo.Text = "保存到";
+            lblSaveTo.Text = Lang.S("保存到");
             lblSaveTo.Font = Theme.UISmall;
             lblSaveTo.ForeColor = Theme.Ink2;
             lblSaveTo.AutoSize = false;
@@ -63,15 +63,15 @@ namespace Installer
             lblDir.TextAlign = ContentAlignment.MiddleLeft;
             Controls.Add(lblDir);
 
-            btnDir.Text = "改位置";
+            btnDir.Text = Lang.S("改位置");
             btnDir.Click += delegate { PickDir(); };
             Controls.Add(btnDir);
 
-            btnDefault.Text = "用默认";
+            btnDefault.Text = Lang.S("用默认");
             btnDefault.Click += delegate { UseDefaultDir(); };
             Controls.Add(btnDefault);
 
-            btnOpenDir.Text = "打开文件夹";
+            btnOpenDir.Text = Lang.S("打开文件夹");
             btnOpenDir.Click += delegate { OpenFolder(SafeDir()); };
             Controls.Add(btnOpenDir);
 
@@ -81,9 +81,9 @@ namespace Installer
             lv.MultiSelect = false;
             lv.HideSelection = false;
             lv.Columns.Add("MOD", S(300));
-            lv.Columns.Add("大小", S(130));
-            lv.Columns.Add("状态", S(190));
-            lv.Columns.Add("时间", S(120));
+            lv.Columns.Add(Lang.S("大小"), S(130));
+            lv.Columns.Add(Lang.S("状态"), S(190));
+            lv.Columns.Add(Lang.S("时间"), S(120));
             lv.DoubleClick += delegate { Locate(); };
             lv.SelectedIndexChanged += delegate { UpdateButtons(); };
             Controls.Add(lv);
@@ -94,28 +94,28 @@ namespace Installer
             lblEmpty.BackColor = Theme.Bg;          // 实心遮罩：不然 ListView 的列头会从背后透出来
             lblEmpty.TextAlign = ContentAlignment.MiddleCenter;
             lblEmpty.Cursor = Cursors.Default;
-            lblEmpty.Text = "还没从工坊下过东西。\r\n在左边卡片上点「下载这个 MOD」，下完就会出现在这里。";
+            lblEmpty.Text = Lang.S(Lang.S("还没从工坊下过东西。\r\n在左边卡片上点「下载这个 MOD」，下完就会出现在这里。"));
             Controls.Add(lblEmpty);
 
             // ---- 底部 ----
-            btnAgain.Text = "重新下载";
+            btnAgain.Text = Lang.S("重新下载");
             btnAgain.Click += delegate { Redownload(); };
             Controls.Add(btnAgain);
 
-            btnLocate.Text = "打开所在位置";
+            btnLocate.Text = Lang.S("打开所在位置");
             btnLocate.Click += delegate { Locate(); };
             Controls.Add(btnLocate);
 
-            btnDelete.Text = "从磁盘删除";
+            btnDelete.Text = Lang.S("从磁盘删除");
             btnDelete.Danger = true;
             btnDelete.Click += delegate { DeleteFile(); };
             Controls.Add(btnDelete);
 
-            btnClear.Text = "清空历史";
+            btnClear.Text = Lang.S("清空历史");
             btnClear.Click += delegate { ClearHistory(); };
             Controls.Add(btnClear);
 
-            btnClose.Text = "关闭";
+            btnClose.Text = Lang.S("关闭");
             btnClose.DialogResult = DialogResult.Cancel;
             btnClose.Click += delegate { Close(); };
             Controls.Add(btnClose);
@@ -303,7 +303,7 @@ namespace Installer
             string d;
             try { d = Workshop.DestDir(); }
             catch (Exception ex) { d = ex.Message; }
-            lblDir.Text = custom ? d : d + "    默认位置（跟随主库）";
+            lblDir.Text = custom ? d : d + Lang.S("    默认位置（跟随主库）");
             btnDefault.Enabled = custom;
         }
 
@@ -482,7 +482,7 @@ namespace Installer
             lv.EndUpdate();
             lblEmpty.Visible = false;
             lv.Items[1].Selected = true;
-            lblStatus.Text = "共 4 条 · 成功 2 · 失败/取消 1 · 下载中 1";
+            lblStatus.Text = Lang.S("共 4 条 · 成功 2 · 失败/取消 1 · 下载中 1");
             UpdateButtons();
         }
 

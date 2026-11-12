@@ -110,7 +110,7 @@ namespace Installer
 
         public LaunchForm(string current)
         {
-            Text = "启动项参数";
+            Text = Lang.S("启动项参数");
             Theme.UseDpi(this);
             ClientSize = Dpi.Sz(660, 258);
             Font = Theme.UI;
@@ -158,20 +158,20 @@ namespace Installer
             preview.AutoEllipsis = true;
             Controls.Add(preview);
 
-            FlatButton bdef = new FlatButton(); bdef.Text = "恢复默认"; bdef.SetBounds(14, 214, 96, Theme.H); bdef.Font = Theme.UISmall;
+            FlatButton bdef = new FlatButton(); bdef.Text = Lang.S("恢复默认"); bdef.SetBounds(14, 214, 96, Theme.H); bdef.Font = Theme.UISmall;
             bdef.Click += delegate { box.Text = LaunchArgs.Default; }; Controls.Add(bdef);
 
-            FlatButton b0 = new FlatButton(); b0.Text = "用 0"; b0.SetBounds(118, 214, 68, Theme.H); b0.Font = Theme.UISmall;
+            FlatButton b0 = new FlatButton(); b0.Text = Lang.S("用 0"); b0.SetBounds(118, 214, 68, Theme.H); b0.Font = Theme.UISmall;
             b0.Click += delegate { box.Text = LaunchArgs.Resolve(LaunchArgs.Clean(box.Text), "0"); }; Controls.Add(b0);
 
-            FlatButton b1 = new FlatButton(); b1.Text = "用 1"; b1.SetBounds(192, 214, 68, Theme.H); b1.Font = Theme.UISmall;
+            FlatButton b1 = new FlatButton(); b1.Text = Lang.S("用 1"); b1.SetBounds(192, 214, 68, Theme.H); b1.Font = Theme.UISmall;
             b1.Click += delegate { box.Text = LaunchArgs.Resolve(LaunchArgs.Clean(box.Text), "1"); }; Controls.Add(b1);
 
-            FlatButton ok = new FlatButton(); ok.Text = "确定"; ok.Primary = true;
+            FlatButton ok = new FlatButton(); ok.Text = Lang.S("确定"); ok.Primary = true;
             ok.SetBounds(462, 214, 80, Theme.H);
             ok.Click += delegate { Accept(); }; Controls.Add(ok);
 
-            FlatButton no = new FlatButton(); no.Text = "取消"; no.SetBounds(550, 214, 96, Theme.H);
+            FlatButton no = new FlatButton(); no.Text = Lang.S("取消"); no.SetBounds(550, 214, 96, Theme.H);
             no.DialogResult = DialogResult.Cancel; Controls.Add(no);
 
             AcceptButton = ok;
@@ -184,7 +184,7 @@ namespace Installer
             string s = LaunchArgs.Clean(box.Text);
             if (s.Length == 0)
             {
-                preview.Text = "结果：不写启动项（会清空这台机器 Steam 里的启动选项）";
+                preview.Text = Lang.S("结果：不写启动项（会清空这台机器 Steam 里的启动选项）");
                 preview.ForeColor = Theme.Ink3;
             }
             else if (LaunchArgs.HasSlot(s))

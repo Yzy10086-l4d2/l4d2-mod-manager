@@ -66,6 +66,7 @@ namespace Installer
         public string LibraryRoot = "";     // U 盘模式的主库根；空 = 跟随程序所在盘
         public bool DrawerOpen = true;      // 左栏（组件 / 安装选项）展开状态；首次进来看得到勾选项
         public string WorkshopDir = "";     // 工坊下载位置；空 = 跟随主库（U 盘库/_创意工坊 或 游戏 addons/_创意工坊）
+        public string Lang = "zh";          // 界面语言：zh / en（只影响显示，日志与自检保持中文）
         public List<string> ModDirs = new List<string>();   // 额外的 MOD 库文件夹（任意电脑上的任意目录）
         public List<string> Recent = new List<string>();
         public List<string> Mods = new List<string>();
@@ -135,6 +136,8 @@ namespace Installer
             SweepTemps();
             MigrateLegacyConfig();
             LoadConfig();
+            Lang.Load();                 // 界面构造前定语言：控件建出来时文案就对了
+            Lang.EnsureBuilt();
             ApplyConfiguredLibraryRoot();
             // 得等配置读完才知道游戏目录在哪。装机/解包中断留下的 .part 和 ~l4d2-* 暂存目录
             // 以前只清 _装机记录 一处，addons 和库里的一直攒着，扫库时还会被当成怪文件。
@@ -379,6 +382,7 @@ namespace Installer
                     else if (k == "LibraryRoot") Cfg.LibraryRoot = v;
                     else if (k == "Drawer") Cfg.DrawerOpen = (v != "0");
                     else if (k == "WorkshopDir") Cfg.WorkshopDir = v;
+                    else if (k == "Lang") Cfg.Lang = (string.Equals(v, "en", StringComparison.OrdinalIgnoreCase) ? "en" : "zh");
                     else if (k == "ModDir") Cfg.ModDirs.Add(v);
                     else if (k == "Recent") Cfg.Recent.Add(v);
                     else if (k.StartsWith("Mod:")) Cfg.Mods.Add(k.Substring(4));
@@ -414,6 +418,7 @@ namespace Installer
                 sb.AppendLine("Appearance=" + Cfg.Appearance);
                 sb.AppendLine("LibraryRoot=" + Cfg.LibraryRoot);
                 sb.AppendLine("Drawer=" + (Cfg.DrawerOpen ? "1" : "0"));
+                sb.AppendLine("Lang=" + Cfg.Lang);
                 sb.AppendLine("WorkshopDir=" + Cfg.WorkshopDir);
                 foreach (string d in Cfg.ModDirs) sb.AppendLine("ModDir=" + d);
                 foreach (string rp in Cfg.Recent) sb.AppendLine("Recent=" + rp);
