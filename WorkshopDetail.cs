@@ -120,6 +120,9 @@ namespace Installer
     /// <summary>
     /// 在线翻译（微软 Edge 的免 key 端点）+ 磁盘缓存。
     ///
+    /// **只按需翻**：调用方必须等用户点了「翻译为中文」才进来 —— 这两条免费接口都按天限量，
+    /// 随手挑一行就把额度烧掉的话，真要看长介绍时反而没得看了。打开条目只允许读缓存。
+    ///
     /// 为什么走这个：Google 那个免费端点在部分网络下直接被墙，而 Steam 用户多半在国内；
     /// 这个端点取 token 不要 key，翻出来的中文也够读。风险是它非官方，所以：
     ///   · 任何失败都静默退回原文，界面只标一句「翻译服务不可用」，绝不让详情开不出来；
@@ -129,10 +132,36 @@ namespace Installer
     internal static class WsTranslate
     {
         const string AuthUrl = "https://edge.microsoft.com/translate/auth";
-        const string ApiUrl = "https://api-edge.cognitive.microsofttranslator.com/translate"
-                            + "?api-version=3.0&from=en&to=zh-Hans";
         const string Ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) L4D2Setup/2.52";
         const int MaxChunk = 2600;          // 一段一次请求，长介绍拆开翻，避免一个请求几万字符超时
+
+        /// <summary>
+        /// 译文目标语言，跟着界面语言设置走：中文界面 → 简体中文，英文界面 → 英文。
+        /// 缓存文件名也带这个前缀，切换语言不会串用上一门语言的旧译文。
+        /// </summary>
+        public static string TargetLang { get { return Lang.IsEn ? "en" : "zh-Hans"; } }
+
+        /// <summary>目标语言叫什么，拼按钮文案用。</summary>
+        public static string TargetName { get { return Lang.IsEn ? "英文" : "中文"; } }
+
+        /// <summary>「翻译为中文 / Translate」整句，按钮直接拿去当文案（按钮只有 96px 宽，英文要短）。</summary>
+        public static string TranslateLabel
+        {
+            get { return Lang.IsEn ? "Translate" : "翻译为" + TargetName; }
+        }
+
+        static string Prefix() { return TargetLang.StartsWith("zh") ? "zh" : "en"; }
+
+        /// <summary>
+        /// 这段正文还值不值得翻。已经是目标语言就返回 false ——
+        /// 界面的翻译按钮据此灰掉，别让人点一个点了也不会有任何变化的按钮。
+        /// </summary>
+        public static bool NeedsTranslate(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+            bool isZh = WsText.MostlyChinese(text);
+            return TargetLang.StartsWith("zh") ? !isZh : isZh;
+        }
 
         static string token = "";
         static DateTime tokenAt = DateTime.MinValue;
@@ -147,7 +176,7 @@ namespace Installer
 
         static string CachePath(string id)
         {
-            return Path.Combine(CacheDir, "zh-" + WsText.SafeId(id) + ".txt");
+            return Path.Combine(CacheDir, Prefix() + "-" + WsText.SafeId(id) + ".txt");
         }
 
         // 自检用：离线验缓存行为，不碰网络
@@ -191,7 +220,7 @@ namespace Installer
             if (string.IsNullOrEmpty(text)) return "";
             string hit = ReadCache(id, updated);
             if (hit != null) return hit;
-            if (WsText.MostlyChinese(text)) return text;
+            if (!NeedsTranslate(text)) return text;      // 已经是目标语言，别再白花一次额度
 
             try
             {
@@ -251,7 +280,7 @@ namespace Installer
             {
                 ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
                 string url = "https://api.mymemory.translated.net/get?q=" + Uri.EscapeDataString(text)
-                           + "&langpair=en%7Czh-CN";
+                           + "&langpair=en%7C" + (TargetLang.StartsWith("zh") ? "zh-CN" : "en");
                 HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
                 req.Method = "GET";
                 req.UserAgent = Ua;
@@ -333,7 +362,9 @@ namespace Installer
                     if (tk.Length < 20) { msDown = true; return null; }
 
                     ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
-                    HttpWebRequest req = (HttpWebRequest)WebRequest.Create(ApiUrl);
+                    HttpWebRequest req = (HttpWebRequest)WebRequest.Create(
+                        "https://api-edge.cognitive.microsofttranslator.com/translate"
+                        + "?api-version=3.0&from=en&to=" + TargetLang);
                     req.Method = "POST";
                     req.ContentType = "application/json; charset=UTF-8";
                     req.UserAgent = Ua;

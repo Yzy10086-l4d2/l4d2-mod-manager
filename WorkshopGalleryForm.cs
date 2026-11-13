@@ -75,7 +75,9 @@ namespace Installer
         private volatile bool busy;
         private volatile bool cancel;
         private int detailToken;
-        private bool showZh = true;
+        private bool showZh;
+        private bool langTouched;             // 用户自己点过原文/译文：之后别自动替他改回来
+        private bool translating;             // 正在翻：按钮置灰，防重复点烧额度
         private bool sampleMode;
         private string detailClean = "";      // 清洗后的原文：切原文/译文时不用重新计算
         private string detailZh;              // 译文（null = 还没翻好）
@@ -272,8 +274,8 @@ namespace Installer
             btnOpen.Click += delegate { OpenInBrowser(); };
             detail.Controls.Add(btnOpen);
 
-            btnLang.Text = Lang.S("看原文");
-            btnLang.Click += delegate { showZh = !showZh; RenderDesc(); UpdateLangButton(); };
+            btnLang.Text = Lang.S(WsTranslate.TranslateLabel);
+            btnLang.Click += delegate { OnLangClick(); };
             detail.Controls.Add(btnLang);
 
             // ---- 底部 ----
@@ -725,19 +727,23 @@ namespace Installer
             lblHeroHint.Visible = true;
             lblHeroHint.Text = it.Preview.Length == 0 ? "（这个物品没有预览图）" : "（正在加载预览图…）";
 
-            // 加载动效：抓全文 / 翻译 / 大图各占一格计数，全完成自动消失
+            // 正文与译文：这里只读缓存，绝不自动翻译 —— 免费翻译接口按天限量，
+            // 翻一张卡片就烧一次额度，真要看长介绍时反而没得看了。要译文得用户点按钮。
+            translating = false;
+            langTouched = false;
+            detailClean = WsText.Clean(it.Desc);
+            detailZh = WsTranslate.ReadCache(it.Id, it.Updated);
+            showZh = detailZh != null && detailZh.Length > 0;
+            RenderDesc();
+            UpdateLangButton();
+
+            // 加载动效：只在真等网络（补全文 / 大图）时转；翻译是用户自己点的，不进这个计数
             detailLoading = 0;
             if (!sampleMode)
             {
                 if (!it.DetailsLoaded && !it.IsCollection) DetailBusy(true);   // 补全文
-                if (it.Preview.Length > 0 || (detailClean.Length > 0 && detailZh == null))
-                    DetailBusy(true);                                          // 大图 + 翻译（同一线程同一回调）
+                if (it.Preview.Length > 0) DetailBusy(true);                   // 大图
             }
-
-            detailClean = WsText.Clean(it.Desc);
-            detailZh = WsTranslate.ReadCache(it.Id, it.Updated);
-            RenderDesc();
-            UpdateLangButton();
 
             if (sampleMode)
             {
@@ -750,8 +756,6 @@ namespace Installer
                 return;
             }
             int pw = picHero.Width, ph = picHero.Height;
-            if (detailClean.Length > 0 && detailZh == null)
-                lblState.Text = Lang.S("正文是英文，正在翻成中文…（点「看原文」可先看）");
             Thread t = new Thread(delegate()
             {
                 // 浏览页只有短介绍 —— 点开时按需补全详情接口（全文/直链），一次调用
@@ -775,18 +779,20 @@ namespace Installer
                         if (token != detailToken) return;         // 换条目了：计数已被新条目重置，别碰
                         DetailBusy(false);
                         detailClean = WsText.Clean(it.Desc);      // 短介绍换成全文
+                        // 全文里带着新的 time_updated：缓存要按它重判一次，别拿旧译文糊上去。
+                        // 但如果用户已经自己点过「看原文」，就别替他改回来。
+                        detailZh = WsTranslate.ReadCache(it.Id, it.Updated);
+                        if (!langTouched) showZh = detailZh != null && detailZh.Length > 0;
                         RenderDesc();
+                        UpdateLangButton();
                         if (it.Url.Length > 0 && !it.IsCollection) btnGet.Enabled = true;
                     });
                 }
                 Image img = WsThumb.Load(it.Preview, it.Id, pw * 2, ph * 2);   // 放大上限翻倍，小图也能铺满，Zoom 负责等比
-                string zh = detailZh, err = null;
-                if (detailClean.Length > 0 && zh == null)
-                    zh = WsTranslate.Translate(it.Id, it.Updated, detailClean, out err);
                 Ui(delegate()
                 {
-                    if (token != detailToken) { DetailBusy(false); if (img != null) img.Dispose(); return; }
-                    DetailBusy(false);                            // 大图 + 翻译这格完成
+                    if (token != detailToken) { if (it.Preview.Length > 0) DetailBusy(false); if (img != null) img.Dispose(); return; }
+                    if (it.Preview.Length > 0) DetailBusy(false);    // 大图这格完成
                     if (img != null)
                     {
                         if (picHero.Image != null) picHero.Image.Dispose();
@@ -794,9 +800,6 @@ namespace Installer
                         lblHeroHint.Visible = false;
                     }
                     else if (it.Preview.Length > 0) lblHeroHint.Text = Lang.S("（预览图加载失败，先在浏览器里看）");
-
-                    if (zh != null && zh.Length > 0) { detailZh = zh; RenderDesc(); UpdateLangButton(); }
-                    else if (err != null) lblState.Text = err;
                 });
             });
             t.IsBackground = true;
@@ -840,12 +843,93 @@ namespace Installer
             try { txtDesc.SelectionStart = 0; txtDesc.SelectionLength = 0; } catch { }
         }
 
-        /// <summary>没有译文时按钮就没意义 —— 灰掉，别让人点了没反应。</summary>
+        /// <summary>
+        /// 一个按钮管三件事：切原文/译文、触发翻译、告诉用户这个不用翻。
+        /// 没有译文时不再直接灰掉 —— 那正是要翻译的时候。
+        /// </summary>
         private void UpdateLangButton()
         {
+            if (translating) { btnLang.Text = Lang.S("翻译中…"); btnLang.Enabled = false; return; }
             bool has = detailZh != null && detailZh.Length > 0;
-            btnLang.Enabled = has;
-            btnLang.Text = showZh ? "看原文" : "看译文";
+            if (has) { btnLang.Text = Lang.S(showZh ? "看原文" : "看译文"); btnLang.Enabled = true; return; }
+            bool worth = WsTranslate.NeedsTranslate(detailClean);
+            btnLang.Text = Lang.S(worth ? WsTranslate.TranslateLabel : "无需翻译");
+            btnLang.Enabled = worth;
+        }
+
+        /// <summary>
+        /// 点按钮才翻译。已有译文就纯切换，一个请求都不发；正文本来就是目标语言则什么都不做。
+        /// </summary>
+        private void OnLangClick()
+        {
+            WsItem it = detailItem;
+            if (it == null || translating) return;
+
+            if (detailZh != null && detailZh.Length > 0)
+            {
+                langTouched = true;
+                showZh = !showZh;
+                RenderDesc();
+                UpdateLangButton();
+                return;
+            }
+            if (!WsTranslate.NeedsTranslate(detailClean)) { UpdateLangButton(); return; }
+            if (!it.DetailsLoaded && !it.IsCollection)
+            {
+                lblState.Text = Lang.S("等介绍读完再翻，稍等一下…");
+                return;
+            }
+            StartTranslate(it);
+        }
+
+        /// <summary>真正去翻：后台线程跑，结果落缓存（Translate 内部写），失败保留原文。</summary>
+        private void StartTranslate(WsItem it)
+        {
+            int token = detailToken;
+            string id = it.Id;
+            long updated = it.Updated;
+            string clean = detailClean;
+
+            translating = true;
+            UpdateLangButton();
+            barLoad.Style = ProgressBarStyle.Marquee;
+            barLoad.Visible = true;
+            lblState.Text = Lang.S(clean.Length > 2600 ? "正在翻译…长介绍要翻一会儿，可先看原文" : "正在翻译…");
+
+            Thread t = new Thread(delegate()
+            {
+                string err = null;
+                string zh = null;
+                try { zh = WsTranslate.Translate(id, updated, clean, out err); }
+                catch (Exception ex) { err = ex.Message; }
+
+                Ui(delegate()
+                {
+                    if (token != detailToken) return;          // 期间换了条目：结果丢掉
+                    translating = false;
+                    if (!busy) barLoad.Visible = false;        // 正在下载就让人家接着走，别抢进度条
+                    bool ok = zh != null && zh.Length > 0 && zh != clean;
+                    if (ok)
+                    {
+                        detailZh = zh;
+                        showZh = true;
+                        RenderDesc();
+                        lblState.Text = WsTranslate.LastProvider.Length > 0
+                            ? Lang.F("翻译完成（{0}）", WsTranslate.LastProvider)
+                            : Lang.S("翻译完成");
+                    }
+                    else
+                    {
+                        showZh = false;
+                        RenderDesc();
+                        lblState.Text = err != null ? err : Lang.S("翻译没成功，下面仍是原文");
+                    }
+                    UpdateLangButton();
+                });
+            });
+            t.IsBackground = true;
+            t.Priority = ThreadPriority.BelowNormal;
+            t.Start();
         }
 
         // ---------------------------------------------------------- 下载单个

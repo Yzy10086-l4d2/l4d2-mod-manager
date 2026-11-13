@@ -1179,7 +1179,8 @@ namespace Installer
         private readonly Label lblTip = new Label();
         private readonly Label lblCat = new Label();
         private WsItem detailItem;                   // 详情面板当前展示的物品
-        private bool showZh = true;                  // true = 显示译文（默认），false = 原文
+        private bool showZh;                         // true = 正文显示译文，false = 原文
+        private bool translating;                    // 正在翻（按钮置灰，防重复点）
         private int detailToken;                     // 切行递增：旧线程回来时发现号不对就不改界面
         private bool filling;                        // 正在批量填表：这时的勾选变化别去刷状态栏
         private bool sampleMode;                     // 截图自检用的样例数据：不联网
@@ -1443,8 +1444,8 @@ namespace Installer
             Theme.Dress(txtDesc);
             Controls.Add(txtDesc);
 
-            btnLang.Text = "看原文";
-            btnLang.Click += delegate { showZh = !showZh; FillDetail(); };
+            btnLang.Text = WsTranslate.TranslateLabel;
+            btnLang.Click += delegate { OnLangClick(); };
             Controls.Add(btnLang);
 
             btnOpen.Text = "在浏览器打开";
@@ -1533,8 +1534,8 @@ namespace Installer
             lblWhere.SetBounds(detailX, S(322), dw, S(18));
             int descTop = S(346);
             txtDesc.SetBounds(detailX, descTop, dw, Math.Max(S(80), contentBottom - descTop));
-            btnLang.SetBounds(detailX, btnY, S(88), bh);
-            btnOpen.SetBounds(detailX + S(96), btnY, S(120), bh);
+            btnLang.SetBounds(detailX, btnY, S(96), bh);       // 「翻译为中文」比「看原文」宽，留够
+            btnOpen.SetBounds(detailX + S(104), btnY, S(120), bh);
 
             // 列宽随左栏重算：标题吃掉剩余，其余定宽
             int fixedW = S(58) + S(84) + S(70) + S(150) + S(4);
@@ -1666,8 +1667,10 @@ namespace Installer
         // ------------------------------------------------ 详情面板
 
         /// <summary>
-        /// 右侧详情：先上已经有的东西（标题 / 元信息 / 缓存译文），
-        /// 预览图和翻译各走后台 —— 网络慢的时候不能把界面卡在那儿等。
+        /// 右侧详情：先上已经有的东西（标题 / 元信息 / 已有译文），预览图走后台。
+        ///
+        /// 这里**不翻译** —— 网上那些免费翻译接口都按天限量，挑一行就烧一次额度，
+        /// 长介绍反而翻不出来。要中文得用户自己点「翻译为」按钮（见 OnLangClick）。
         /// </summary>
         private void FillDetail()
         {
@@ -1689,11 +1692,13 @@ namespace Installer
             lblWhere.Text = it.Where.Length > 0 ? "会装到：" + it.Where : "";
             btnOpen.Enabled = true;
 
+            // 只读缓存，不发请求：翻过的那张直接给中文，没翻过就老老实实显示原文
+            translating = false;
             string clean = WsText.Clean(it.Desc);
             string cached = WsTranslate.ReadCache(it.Id, it.Updated);
-            txtDesc.Text = WsText.ToDisplay((showZh && cached != null) ? cached : (clean.Length > 0 ? clean : "（这个物品没有写介绍）"));
-            btnLang.Text = showZh ? "看原文" : "看译文";
-            btnLang.Enabled = clean.Length > 0;
+            showZh = cached != null && cached.Length > 0;
+            txtDesc.Text = WsText.ToDisplay(ShownText(clean, cached));
+            UpdateLangBtn(clean, cached);
 
             if (pic.Image != null) { Image old = pic.Image; pic.Image = null; old.Dispose(); }
             lblPicHint.Visible = true;
@@ -1707,14 +1712,6 @@ namespace Installer
             Thread th = new Thread(delegate()
             {
                 Image img = WsThumb.Load(it.Preview, it.Id, pw, ph);
-
-                string zh = null, err = null;
-                if (clean.Length > 0)
-                {
-                    zh = WsTranslate.ReadCache(it.Id, it.Updated);
-                    if (zh == null) zh = WsTranslate.Translate(it.Id, it.Updated, clean, out err);
-                }
-
                 Ui(delegate()
                 {
                     if (token != detailToken) { if (img != null) img.Dispose(); return; }   // 已经切走
@@ -1725,13 +1722,98 @@ namespace Installer
                         lblPicHint.Visible = false;
                     }
                     else lblPicHint.Text = "（没有预览图）";
-                    if (showZh && zh != null && zh.Length > 0) txtDesc.Text = WsText.ToDisplay(zh);
-                    else if (showZh && err != null) SetStatus(err);
                 });
             });
             th.IsBackground = true;
             th.Priority = ThreadPriority.BelowNormal;
             th.Start();
+        }
+
+        /// <summary>
+        /// 「翻译为 X / 看原文 / 看译文」三个状态共用这一个按钮：
+        ///   · 已有译文 → 只在原文和译文之间切，一个请求都不发；
+        ///   · 没译文   → 点了才真去翻，按钮当场变「翻译中…」；
+        ///   · 正文本来就是目标语言 → 按钮灰掉，省得点了没反应。
+        /// </summary>
+        private void OnLangClick()
+        {
+            WsItem it = detailItem;
+            if (it == null || translating) return;
+
+            string clean = WsText.Clean(it.Desc);
+            string cached = WsTranslate.ReadCache(it.Id, it.Updated);
+            if (cached != null && cached.Length > 0)
+            {
+                showZh = !showZh;
+                txtDesc.Text = WsText.ToDisplay(ShownText(clean, cached));
+                UpdateLangBtn(clean, cached);
+                return;
+            }
+            if (!WsTranslate.NeedsTranslate(clean)) { UpdateLangBtn(clean, null); return; }
+
+            StartTranslate(it, clean);
+        }
+
+        /// <summary>用户点了才走这里：后台线程翻，翻完写缓存（Translate 内部会写）。</summary>
+        private void StartTranslate(WsItem it, string clean)
+        {
+            int token = detailToken;
+            string id = it.Id;
+            long updated = it.Updated;
+
+            translating = true;
+            UpdateLangBtn(clean, null);
+            SetStatus("正在翻译" + (clean.Length > 2600 ? "（长介绍要翻一会儿，可先看原文）" : "…"));
+
+            Thread th = new Thread(delegate()
+            {
+                string err = null;
+                string zh = null;
+                try { zh = WsTranslate.Translate(id, updated, clean, out err); }
+                catch (Exception ex) { err = ex.Message; }
+
+                Ui(delegate()
+                {
+                    if (token != detailToken) return;        // 期间换了条目：这个结果丢掉
+                    translating = false;
+                    bool ok = zh != null && zh.Length > 0 && zh != clean;
+                    if (ok)
+                    {
+                        showZh = true;
+                        txtDesc.Text = WsText.ToDisplay(zh);
+                        SetStatus("翻译完成" + (WsTranslate.LastProvider.Length > 0 ? "（" + WsTranslate.LastProvider + "）" : ""));
+                    }
+                    else
+                    {
+                        showZh = false;
+                        txtDesc.Text = WsText.ToDisplay(ShownText(clean, null));
+                        SetStatus(err != null ? err : "翻译没成功，下面仍是原文");
+                    }
+                    UpdateLangBtn(clean, ok ? zh : null);
+                });
+            });
+            th.IsBackground = true;
+            th.Priority = ThreadPriority.BelowNormal;
+            th.Start();
+        }
+
+        /// <summary>按当前「原文 / 译文」选择取正文；都没有说明这个物品没写介绍。</summary>
+        private string ShownText(string clean, string zh)
+        {
+            if (showZh && zh != null && zh.Length > 0) return zh;
+            return clean.Length > 0 ? clean : "（这个物品没有写介绍）";
+        }
+
+        /// <summary>按钮文案与可用状态集中在这里算，三个入口（填表 / 点按钮 / 翻译回来）都走它。</summary>
+        private void UpdateLangBtn(string clean, string zh)
+        {
+            if (translating) { btnLang.Text = "翻译中…"; btnLang.Enabled = false; return; }
+            bool has = zh != null && zh.Length > 0;
+            if (has) { btnLang.Text = showZh ? "看原文" : "看译文"; btnLang.Enabled = true; return; }
+            if (clean.Length == 0) { btnLang.Text = WsTranslate.TranslateLabel; btnLang.Enabled = false; return; }
+            bool worth = WsTranslate.NeedsTranslate(clean);
+            btnLang.Text = worth ? WsTranslate.TranslateLabel : "无需翻译";
+            btnLang.Enabled = worth;
         }
 
         private void ClearDetail()
@@ -1746,6 +1828,8 @@ namespace Installer
             txtDesc.Text = "";
             lblPicHint.Visible = true;
             lblPicHint.Text = "（左边选一条看介绍）";
+            translating = false;
+            btnLang.Text = WsTranslate.TranslateLabel;
             btnLang.Enabled = false;
             btnOpen.Enabled = false;
         }

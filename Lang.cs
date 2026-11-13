@@ -308,6 +308,15 @@ namespace Installer
             Add(d, "下载这个 MOD", "Download this mod");
             Add(d, "在浏览器打开", "Open in browser");
             Add(d, "看原文", "Show original");
+            Add(d, "看译文", "Show translation");
+            Add(d, "翻译中…", "Translating…");
+            Add(d, "无需翻译", "No translation needed");
+            Add(d, "翻译完成", "Translation done");
+            Add(d, "翻译完成（{0}）", "Translation done ({0})");
+            Add(d, "翻译没成功，下面仍是原文", "Translation failed — showing the original");
+            Add(d, "正在翻译…", "Translating…");
+            Add(d, "正在翻译…长介绍要翻一会儿，可先看原文", "Translating… long descriptions take a while; you can read the original meanwhile");
+            Add(d, "等介绍读完再翻，稍等一下…", "Still reading the description — try again in a moment…");
             Add(d, "回到顶部", "Back to top");
             Add(d, "◀ 上一页", "◀ Prev");
             Add(d, "下一页 ▶", "Next ▶");
